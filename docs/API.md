@@ -4,6 +4,7 @@
 
 - 本地开发: `http://localhost:8080/api`
 - Compose/Nginx: `http://localhost:3002/api`
+- 本地开发直连后端: `http://localhost:8080/api`
 
 在线文档:
 

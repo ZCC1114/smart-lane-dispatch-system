@@ -52,15 +52,20 @@ smart-lane-dispatch-system/
 
 前端推荐 Node 版本为 `v23.4.0`，仓库根目录已写入 `.nvmrc`。后端支持 H2 与 MySQL，但默认不再注入任何演示数据。
 
+首次在新电脑运行前请先确认：
+
+- 已安装 `Node.js 23.x`
+- 已安装 `JDK 21+`
+- 本地开发若不使用 Docker，前端默认访问 `http://localhost:8080` 后端
+- 如果数据库为空，系统不会自动生成普通业务数据；需要先导入真实用户，或显式开启 bootstrap admin
+
 ```bash
-cd /Users/muleng/Workspace/smart-lane-dispatch-system
 nvm use
 
 cd server
 ./mvnw spring-boot:run
 
 cd ../web
-export PATH=/Users/muleng/.nvm/versions/node/v23.4.0/bin:$PATH
 npm install
 npm run dev
 ```
@@ -74,7 +79,6 @@ npm run dev
 ## Docker Compose
 
 ```bash
-cd /Users/muleng/Workspace/smart-lane-dispatch-system
 cp .env.example .env
 ./scripts/start-stack.sh
 ```
@@ -90,10 +94,10 @@ cp .env.example .env
 
 - 默认开发模式使用 H2；Compose 部署模式使用 `MySQL + Redis + Nginx`
 - 系统默认不再生成演示账号、车道、日志、黑名单或预警数据
-- 如果数据库为空，接口会返回空结果；登录需要数据库中预先存在真实用户
+- 如果数据库为空，接口会返回空结果；登录需要数据库中预先存在真实用户，或显式启用 bootstrap admin
 - 如需运维引导管理员，可通过 `APP_BOOTSTRAP_ADMIN_*` 环境变量显式创建受保护管理员账号
-- bootstrap admin 的启用方式、轮换和保护规则见 [docs/DEPLOY.md](/Users/muleng/Workspace/smart-lane-dispatch-system/docs/DEPLOY.md)
-- 接口清单见 [docs/API.md](/Users/muleng/Workspace/smart-lane-dispatch-system/docs/API.md)
-- 部署说明见 [docs/DEPLOY.md](/Users/muleng/Workspace/smart-lane-dispatch-system/docs/DEPLOY.md)
+- bootstrap admin 的启用方式、轮换和保护规则见 `docs/DEPLOY.md`
+- 接口清单见 `docs/API.md`
+- 部署说明见 `docs/DEPLOY.md`
 - 后端测试已通过：`./mvnw test`
 - 前端构建与静态检查已通过：`npm run build`、`npm run lint`

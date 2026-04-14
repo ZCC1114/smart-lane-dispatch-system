@@ -5,14 +5,12 @@
 1. 启动后端:
 
 ```bash
-cd /Users/muleng/Workspace/smart-lane-dispatch-system/server
 ./mvnw spring-boot:run
 ```
 
 2. 启动前端:
 
 ```bash
-cd /Users/muleng/Workspace/smart-lane-dispatch-system/web
 npm install
 npm run dev
 ```
@@ -22,7 +20,6 @@ npm run dev
 首次使用:
 
 ```bash
-cd /Users/muleng/Workspace/smart-lane-dispatch-system
 cp .env.example .env
 ./scripts/start-stack.sh
 ```
@@ -38,6 +35,13 @@ cp .env.example .env
 - 前端入口: `http://localhost:3002`
 - Swagger: `http://localhost:3002/swagger-ui.html`
 - 健康检查: `http://localhost:3002/actuator/health`
+
+新电脑常见前置条件:
+
+- 已安装 `Docker` 与 `docker compose`
+- 本地开发模式需要 `Node.js 23.x`
+- 本地开发模式需要 `JDK 21+`
+- `./mvnw` 首次执行会联网下载 Maven 发行包
 
 ## 组件说明
 
@@ -85,8 +89,8 @@ cp .env.example .env
 APP_BOOTSTRAP_ADMIN_ENABLED=true \
 APP_BOOTSTRAP_ADMIN_USERNAME='your-admin' \
 APP_BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
-APP_BOOTSTRAP_ADMIN_DISPLAY_NAME='Bootstrap Admin' \
-APP_BOOTSTRAP_ADMIN_STATION='System Control' \
+APP_BOOTSTRAP_ADMIN_DISPLAY_NAME='系统超级管理员' \
+APP_BOOTSTRAP_ADMIN_STATION='总控中心' \
 SPRING_PROFILES_ACTIVE=mysql \
 ./mvnw spring-boot:run
 ```
