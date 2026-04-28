@@ -10,6 +10,8 @@ import type {
   EntryLog,
   LaneSnapshot,
   ManualDispatchRequest,
+  TcpDidoRelayRequest,
+  TcpDidoRelayResponse,
   SignalOverrideRequest,
 } from "@/lib/types";
 
@@ -120,6 +122,12 @@ export const api = {
   },
   dispatch(payload: ManualDispatchRequest) {
     return request<void>("/dispatch/manual", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  controlTcpDidoRelay(payload: TcpDidoRelayRequest) {
+    return request<TcpDidoRelayResponse>("/hardware-debug/tcp-dido/relay", {
       method: "POST",
       body: JSON.stringify(payload),
     });

@@ -134,3 +134,24 @@ export interface BlacklistPayload {
   operator: string;
   active: boolean;
 }
+
+export interface TcpDidoRelayRequest {
+  host: string;
+  port: number;
+  relay: string;
+  on: boolean;
+  protocol?: "A1" | "A3";
+}
+
+export interface TcpDidoRelayResponse {
+  host: string;
+  port: number;
+  relay: string;
+  on: boolean;
+  protocol: "A1" | "A3";
+  commandHex: string;
+  responseHex: string;
+  responseText: string;
+  responseReceived: boolean;
+  message: string;
+}

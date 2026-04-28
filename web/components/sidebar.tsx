@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
   AlertTriangle,
+  Bug,
   ClipboardPenLine,
   ChevronRight,
   History,
@@ -40,6 +41,7 @@ const navItems = [
   { href: "/entries", label: "入场记录", icon: History, visible: () => true },
   { href: "/dispatch", label: "手动修正", icon: ClipboardPenLine, visible: canDispatch },
   { href: "/alerts", label: "预警中心", icon: AlertTriangle, visible: () => true },
+  { href: "/debug", label: "硬件调试", icon: Bug, visible: () => true },
 ];
 
 export function Sidebar() {
