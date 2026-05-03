@@ -1,16 +1,6 @@
 import { clsx } from "clsx";
 import { format } from "date-fns";
-import type {
-  AlertLevel,
-  AlertStatus,
-  BlacklistLevel,
-  LaneMode,
-  LaneStatus,
-  SensorStatus,
-  LaneType,
-  LogStatus,
-  SignalState,
-} from "@/lib/types";
+import type { BlacklistLevel, DispatchTicket, LaneMode, LaneStatus, SensorStatus, LaneType, LogStatus, ScreenEventType, SignalState } from "@/lib/types";
 
 export function cn(...values: Array<string | false | null | undefined>) {
   return clsx(values);
@@ -31,9 +21,9 @@ export function laneTypeLabel(type: LaneType) {
 }
 
 export function laneStatusLabel(status: LaneStatus) {
-  if (status === "OPEN") return "正常运行";
-  if (status === "BUSY") return "高负载";
-  if (status === "FULL") return "满停锁定";
+  if (status === "OPEN") return "开放中";
+  if (status === "BUSY") return "接近满位";
+  if (status === "FULL") return "满位待切换";
   return "离线";
 }
 
@@ -45,14 +35,12 @@ export function laneModeLabel(mode: LaneMode) {
 
 export function signalLabel(signal: SignalState) {
   if (signal === "GREEN") return "绿灯";
-  if (signal === "YELLOW") return "黄灯";
   if (signal === "RED") return "红灯";
   return "离线";
 }
 
 export function signalColor(signal: SignalState) {
   if (signal === "GREEN") return "bg-emerald-500 text-emerald-400";
-  if (signal === "YELLOW") return "bg-amber-500 text-amber-400";
   if (signal === "RED") return "bg-rose-500 text-rose-400";
   return "bg-slate-600 text-slate-500";
 }
@@ -63,21 +51,12 @@ export function logStatusLabel(status: LogStatus) {
   return "人工处理";
 }
 
-export function alertStatusLabel(status: AlertStatus) {
-  if (status === "OPEN") return "待处理";
-  if (status === "ACKNOWLEDGED") return "已确认";
-  return "已处理";
-}
-
-export function levelLabel(level: AlertLevel | BlacklistLevel) {
+export function levelLabel(level: BlacklistLevel) {
   const mapping: Record<string, string> = {
-    INFO: "信息",
-    WARNING: "预警",
-    DANGER: "危险",
-    CRITICAL: "严重",
     LOW: "低",
     MEDIUM: "中",
     HIGH: "高",
+    CRITICAL: "严重",
   };
   return mapping[level] ?? level;
 }
@@ -101,8 +80,46 @@ export function logSourceLabel(source: string) {
     ALPR: "车牌识别设备",
     MANUAL: "人工录入",
     CORRECTION: "人工更正",
+    YARD_CAMERA: "场地入口抓拍",
+    LANE_CAMERA: "车道入口抓拍",
   };
   return mapping[normalized] ?? source;
+}
+
+export function dispatchTicketStatusLabel(status: DispatchTicket["status"] | string) {
+  const mapping: Record<string, string> = {
+    ASSIGNED: "已推荐车道",
+    ENTERED: "已按推荐入道",
+    ENTERED_MISMATCH: "错道入场",
+    DIRECT_ENTERED: "直接入道",
+    EXITED: "已驶出",
+    EXPIRED: "预分配超时",
+    RESET: "日清关闭",
+    NO_LANE_AVAILABLE: "暂无可用车道",
+  };
+  return mapping[status] ?? status;
+}
+
+export function dispatchTicketSourceLabel(source: string) {
+  const normalized = source.trim().toUpperCase();
+  const mapping: Record<string, string> = {
+    YARD_CAMERA: "场地入口抓拍",
+    LANE_CAMERA: "车道入口抓拍",
+    ALPR: "车牌识别设备",
+    MANUAL: "人工录入",
+    CORRECTION: "人工更正",
+  };
+  return mapping[normalized] ?? source;
+}
+
+export function screenEventTypeLabel(type: ScreenEventType | string) {
+  const mapping: Record<string, string> = {
+    blacklist: "黑名单",
+    wrong_lane: "走错车道",
+    not_entered: "未进车道",
+    other: "其他",
+  };
+  return mapping[type] ?? type;
 }
 
 export function downloadCsv(filename: string, rows: string[][]) {

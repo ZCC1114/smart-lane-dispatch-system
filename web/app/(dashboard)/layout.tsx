@@ -13,6 +13,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const isOverviewPage = pathname === "/";
 
   useEffect(() => {
     if (!token) {
@@ -41,8 +42,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="min-h-screen lg:flex">
         <Sidebar />
         <div className="flex min-h-screen flex-1 flex-col">
-          <Topbar />
-          <main className="flex-1 bg-[var(--bg-canvas)] px-4 py-5 sm:px-6">{children}</main>
+          {isOverviewPage ? null : <Topbar />}
+          <main className={isOverviewPage ? "flex-1 overflow-hidden bg-[#06182d]" : "flex-1 bg-[var(--bg-canvas)] px-4 py-5 sm:px-6"}>{children}</main>
         </div>
       </div>
     </>

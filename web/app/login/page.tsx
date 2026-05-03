@@ -49,8 +49,8 @@ export default function LoginPage() {
           <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-sm bg-blue-600 shadow-lg shadow-blue-500/20">
             <Activity className="size-10 text-white" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">智行车道调度系统</h1>
-          <p className="mt-2 text-sm font-bold tracking-[0.16em] text-slate-500">智慧车道调度平台 v2.1</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">出租车智能调度系统</h1>
+          <p className="mt-2 text-sm text-slate-500">登录后进入调度控制台</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -85,7 +85,7 @@ export default function LoginPage() {
 
           <label className="flex cursor-pointer items-center space-x-2">
             <input type="checkbox" className="size-4 rounded-sm border-slate-300 bg-white text-blue-600 focus:ring-0 focus:ring-offset-0" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-slate-500">记住此终端</span>
+            <span className="text-xs text-slate-500">记住登录状态</span>
           </label>
 
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
@@ -96,7 +96,7 @@ export default function LoginPage() {
             className="group flex w-full items-center justify-center space-x-3 rounded-sm bg-blue-600 py-4 text-sm font-bold uppercase tracking-[0.2em] text-white shadow-xl shadow-blue-500/20 transition-all hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
           >
             <ShieldCheck className="size-4" />
-            <span>{loginMutation.isPending ? "认证中..." : "开始安全认证"}</span>
+            <span>{loginMutation.isPending ? "登录中..." : "登录系统"}</span>
             <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
           </button>
         </form>

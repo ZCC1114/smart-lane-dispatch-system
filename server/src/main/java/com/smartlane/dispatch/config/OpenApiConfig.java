@@ -16,7 +16,7 @@ public class OpenApiConfig {
 		return new OpenAPI()
 				.info(new Info()
 						.title("智行车道调度系统 API")
-						.description("提供登录鉴权、车道调度、信号灯控制、黑名单、预警与运行总览接口。")
+						.description("提供登录鉴权、车道调度、信号灯控制、黑名单与运行总览接口。")
 						.version("v1")
 						.contact(new Contact().name("Smart Lane Dispatch"))
 						.license(new License().name("Internal Use")));

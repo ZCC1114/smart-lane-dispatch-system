@@ -27,7 +27,6 @@ export function LiveUpdatesBridge() {
         startTransition(() => {
           queryClient.invalidateQueries({ queryKey: ["dashboard"] });
           queryClient.invalidateQueries({ queryKey: ["lanes"] });
-          queryClient.invalidateQueries({ queryKey: ["alerts"] });
           queryClient.invalidateQueries({ queryKey: ["logs"] });
           queryClient.invalidateQueries({ queryKey: ["blacklist"] });
         });

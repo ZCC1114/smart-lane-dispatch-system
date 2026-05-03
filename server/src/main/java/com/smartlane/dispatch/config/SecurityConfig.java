@@ -46,6 +46,7 @@ public class SecurityConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(
 								"/api/auth/login",
+								"/api/screen/**",
 								"/actuator/health",
 								"/actuator/info",
 								"/v3/api-docs/**",
@@ -57,7 +58,7 @@ public class SecurityConfig {
 						.permitAll()
 						.anyRequest().authenticated())
 				.exceptionHandling(exception -> exception
-						.authenticationEntryPoint((request, response, authException) -> response.sendError(HttpStatus.FORBIDDEN.value()))
+						.authenticationEntryPoint((request, response, authException) -> response.sendError(HttpStatus.UNAUTHORIZED.value()))
 						.accessDeniedHandler((request, response, accessDeniedException) -> response.sendError(HttpStatus.FORBIDDEN.value())))
 				.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 

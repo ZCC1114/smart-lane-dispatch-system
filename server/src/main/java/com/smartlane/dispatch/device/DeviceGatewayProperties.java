@@ -46,7 +46,9 @@ public class DeviceGatewayProperties {
 		private String upTopicFilter = "/device/+/update";
 		private String willTopicFilter = "/device/+/will";
 		private String downTopicTemplate = "/device/{cameraDevId}/get";
+		private String yardEntryCameraDevId;
 		private boolean requestVersionOnConnect = true;
+		private boolean haveCarPollEnabled = false;
 		private long haveCarPollMs = 30000;
 	}
 

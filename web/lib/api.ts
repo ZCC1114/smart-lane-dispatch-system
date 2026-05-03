@@ -2,17 +2,20 @@
 
 import { useAuthStore } from "@/stores/auth-store";
 import type {
-  AlertItem,
   AuthResponse,
   BlacklistPayload,
   BlacklistRecord,
   DashboardPayload,
+  DispatchBoard,
+  DispatchConfig,
+  DispatchRuntimeState,
   EntryLog,
   LaneSnapshot,
   ManualDispatchRequest,
+  ScreenEvent,
+  SignalOverrideRequest,
   TcpDidoRelayRequest,
   TcpDidoRelayResponse,
-  SignalOverrideRequest,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
@@ -45,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new ApiError(errorText || "请求失败", response.status);
+    throw new ApiError(normalizeErrorMessage(errorText, response.status), response.status);
   }
 
   if (response.status === 204) {
@@ -53,6 +56,26 @@ async function request<T>(path: string, init?: RequestInit) {
   }
 
   return (await response.json()) as T;
+}
+
+function normalizeErrorMessage(errorText: string, status: number) {
+  if (status === 403) {
+    return "当前账号没有权限执行该操作";
+  }
+
+  if (!errorText) {
+    if (status === 401) {
+      return "登录已失效，请重新登录";
+    }
+    return "请求失败";
+  }
+
+  try {
+    const payload = JSON.parse(errorText) as { message?: string; error?: string };
+    return payload.message ?? payload.error ?? errorText;
+  } catch {
+    return errorText;
+  }
 }
 
 function buildQuery(params: Record<string, string | undefined>) {
@@ -79,14 +102,11 @@ export const api = {
   getLanes() {
     return request<LaneSnapshot[]>("/lanes");
   },
-  getAlerts() {
-    return request<AlertItem[]>("/alerts");
-  },
-  resolveAlert(alertId: string) {
-    return request<void>(`/alerts/${alertId}/resolve`, { method: "POST" });
-  },
-  getLogs(filters: { query?: string; status?: string; laneId?: string }) {
+  getLogs(filters: { query?: string; status?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string }) {
     return request<EntryLog[]>(`/logs${buildQuery(filters)}`);
+  },
+  getScreenEvents(filters: { type?: string; occurredAtFrom?: string; occurredAtTo?: string; includeHandled?: string }) {
+    return request<ScreenEvent[]>(`/screen/events${buildQuery(filters)}`);
   },
   getBlacklist(query?: string) {
     return request<BlacklistRecord[]>(`/blacklist${buildQuery({ query })}`);
@@ -126,10 +146,39 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  getDispatchConfig() {
+    return request<DispatchConfig>("/dispatch/config");
+  },
+  getDispatchBoard() {
+    return request<DispatchBoard>("/dispatch/board");
+  },
+  updateDispatchConfig(payload: DispatchConfig) {
+    return request<DispatchConfig>("/dispatch/config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  updateDispatchRuntime(payload: DispatchRuntimeState) {
+    return request<DispatchConfig>("/dispatch/runtime", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
   controlTcpDidoRelay(payload: TcpDidoRelayRequest) {
     return request<TcpDidoRelayResponse>("/hardware-debug/tcp-dido/relay", {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  },
+  dailyReset() {
+    return request<DispatchConfig>("/dispatch/daily-reset", {
+      method: "POST",
+    });
+  },
+  updateLaneCapacity(laneId: string, capacity: number) {
+    return request<LaneSnapshot>(`/lanes/${laneId}/capacity`, {
+      method: "PUT",
+      body: JSON.stringify({ capacity }),
     });
   },
 };

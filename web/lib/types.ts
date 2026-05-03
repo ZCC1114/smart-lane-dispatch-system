@@ -3,10 +3,8 @@ export type UserRole = "ADMIN" | "DISPATCHER" | "VIEWER";
 export type LaneType = "ENTRY" | "EXIT" | "MIXED";
 export type LaneStatus = "OPEN" | "BUSY" | "FULL" | "OFFLINE";
 export type LaneMode = "AUTO" | "MANUAL" | "OFFLINE";
-export type SignalState = "RED" | "YELLOW" | "GREEN" | "OFFLINE";
+export type SignalState = "RED" | "GREEN" | "OFFLINE";
 export type SensorStatus = "ONLINE" | "DEGRADED" | "OFFLINE";
-export type AlertLevel = "INFO" | "WARNING" | "DANGER" | "CRITICAL";
-export type AlertStatus = "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
 export type LogStatus = "PASSED" | "REJECTED" | "MANUAL";
 export type BlacklistLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type DispatchCommandType =
@@ -28,14 +26,6 @@ export interface AuthResponse {
   token: string;
   expiresAt: string;
   user: UserSession;
-}
-
-export interface DashboardMetric {
-  totalPassages: number;
-  averagePassMinutes: number;
-  blacklistAlerts: number;
-  systemHealth: number;
-  activeLaneRate: number;
 }
 
 export interface ThroughputPoint {
@@ -64,18 +54,8 @@ export interface LaneSnapshot {
   lastSensorAt: string | null;
   lastEntryPlate: string | null;
   lastEntryAt: string | null;
-}
-
-export interface AlertItem {
-  id: string;
-  laneId: string;
-  laneName: string;
-  plate: string | null;
-  type: string;
-  level: AlertLevel;
-  status: AlertStatus;
-  message: string;
-  createdAt: string;
+  reservedCount: number;
+  availableSlots: number;
 }
 
 export interface EntryLog {
@@ -91,6 +71,20 @@ export interface EntryLog {
   operator: string;
 }
 
+export type ScreenEventType = "blacklist" | "wrong_lane" | "not_entered" | "other";
+
+export interface ScreenEvent {
+  id: string;
+  type: ScreenEventType;
+  plate: string;
+  message: string;
+  occurredAt: string;
+  sourceId: string | null;
+  sourceName: string | null;
+  handled: boolean;
+  handledAt: string | null;
+}
+
 export interface BlacklistRecord {
   id: string;
   plate: string;
@@ -103,10 +97,9 @@ export interface BlacklistRecord {
 
 export interface DashboardPayload {
   generatedAt: string;
-  metrics: DashboardMetric;
   throughput: ThroughputPoint[];
   lanes: LaneSnapshot[];
-  alerts: AlertItem[];
+  dispatchBoard?: DispatchBoard;
 }
 
 export interface SignalOverrideRequest {
@@ -125,6 +118,59 @@ export interface ManualDispatchRequest {
   vehicleType?: string;
   correctedVehicleCount?: number;
   markPriority?: boolean;
+}
+
+export interface DispatchConfig {
+  entryLaneOrder: string;
+  entryDispatchEnabled: boolean;
+  exitDispatchEnabled: boolean;
+  activeEntryLaneId?: string | null;
+  activeExitLaneId?: string | null;
+  assignmentReserveMinutes?: number;
+}
+
+export interface DispatchRuntimeState {
+  entryDispatchEnabled: boolean;
+  exitDispatchEnabled: boolean;
+}
+
+export interface DispatchTicket {
+  id: string;
+  plate: string;
+  yardEntryTime: string;
+  assignedLaneId: string | null;
+  assignedLaneName: string | null;
+  assignedAt: string | null;
+  actualLaneId: string | null;
+  actualLaneName: string | null;
+  laneEntryTime: string | null;
+  exitTime: string | null;
+  closedAt: string | null;
+  vehicleType: string;
+  status:
+    | "ASSIGNED"
+    | "ENTERED"
+    | "ENTERED_MISMATCH"
+    | "DIRECT_ENTERED"
+    | "EXITED"
+    | "EXPIRED"
+    | "RESET"
+    | "NO_LANE_AVAILABLE";
+  source: string;
+  operator: string;
+  notes: string | null;
+}
+
+export interface DispatchBoard {
+  generatedAt: string;
+  activeEntryLaneId: string | null;
+  activeExitLaneId: string | null;
+  activeEntryLaneName: string | null;
+  activeExitLaneName: string | null;
+  entryDispatchEnabled: boolean;
+  exitDispatchEnabled: boolean;
+  waitingAssignments: DispatchTicket[];
+  recentDispatches: DispatchTicket[];
 }
 
 export interface BlacklistPayload {

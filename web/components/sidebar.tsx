@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
-  AlertTriangle,
   Bug,
   ClipboardPenLine,
   ChevronRight,
@@ -12,7 +11,8 @@ import {
   LayoutDashboard,
   LogOut,
   Settings2,
-  ShieldAlert,
+  Shield,
+  TriangleAlert,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { canAccessBlacklist, canDispatch } from "@/lib/permissions";
@@ -37,10 +37,10 @@ function normalizeProfileText(value?: string) {
 const navItems = [
   { href: "/", label: "车道总览", icon: LayoutDashboard, visible: () => true },
   { href: "/signals", label: "信号灯控制", icon: Settings2, visible: canDispatch },
-  { href: "/blacklist", label: "黑名单预警", icon: ShieldAlert, visible: canAccessBlacklist },
-  { href: "/entries", label: "入场记录", icon: History, visible: () => true },
-  { href: "/dispatch", label: "手动修正", icon: ClipboardPenLine, visible: canDispatch },
-  { href: "/alerts", label: "预警中心", icon: AlertTriangle, visible: () => true },
+  { href: "/blacklist", label: "黑名单管理", icon: Shield, visible: canAccessBlacklist },
+  { href: "/entries", label: "车辆流水", icon: History, visible: () => true },
+  { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
+  { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
   { href: "/debug", label: "硬件调试", icon: Bug, visible: () => true },
 ];
 
@@ -56,9 +56,10 @@ export function Sidebar() {
     <aside className="hidden w-64 shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--bg-panel-strong)] lg:flex">
       <div className="flex h-16 items-center border-b border-[var(--border-soft)] px-6">
         <Activity className="mr-3 size-6 text-blue-500" />
-        <h1 className="text-lg font-bold tracking-tight text-[var(--text-primary)]">
-          智行调度 <span className="text-blue-500">v2.1</span>
-        </h1>
+        <div>
+          <h1 className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">出租车智能调度系统</h1>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">调度控制台</p>
+        </div>
       </div>
 
       <nav className="flex-1 py-4">

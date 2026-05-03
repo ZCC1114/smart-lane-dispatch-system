@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Power, RefreshCcw, ShieldAlert } from "lucide-react";
+import { LockKeyhole, Power, RefreshCcw } from "lucide-react";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { Panel } from "@/components/panel";
@@ -13,7 +13,7 @@ import { canOperateSignals } from "@/lib/permissions";
 import { formatDateTime, laneStatusLabel, ledStatusLabel, sensorStatusLabel, signalLabel } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
-const signalOptions: SignalState[] = ["RED", "YELLOW", "GREEN"];
+const signalOptions: SignalState[] = ["RED", "GREEN"];
 
 export default function SignalsPage() {
   const role = useAuthStore((state) => state.user?.role);
@@ -32,8 +32,14 @@ export default function SignalsPage() {
     queryKey: ["lanes"],
     queryFn: api.getLanes,
   });
+  const dispatchBoardQuery = useQuery({
+    queryKey: ["dispatch-board"],
+    queryFn: api.getDispatchBoard,
+  });
 
   const selectedLane = lanesQuery.data?.find((lane) => lane.id === (selectedLaneId ?? lanesQuery.data?.[0]?.id)) ?? lanesQuery.data?.[0];
+  const activeEntryLaneId = dispatchBoardQuery.data?.activeEntryLaneId ?? null;
+  const activeExitLaneId = dispatchBoardQuery.data?.activeExitLaneId ?? null;
 
   const signalMutation = useMutation({
     mutationFn: () => api.updateSignal(pendingAction!),
@@ -42,7 +48,6 @@ export default function SignalsPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["lanes"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["alerts"] }),
       ]);
     },
   });
@@ -105,6 +110,14 @@ export default function SignalsPage() {
                   <div>
                     <p className="font-semibold text-[var(--text-primary)]">{lane.name}</p>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">{lane.zone} · {lane.code}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {lane.id === activeEntryLaneId ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">当前入口开放</span>
+                      ) : null}
+                      {lane.id === activeExitLaneId ? (
+                        <span className="rounded-full bg-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-700">当前出口开放</span>
+                      ) : null}
+                    </div>
                   </div>
                   <StatusBadge value={lane.mode} kind="mode" />
                 </div>
@@ -121,16 +134,35 @@ export default function SignalsPage() {
         {selectedLane ? (
           <Panel
             title={selectedLane.name}
-            eyebrow="信号联动控制"
+            eyebrow="异常人工干预"
             action={
               readOnly ? (
                 <div className="inline-flex items-center gap-2 rounded-sm border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  <ShieldAlert className="size-3.5" />
+                  <LockKeyhole className="size-3.5" />
                   当前账号仅可查看
                 </div>
               ) : null
             }
           >
+            <div className="mb-4 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-sm border border-[var(--border-soft)] bg-[var(--bg-panel-soft)] px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">当前入口开放车道</p>
+                <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
+                  {dispatchBoardQuery.data?.activeEntryLaneName ?? dispatchBoardQuery.data?.activeEntryLaneId ?? "未开启"}
+                </p>
+              </div>
+              <div className="rounded-sm border border-[var(--border-soft)] bg-[var(--bg-panel-soft)] px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">当前出口开放车道</p>
+                <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">
+                  {dispatchBoardQuery.data?.activeExitLaneName ?? dispatchBoardQuery.data?.activeExitLaneId ?? "未开启"}
+                </p>
+              </div>
+              <div className="rounded-sm border border-[var(--border-soft)] bg-[var(--bg-panel-soft)] px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">待入道预留</p>
+                <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">{dispatchBoardQuery.data?.waitingAssignments.length ?? 0} 辆</p>
+              </div>
+            </div>
+
             <div className="grid gap-6 xl:grid-cols-[0.78fr_1.22fr]">
               <div className="rounded-sm border border-[var(--border-soft)] bg-white p-6">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">当前信号态</p>
@@ -139,11 +171,26 @@ export default function SignalsPage() {
                 </div>
                 <div className="mt-6 grid gap-3 text-sm text-[var(--text-secondary)]">
                   <p>车辆在场 {selectedLane.vehicleCount} / {selectedLane.capacity}</p>
+                  <p>待入道预留 {selectedLane.reservedCount} 辆</p>
+                  <p>剩余可分配 {selectedLane.availableSlots} 辆</p>
                   <p>信息屏状态 {ledStatusLabel(selectedLane.ledStatus)}</p>
                   <p>传感状态 {sensorStatusLabel(selectedLane.sensorStatus)}</p>
                   <p>最近采集 {selectedLane.lastSensorAt ? formatDateTime(selectedLane.lastSensorAt) : "暂无"}</p>
                   <p>最近识别 {selectedLane.lastEntryAt ? `${selectedLane.lastEntryPlate ?? "未识别车牌"} · ${formatDateTime(selectedLane.lastEntryAt)}` : "暂无"}</p>
                   <p>当前车道状态 <span className="text-[var(--text-primary)]">{laneStatusLabel(selectedLane.status)}</span></p>
+                  <p>
+                    当前调度角色
+                    <span className="text-[var(--text-primary)]">
+                      {" "}
+                      {selectedLane.id === activeEntryLaneId && selectedLane.id === activeExitLaneId
+                        ? "入口/出口同时开放"
+                        : selectedLane.id === activeEntryLaneId
+                          ? "入口开放车道"
+                          : selectedLane.id === activeExitLaneId
+                            ? "出口开放车道"
+                            : "等待轮转"}
+                    </span>
+                  </p>
                 </div>
               </div>
 
@@ -160,7 +207,7 @@ export default function SignalsPage() {
                       </div>
                       <Power className="size-5 text-[var(--text-muted)]" />
                     </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
                       {signalOptions.map((signal) => (
                         <button
                           key={signal}

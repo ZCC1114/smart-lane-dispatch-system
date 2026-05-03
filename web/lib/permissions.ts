@@ -12,13 +12,9 @@ export function canDispatch(role: UserRole | undefined) {
   return role === "ADMIN" || role === "DISPATCHER";
 }
 
-export function canResolveAlerts(role: UserRole | undefined) {
-  return role === "ADMIN" || role === "DISPATCHER";
-}
-
 export function canViewPath(role: UserRole | undefined, pathname: string) {
   if (!role) return false;
-  if (pathname === "/" || pathname.startsWith("/entries") || pathname.startsWith("/alerts")) {
+  if (pathname === "/" || pathname.startsWith("/entries") || pathname.startsWith("/vehicle-alerts")) {
     return true;
   }
   if (pathname.startsWith("/signals") || pathname.startsWith("/dispatch")) {

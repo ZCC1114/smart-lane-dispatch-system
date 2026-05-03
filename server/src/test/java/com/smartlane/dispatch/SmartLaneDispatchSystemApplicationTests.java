@@ -40,7 +40,7 @@ class SmartLaneDispatchSystemApplicationTests {
 	@Test
 	void dashboardShouldRequireAuthentication() throws Exception {
 		mockMvc.perform(get("/api/dashboard"))
-			.andExpect(status().isForbidden());
+			.andExpect(status().isUnauthorized());
 	}
 
 }

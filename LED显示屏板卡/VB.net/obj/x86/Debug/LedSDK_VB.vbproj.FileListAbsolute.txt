@@ -1,0 +1,16 @@
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\demo\obj\x86\Debug\LedSDK_VB.Resources.resources
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\demo\obj\x86\Debug\LedSDK_VB.vbproj.GenerateResource.Cache
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\lib\LedSDK_VB.exe
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\lib\LedSDK_VB.pdb
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\lib\LedSDK_VB.xml
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\demo\obj\x86\Debug\LedSDK_VB.exe
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\demo\obj\x86\Debug\LedSDK_VB.xml
+E:\WorkGit\BX-V-VI\bx.dual.vb.net\src\demo\obj\x86\Debug\LedSDK_VB.pdb
+E:\WorkGit\eqk\Debug\LedSDK_VB.exe
+E:\WorkGit\eqk\Debug\LedSDK_VB.pdb
+E:\WorkGit\eqk\Debug\LedSDK_VB.xml
+E:\WorkGit\eqk\demo\obj\x86\Debug\LedSDK_VB.Resources.resources
+E:\WorkGit\eqk\demo\obj\x86\Debug\LedSDK_VB.vbproj.GenerateResource.Cache
+E:\WorkGit\eqk\demo\obj\x86\Debug\LedSDK_VB.exe
+E:\WorkGit\eqk\demo\obj\x86\Debug\LedSDK_VB.xml
+E:\WorkGit\eqk\demo\obj\x86\Debug\LedSDK_VB.pdb

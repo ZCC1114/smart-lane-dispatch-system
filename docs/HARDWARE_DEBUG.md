@@ -1,0 +1,623 @@
+# 出租车蓄车池硬件联调测试手册
+
+## 一、系统架构与设备清单
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        后端服务 (Spring Boot)                  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ REST API    │  │ MQTT Gateway│  │ WebSocket Broadcast │  │
+│  │ /api/...    │  │ SimpleMqtt  │  │ /topic/operations   │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
+└─────────┼────────────────┼────────────────────┼─────────────┘
+          │                │                    │
+          │         ┌──────┴──────┐            │
+          │         │ MQTT Broker │            │
+          │         │ (Mosquitto) │            │
+          │         └──────┬──────┘            │
+          │                │                    │
+    [总入口摄像头]          │              [司机大屏]
+    REST API上报           │              /screen
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+   [停车相机MF]     [智能相机]        [DIDO模块]
+   (车道入口)        (车道出口)       (红绿灯控制)
+```
+
+| 设备 | 数量 | 通信方式 | 作用 |
+|------|------|----------|------|
+| 总入口摄像头 | 1 | REST API | 抓拍进入蓄车池的车辆（未进车道） |
+| 停车相机(MF) | N | MQTT | 车道入口车牌识别 + LED显示 + 道闸 |
+| 智能相机 | N | MQTT | 车道出口计数 + 地感检测 |
+| DIDO模块 | N | MQTT | 红绿灯继电器控制 |
+| 司机大屏 | 1 | HTTP/WebSocket | 显示车辆推荐车道 |
+
+---
+
+## 二、阶段 0：环境准备
+
+### 2.1 部署 MQTT Broker
+
+推荐使用 **Mosquitto**（轻量稳定）或 **EMQX**（功能丰富）。
+
+**安装 Mosquitto：**
+
+```bash
+# macOS
+brew install mosquitto
+brew services start mosquitto
+
+# Ubuntu
+sudo apt install mosquitto mosquitto-clients
+sudo systemctl start mosquitto
+
+# Docker
+docker run -d -p 1883:1883 -p 9001:9001 eclipse-mosquitto
+```
+
+**验证 Broker 运行：**
+
+```bash
+# 订阅测试主题
+mosquitto_sub -h 127.0.0.1 -p 1883 -t "test/hello"
+
+# 另开终端，发布消息
+mosquitto_pub -h 127.0.0.1 -p 1883 -t "test/hello" -m "broker ok"
+
+# 如果订阅端收到 "broker ok"，Broker 正常
+```
+
+### 2.2 准备设备清单表
+
+向硬件厂商索取以下信息，填入表格：
+
+| 车道 | laneId | mfSn | mfGroupId | cameraDevId | didoDeviceId | 备注 |
+|------|--------|------|-----------|-------------|--------------|------|
+| 1号车道 | L01 | MF001 | 1 | CAM01 | DIDO01 | |
+| 2号车道 | L02 | MF002 | 2 | CAM02 | DIDO02 | |
+| ... | | | | | | |
+
+### 2.3 后端配置
+
+在 `server/src/main/resources/application.properties` 末尾追加（根据实际设备表修改）：
+
+```properties
+# ============================================================
+# 启用 MQTT 网关（开发/联调时从 mock 切到 mqtt）
+# ============================================================
+app.device.gateway=mqtt
+app.device.mqtt.enabled=true
+app.device.mqtt.host=192.168.1.100      # 你的 MQTT Broker IP
+app.device.mqtt.port=1883
+app.device.mqtt.client-id=smart-lane-dispatch-system
+app.device.mqtt.username=               # 如果有认证则填
+app.device.mqtt.password=
+
+# ============================================================
+# 车道与设备绑定（示例配了2条，实际配11条）
+# ============================================================
+app.device.lanes[0].lane-id=L01
+app.device.lanes[0].mf-sn=MF001
+app.device.lanes[0].mf-group-id=1
+app.device.lanes[0].mf-device-no=CAM01
+app.device.lanes[0].camera-dev-id=SMART-CAM-01
+app.device.lanes[0].dido-device-id=DIDO-01
+app.device.lanes[0].entry-red-relay=A01
+app.device.lanes[0].entry-green-relay=A02
+app.device.lanes[0].exit-red-relay=A03
+app.device.lanes[0].exit-green-relay=A04
+app.device.lanes[0].presence-input-key=B01
+
+app.device.lanes[1].lane-id=L02
+app.device.lanes[1].mf-sn=MF002
+app.device.lanes[1].mf-group-id=2
+app.device.lanes[1].mf-device-no=CAM02
+app.device.lanes[1].camera-dev-id=SMART-CAM-02
+app.device.lanes[1].dido-device-id=DIDO-02
+app.device.lanes[1].entry-red-relay=A01
+app.device.lanes[1].entry-green-relay=A02
+app.device.lanes[1].exit-red-relay=A03
+app.device.lanes[1].exit-green-relay=A04
+app.device.lanes[1].presence-input-key=B01
+```
+
+**重启后端**，观察日志：
+
+```
+MQTT device gateway connected to 192.168.1.100:1883
+MQTT device gateway indexed 11 lane bindings
+```
+
+如果看到 `connected` 且 `indexed N lane bindings`，MQTT 连接成功。
+
+---
+
+## 三、阶段 1：DIDO 红绿灯模块联调（最简单，先调它）
+
+### 3.1 测试目标
+
+验证后端能正确控制车道入口/出口的红绿灯。
+
+### 3.2 DIDO 协议说明
+
+- **下发 Topic**：`/device/{didoDeviceId}/get`
+- **上报 Topic**：`/device/{didoDeviceId}/update`
+- **继电器值**：
+  - `100000` = 断开（红灯）
+  - `110000` = 持续吸合（绿灯）
+  - `900000+N` = 脉冲 N 毫秒（如 `900500` = 脉冲 500ms）
+
+### 3.3 联调步骤
+
+**Step 1：在后端手动切换车道信号灯**
+
+打开工作人员后台 -> 信号灯控制 `/signals` -> 选择 1 号车道 -> 点击"入口绿灯"。
+
+**Step 2：在 MQTT 客户端监听下发消息**
+
+```bash
+mosquitto_sub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/get"
+```
+
+**预期结果**（收到 JSON）：
+
+```json
+{"A01": 100000, "A02": 110000, "A03": 100000, "A04": 100000, "res": "dido-12345"}
+```
+
+- A01(入口红灯)=断开, A02(入口绿灯)=吸合 -> 入口绿灯亮
+- A03(出口红灯)=断开, A04(出口绿灯)=断开 -> 出口红灯亮
+
+**Step 3：模拟 DIDO 继电器状态反馈**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/update" -m '{
+  "A01": 100000,
+  "A02": 110000,
+  "A03": 100000,
+  "A04": 100000
+}'
+```
+
+**验证**：后端日志应出现 `DIDO 继电器状态已反馈`，且前端信号灯状态变为 SYNCED。
+
+### 3.4 常见问题
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| 没收到 MQTT 消息 | Topic 不匹配 | 检查 `dido-device-id` 与 Topic 中的设备ID是否一致 |
+| DIDO 不响应 | 继电器键名不对 | 确认 `entry-red-relay` 等配置与实际硬件口对应 |
+| 红绿灯反了 | 继电器逻辑反了 | 检查 `resolveSignalFromRelayFeedback` 逻辑，或交换 red/green 配置 |
+
+---
+
+## 四、阶段 2：停车相机(MF)联调
+
+### 4.1 测试目标
+
+验证车道入口车牌识别 + LED显示 + 道闸控制。
+
+### 4.2 MF 协议说明
+
+- **上报 Topic**：`/{mfSn}/mf/up`
+- **下发 Topic**：`/{mfSn}/mf/down`
+- **关键 cmd**：
+  - `heartbeat` - 心跳
+  - `plateResult` - 车牌识别结果
+  - `ledControl` - LED控制（下发）
+  - `ioOutput` - 道闸开关（下发）
+
+### 4.3 联调步骤
+
+**Step 1：模拟心跳（验证设备在线）**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/MF001/mf/up" -m '{
+  "cmd": "heartbeat",
+  "sn": "MF001",
+  "timestamp": 1713936000000,
+  "data": {
+    "deviceStatus": [
+      {"deviceNo": "CAM01", "network": "online"}
+    ]
+  }
+}'
+```
+
+**验证**：后端日志 `停车相机在线`，前端该车道传感器状态变为"在线"。
+
+**Step 2：模拟车牌识别（车辆进入车道）**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/MF001/mf/up" -m '{
+  "cmd": "plateResult",
+  "sn": "MF001",
+  "msgId": "test-001",
+  "timestamp": 1713936100000,
+  "data": {
+    "groupId": "1",
+    "deviceNo": "CAM01",
+    "plateNo": "苏A12345",
+    "parkingTime": "2024-04-24 12:15:00"
+  }
+}'
+```
+
+**预期结果**：
+
+1. 后端日志：`registerVehicleEntryFromDevice` -> `vehicle_entry_captured`
+2. 车道 1 的 `vehicleCount` +1
+3. `EntryLog` 新增一条记录
+4. 前端该车道显示当前车牌 "苏A12345"
+
+**Step 3：验证 LED 和道闸下发**
+
+当车道入口绿灯时，后端会自动向 MF 发送：
+
+- `ledControl`：显示"入口开放，请驶入本车道"
+- `ioOutput`：action=open（开闸）
+
+监听下发 Topic：
+
+```bash
+mosquitto_sub -h 192.168.1.100 -p 1883 -t "/MF001/mf/down"
+```
+
+**预期收到**：
+
+```json
+{"cmd":"ledControl","msgId":"...","timestamp":...,"sn":"MF001","data":{"groupId":"1","voice":"入口开放，请驶入本车道","show":[{"text":"苏A12345"}]}}
+{"cmd":"ioOutput","msgId":"...","timestamp":...,"sn":"MF001","data":{"groupId":"1","action":"open"}}
+```
+
+### 4.4 常见问题
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| plateResult 无响应 | lane binding 匹配失败 | 检查 `sn` + `groupId` + `deviceNo` 是否与配置一致 |
+| LED 不显示 | groupId 不对 | 确认 `mf-group-id` 配置 |
+| 道闸不开 | 入口信号不是 GREEN | 确认该车道是当前的 `activeEntryLaneId` |
+
+---
+
+## 五、阶段 3：智能相机(计数报警相机)联调
+
+### 5.1 测试目标
+
+验证出口车辆计数 + 地感在位检测。
+
+### 5.2 智能相机协议说明
+
+- **上报 Topic**：`/device/{cameraDevId}/update`
+- **遗嘱 Topic**：`/device/{cameraDevId}/will`
+- **下发 Topic**：`/device/{cameraDevId}/get`
+- **关键 cmd**：
+  - `heartbeat` - 心跳
+  - `passCount` - 进出计数
+  - `getHaveCarRsp` - 在位检测响应
+  - `devAlarm` - 报警事件
+
+### 5.3 联调步骤
+
+**Step 1：模拟心跳**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+  "cmd": "heartbeat",
+  "devId": "SMART-CAM-01",
+  "utcTs": 1713936000000
+}'
+```
+
+**Step 2：模拟车辆出场计数**
+
+假设当前车道 1 有 3 辆车，现在出去了 1 辆：
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+  "cmd": "passCount",
+  "devId": "SMART-CAM-01",
+  "msgId": "pc-001",
+  "utcTs": 1713936500000,
+  "inCount": 3,
+  "outCount": 1
+}'
+```
+
+**预期结果**：
+
+1. 后端日志：`pass_count_delta` -> `vehicleCount` 从 3 减到 2
+2. `EntryLog` 最早的一条记录被标记 `exitTime`
+3. 前端该车道的占用数减 1
+
+**再次发送**（再出去 2 辆，清空车道）：
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+  "cmd": "passCount",
+  "devId": "SMART-CAM-01",
+  "msgId": "pc-002",
+  "utcTs": 1713936600000,
+  "inCount": 3,
+  "outCount": 3
+}'
+```
+
+**预期结果**：
+
+1. `vehicleCount` 变为 0
+2. 如果该车道是当前出口开放车道，后端自动 `advanceExitLane`，切换到下一条出口车道
+3. 前端显示新的出口开放车道
+
+**Step 3：模拟地感在位检测**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+  "cmd": "getHaveCarRsp",
+  "devId": "SMART-CAM-01",
+  "content": {
+    "haveCar": 0
+  },
+  "utcTs": 1713936700000
+}'
+```
+
+**预期结果**：后端 `lane_presence_polled`，如果该车道没有在场车辆，清空 `vehicleCount` 和 `currentPlate`。
+
+### 5.4 常见问题
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| passCount 不计数 | outCount 没有增加 | 智能相机计数是累计值，outCount 必须比上次大 |
+| 计数不准 | 相机重启后计数归零 | 代码中用 `counterDelta` 处理了归零逻辑：`current >= previous ? current - previous : current` |
+| 出口不切换 | vehicleCount 没到 0 | 检查 `passCount` 的 `outCount` 是否正确增加 |
+
+---
+
+## 六、阶段 4：总入口摄像头联调
+
+### 6.1 测试目标
+
+验证蓄车池总入口抓拍 -> 系统推荐车道 -> 大屏显示。
+
+### 6.2 联调步骤
+
+总入口摄像头**不走 MQTT**，直接调用后端 REST API。
+
+**Step 1：调用总入口抓拍 API**
+
+```bash
+curl -X POST http://localhost:8080/api/integration/yard-entries \
+  -H "Authorization: Bearer <你的token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "plate": "苏B88888",
+    "vehicleType": "出租车",
+    "source": "YARD_CAMERA",
+    "capturedAt": "2024-04-24T12:20:00+08:00"
+  }'
+```
+
+**预期结果**：
+
+```json
+{
+  "id": "DSP-XXXX",
+  "plate": "苏B88888",
+  "status": "ASSIGNED",
+  "assignedLaneId": "L01",
+  "assignedLaneName": "出租车蓄车道 01",
+  "notes": "大屏指引前往 出租车蓄车道 01"
+}
+```
+
+**Step 2：验证司机大屏**
+
+打开 `http://localhost:3000/screen`，应该看到：
+
+- 待入道车辆列表中出现 "苏B88888 -> 出租车蓄车道 01"
+
+**Step 3：车辆按推荐进入车道**
+
+```bash
+curl -X POST http://localhost:8080/api/integration/vehicle-entries \
+  -H "Authorization: Bearer <你的token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "laneId": "L01",
+    "plate": "苏B88888",
+    "vehicleType": "出租车",
+    "source": "LANE_CAMERA",
+    "entryTime": "2024-04-24T12:21:00+08:00"
+  }'
+```
+
+**预期结果**：
+
+- `DispatchTicket.status` 变为 `ENTERED`
+- 车道 1 的 `vehicleCount` +1
+
+**Step 4：模拟错道（不按推荐进入）**
+
+再发一个总入口抓拍给 L01，然后车辆进入 L02：
+
+```bash
+# 总入口推荐 L01
+curl -X POST http://localhost:8080/api/integration/yard-entries \
+  -H "Authorization: Bearer <你的token>" \
+  -H "Content-Type: application/json" \
+  -d '{"plate": "苏C99999", "capturedAt": "2024-04-24T12:22:00+08:00"}'
+
+# 车辆实际进入 L02
+curl -X POST http://localhost:8080/api/integration/vehicle-entries \
+  -H "Authorization: Bearer <你的token>" \
+  -H "Content-Type: application/json" \
+  -d '{"laneId": "L02", "plate": "苏C99999", "entryTime": "2024-04-24T12:23:00+08:00"}'
+```
+
+**预期结果**：
+
+- `DispatchTicket.status` = `ENTERED_MISMATCH`
+- `notes` = "司机未按屏显进入推荐车道"
+
+---
+
+## 七、阶段 5：端到端场景测试
+
+### 场景 A：正常入场 -> 出场全流程
+
+```
+Step 1: 日清（清空上一班次数据）
+  -> POST /api/dispatch/daily-reset
+
+Step 2: 总入口抓拍
+  -> POST /api/integration/yard-entries {plate: "苏A11111"}
+  -> 预期：推荐 L01，大屏显示
+
+Step 3: 车辆进入 L01
+  -> 模拟 MF plateResult 或 POST /api/integration/vehicle-entries
+  -> 预期：L01 vehicleCount=1
+
+Step 4: L01 满员后继续入场
+  -> 重复 Step 2~3，直到 L01 vehicleCount == capacity
+  -> 预期：系统自动 advanceEntryLane，下一个车辆被推荐到 L02
+
+Step 5: L01 车辆出场
+  -> 模拟智能相机 passCount (outCount++)
+  -> 预期：L01 vehicleCount 减少
+
+Step 6: L01 全部清空
+  -> 继续出场直到 vehicleCount=0
+  -> 预期：如果 L01 是当前出口车道，自动 advanceExitLane
+```
+
+### 场景 B：一边进一边出
+
+```
+前提：L01 是当前入口开放车道，也是当前出口开放车道
+
+Step 1: 车辆进入 L01
+  -> vehicleCount 从 0 -> 1
+
+Step 2: 车辆驶出 L01
+  -> 智能相机 passCount outCount=1
+  -> vehicleCount 从 1 -> 0
+
+Step 3: 同时有车辆进入
+  -> 如果 vehicleCount + reservedCount < capacity，入口保持开放
+  -> 如果满了，入口自动切换到 L02
+```
+
+### 场景 C：入口满了自动切换
+
+```
+前提：L01 capacity=5，当前 vehicleCount=4，reservedCount=1
+
+Step 1: 总入口再抓拍一辆车
+  -> POST /api/integration/yard-entries
+  -> L01 vehicleCount(4) + reservedCount(1) + 新预留(1) = 6 > capacity(5)
+  -> 系统 advanceEntryLane，新车辆被推荐到 L02
+```
+
+---
+
+## 八、MQTT 联调辅助脚本
+
+把常用的 MQTT 测试命令整理成一个脚本，保存为 `hardware-test.sh`：
+
+```bash
+#!/bin/bash
+BROKER="192.168.1.100"
+PORT="1883"
+
+# ---------- DIDO ----------
+pub_dido() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/device/DIDO-01/update" -m "$1"
+}
+
+# ---------- MF 停车相机 ----------
+pub_mf_heartbeat() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/MF001/mf/up" -m '{
+    "cmd":"heartbeat","sn":"MF001","timestamp":'$(date +%s000)',
+    "data":{"deviceStatus":[{"deviceNo":"CAM01","network":"online"}]}
+  }'
+}
+
+pub_mf_plate() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/MF001/mf/up" -m '{
+    "cmd":"plateResult","sn":"MF001","msgId":"test-'$(date +%s)'",
+    "data":{"groupId":"1","deviceNo":"CAM01","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
+  }'
+}
+
+# ---------- 智能相机 ----------
+pub_cam_heartbeat() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+    "cmd":"heartbeat","devId":"SMART-CAM-01","utcTs":'$(date +%s000)'
+  }'
+}
+
+pub_cam_pass() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+    "cmd":"passCount","devId":"SMART-CAM-01","msgId":"pc-'$(date +%s)'",
+    "inCount":3,"outCount":'$1'
+  }'
+}
+
+pub_cam_havecar() {
+  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+    "cmd":"getHaveCarRsp","devId":"SMART-CAM-01",
+    "content":{"haveCar":'$1'},"utcTs":'$(date +%s000)'
+  }'
+}
+
+# 使用示例：
+# ./hardware-test.sh pub_mf_plate 苏A12345
+# ./hardware-test.sh pub_cam_pass 2
+# ./hardware-test.sh pub_cam_havecar 0
+
+$1 "$2"
+```
+
+---
+
+## 九、联调检查清单
+
+| 检查项 | 停车相机 | 智能相机 | DIDO | 总入口 |
+|--------|---------|---------|------|--------|
+| 网络连通 (ping) | [ ] | [ ] | [ ] | [ ] |
+| MQTT 连接成功 | [ ] | [ ] | [ ] | N/A |
+| 心跳上报正常 | [ ] | [ ] | [ ] | N/A |
+| 数据上报触发业务 | [ ] | [ ] | [ ] | [ ] |
+| 后端下发指令正常 | [ ] | N/A | [ ] | N/A |
+| 前端状态同步 | [ ] | [ ] | [ ] | [ ] |
+| 大屏显示正确 | N/A | N/A | N/A | [ ] |
+
+---
+
+## 十、常见问题速查
+
+**Q1：后端日志显示 "MQTT 网关未启用"**
+
+> 检查 `app.device.gateway=mqtt` 和 `app.device.mqtt.enabled=true`
+
+**Q2：后端连不上 MQTT Broker**
+
+> 检查 Broker IP/端口、防火墙、后端服务器与 Broker 的网络连通性
+
+**Q3：设备上报了消息但后端没反应**
+
+> 检查 Topic 格式是否匹配。特别注意 `+/mf/up` 中的 `+` 是通配符，实际 Topic 中必须有对应的 `mfSn`
+
+**Q4：车道状态一直是 OFFLINE**
+
+> 检查设备心跳是否正常上报，或手动调用 `POST /api/integration/lane-sensors` 模拟传感器数据
+
+**Q5：红绿灯控制下发成功但设备没动作**
+
+> 检查 DIDO 的继电器键名（A01/A02...）是否与硬件实际接线口一致
+
+**Q6：大屏没有显示推荐车辆**
+
+> 确认 `/api/screen/board` 接口能正常返回数据，且大屏页面轮询间隔正常（3秒）

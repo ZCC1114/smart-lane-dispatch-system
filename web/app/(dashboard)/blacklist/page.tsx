@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PencilLine, Plus, Search, Trash2 } from "lucide-react";
 import { ConfirmModal } from "@/components/confirm-modal";
@@ -25,14 +25,14 @@ export default function BlacklistPage() {
   const canManage = canAccessBlacklist(role);
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
+  const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState<BlacklistPayload>(emptyForm);
   const [editingRecord, setEditingRecord] = useState<BlacklistRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const blacklistQuery = useQuery({
-    queryKey: ["blacklist", deferredQuery],
-    queryFn: () => api.getBlacklist(deferredQuery),
+    queryKey: ["blacklist", searchQuery],
+    queryFn: () => api.getBlacklist(searchQuery),
   });
 
   const saveMutation = useMutation({
@@ -61,12 +61,17 @@ export default function BlacklistPage() {
 
   const records = blacklistQuery.data ?? [];
 
+  function handleSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSearchQuery(query.trim());
+  }
+
   return (
     <>
       <ConfirmModal
         open={Boolean(deletingId)}
         title="删除黑名单记录"
-        description="该操作会将车辆从内部黑名单库移除，后续同车牌入场将不再触发黑名单预警。"
+        description="该操作会将车辆从内部黑名单库移除，后续同车牌入场将不再命中黑名单。"
         confirmText="确认删除"
         busy={deleteMutation.isPending}
         onCancel={() => setDeletingId(null)}
@@ -76,17 +81,26 @@ export default function BlacklistPage() {
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
         <Panel
           title="黑名单车辆库"
-          eyebrow="独立预警库"
+          eyebrow="车辆风控库"
           action={
-            <div className="relative w-full max-w-sm">
-              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="w-full rounded-sm border border-[var(--border-soft)] bg-white py-2.5 pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
-                placeholder="搜索车牌、原因或操作员"
-              />
-            </div>
+            <form onSubmit={handleSearch} className="flex w-full max-w-lg items-center gap-3">
+              <label className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="w-full rounded-sm border border-[var(--border-soft)] bg-white py-2.5 pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
+                  placeholder="搜索车牌、原因或操作员"
+                />
+              </label>
+              <button
+                type="submit"
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-sm bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500"
+              >
+                <Search className="size-4" />
+                查询
+              </button>
+            </form>
           }
         >
           <div className="overflow-hidden rounded-sm border border-[var(--border-soft)]">
@@ -217,7 +231,7 @@ export default function BlacklistPage() {
                 disabled={!canManage}
                 onChange={(event) => setFormState((current) => ({ ...current, active: event.target.checked }))}
               />
-              <span className="text-sm text-[var(--text-secondary)]">记录保持激活，入场时触发预警</span>
+              <span className="text-sm text-[var(--text-secondary)]">记录保持激活，入场时用于黑名单命中核验</span>
             </label>
 
             <button

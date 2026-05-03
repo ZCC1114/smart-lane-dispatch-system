@@ -67,13 +67,106 @@ cp .env.example .env
 - `APP_BOOTSTRAP_ADMIN_PASSWORD`
 - `APP_BOOTSTRAP_ADMIN_DISPLAY_NAME`
 - `APP_BOOTSTRAP_ADMIN_STATION`
+- `APP_DEVICE_GATEWAY`
+- `APP_DEVICE_MQTT_ENABLED`
+- `APP_DEVICE_MQTT_HOST`
+- `APP_DEVICE_MQTT_PORT`
+- `APP_DEVICE_MQTT_CLIENT_ID`
+- `APP_DEVICE_MQTT_USERNAME`
+- `APP_DEVICE_MQTT_PASSWORD`
+
+## 设备 MQTT 对接
+
+后端默认使用 `mock` 设备网关，不会连接现场设备。现场联调时开启 MQTT 网关:
+
+```bash
+APP_DEVICE_GATEWAY=mqtt \
+APP_DEVICE_MQTT_ENABLED=true \
+APP_DEVICE_MQTT_HOST=192.168.1.10 \
+APP_DEVICE_MQTT_PORT=1883 \
+APP_DEVICE_MQTT_USERNAME='mqtt-user' \
+APP_DEVICE_MQTT_PASSWORD='mqtt-password' \
+SPRING_PROFILES_ACTIVE=mysql \
+./mvnw spring-boot:run
+```
+
+已接入的协议:
+
+- `车牌识别.pdf`: 订阅 `/{sn}/mf/up`，处理 `heartbeat` 与 `plateResult`；下发 `ledControl`、`ioOutput`、`plateResultResp` 到 `/{sn}/mf/down`。
+- `计数报警.docx`: 订阅 `/device/{cameraDevId}/update` 和 `/device/{cameraDevId}/will`，处理 `heartbeat`、`devAlarm`、`passCount`、`getHaveCarRsp`；定时下发 `getHaveCar`，启动后可下发 `getVerInfo`。
+- `dido模块.pdf`: 下发继电器红绿灯控制，默认使用普通吸合/断开命令 `110000` / `100000`；读取 DIDO 输入状态并可按 `presenceInputKey` 同步车道是否有车。
+
+车道与设备绑定需要按现场设备编号配置。`application.properties` 示例:
+
+```properties
+app.device.gateway=mqtt
+app.device.mqtt.enabled=true
+app.device.mqtt.host=192.168.1.10
+app.device.mqtt.port=1883
+app.device.mqtt.username=mqtt-user
+app.device.mqtt.password=mqtt-password
+
+app.device.lanes[0].lane-id=L01
+app.device.lanes[0].mf-sn=MF-SN-001
+app.device.lanes[0].mf-group-id=1
+app.device.lanes[0].mf-device-no=CAM-ENTRY-01
+app.device.lanes[0].camera-dev-id=SMART-CAM-01
+app.device.lanes[0].dido-device-id=DIDO-01
+app.device.lanes[0].entry-red-relay=A01
+app.device.lanes[0].entry-green-relay=A02
+app.device.lanes[0].exit-red-relay=A03
+app.device.lanes[0].exit-green-relay=A04
+app.device.lanes[0].presence-input-key=B01
+```
+
+11 条车道需要配置 `app.device.lanes[0]` 到 `app.device.lanes[10]`。如果现场 MQTT Topic 与文档不同，可以覆盖:
+
+```properties
+app.device.parking-mf.up-topic-filter=/+/mf/up
+app.device.parking-mf.down-topic-template=/{mfSn}/mf/down
+app.device.smart-camera.up-topic-filter=/device/+/update
+app.device.smart-camera.will-topic-filter=/device/+/will
+app.device.smart-camera.down-topic-template=/device/{cameraDevId}/get
+app.device.dido.up-topic-filter=/device/+/update
+app.device.dido.down-topic-template=/device/{didoDeviceId}/get
+```
+
+红绿灯目前按两态处理: `GREEN` 表示通行，其他状态下发红灯。DIDO 如需脉冲模式，可设置 `app.device.dido.relay-mode=pulse_ms`，默认 `ordinary` 更适合持续点亮红/绿灯。
+
+### 蓄车池新流程说明
+
+- 总入口抓拍相机负责识别刚进入场地、尚未进入车道的出租车车牌
+- 后端按当前入口开放车道和预留名额生成推荐车道，并通过 `/api/dispatch/board` 提供给大屏或岗亭终端
+- 具体车道入口抓拍相机负责核验车辆是否进入了推荐车道；若司机未按屏显进入，会记录 `ENTERED_MISMATCH`
+- 出口放行不再按全局 FIFO 算法，而是只认当前出口开放车道；该车道车辆全部驶空后，才切到下一条出口车道
+- 当前实现默认预留名额保留 `2` 分钟；总入口抓拍分配车道后，满 2 分钟仍未被任何车道入口摄像头识别，会生成未进车道告警并释放预分配。可通过 `app.dispatch.assignment-reserve-minutes` 调整
+
+### 红绿灯状态与数据库边界
+
+- 数据库只保存业务数据和调度配置，例如 `lanes` 的容量、在场车辆数、车道模式，以及 `dispatch_configs` 的入口开放顺序、当前入口/出口活动车道
+- `lanes` 不保存当前实时红绿灯状态；页面接口中的 `entrySignal`、`exitSignal`、`ledMessage`、`ledStatus` 是后端运行时状态，不是数据库字段
+- 后端根据入口/出口顺序配置计算目标灯态，并向 DIDO 下发控制命令
+- `mock` 网关会立即把目标灯态模拟成设备反馈，便于本地演示
+- `mqtt` 网关以 DIDO 上报的继电器反馈作为真实灯态；如果只收到控制响应但没有继电器状态上报，页面不会把该响应当作最终灯态
+- 车牌识别、计数相机、DIDO 状态等设备消息到达后，后端会即时更新对应业务记录或运行时状态，例如总入口预分配记录、实际入道记录、车道车辆数、传感器在线状态和红绿灯反馈
 
 ## 数据初始化
 
-- `deploy/mysql/init/01-bootstrap.sql` 用于初始化默认数据库
-- 后端默认不会写入任何演示账号或业务演示数据
-- 数据库为空时，业务列表返回空数组；登录接口只有在用户表存在真实账号时才会成功
+- `deploy/mysql/init/01-bootstrap.sql` 用于创建默认数据库
+- `deploy/mysql/init/02-schema.sql` 用于创建业务表、索引与约束
+- `deploy/mysql/init/03-seed.sql` 用于初始化 `admin` 管理员、`L01` 到 `L11` 车道数据，以及默认入口/出口顺序配置
+- 后端默认使用 `spring.jpa.hibernate.ddl-auto=validate`，只校验表结构，不会自动建表或自动改表
+- 数据库为空时，需要先手动执行上述 SQL 脚本；否则后端会因表结构缺失启动失败
+- 初始化后的默认登录账号为 `admin / Admin@123`，正式交付前应立即改密或替换为现场账号
 - 如需运维兜底管理员，可显式开启 `APP_BOOTSTRAP_ADMIN_ENABLED=true`，系统会创建或重置一个受保护 `ADMIN` 账号
+
+本地 MySQL 手动初始化示例:
+
+```bash
+mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/01-bootstrap.sql
+mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/02-schema.sql
+mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/03-seed.sql
+```
 
 ## Bootstrap Admin 使用方法
 

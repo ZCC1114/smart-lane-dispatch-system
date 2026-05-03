@@ -2,10 +2,13 @@ package com.smartlane.dispatch.entity;
 
 import java.time.OffsetDateTime;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -49,17 +52,23 @@ public class Lane {
     @Column(nullable = false)
     private OffsetDateTime lastActionAt;
 
-    @Column(nullable = false)
+    @Transient
     private String entrySignal;
 
-    @Column(nullable = false)
+    @Transient
     private String exitSignal;
 
-    @Column(nullable = false)
+    @Transient
     private String ledMessage;
 
-    @Column(nullable = false)
+    @Transient
     private String ledStatus;
+
+    @Transient
+    private int reservedCount;
+
+    @Transient
+    private int availableSlots;
 
     @Column(nullable = false)
     private boolean priority;
@@ -71,4 +80,7 @@ public class Lane {
     private String lastEntryPlate;
 
     private OffsetDateTime lastEntryAt;
+
+    @JsonIgnore
+    private OffsetDateTime queueHeadAt;
 }

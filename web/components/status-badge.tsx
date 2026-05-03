@@ -1,11 +1,11 @@
 import { cn, laneModeLabel, laneStatusLabel, levelLabel, logStatusLabel } from "@/lib/utils";
-import type { AlertLevel, BlacklistLevel, LaneMode, LaneStatus, LogStatus } from "@/lib/types";
+import type { BlacklistLevel, LaneMode, LaneStatus, LogStatus } from "@/lib/types";
 
 export function StatusBadge({
   value,
   kind,
 }: {
-  value: LaneStatus | LaneMode | LogStatus | AlertLevel | BlacklistLevel;
+  value: LaneStatus | LaneMode | LogStatus | BlacklistLevel;
   kind: "lane" | "mode" | "log" | "level";
 }) {
   const styles =
@@ -33,9 +33,6 @@ export function StatusBadge({
               MEDIUM: "border-amber-500/20 bg-amber-500/10 text-amber-700",
               HIGH: "border-orange-500/20 bg-orange-500/10 text-orange-700",
               CRITICAL: "border-rose-500/20 bg-rose-500/10 text-rose-700",
-              INFO: "border-sky-500/20 bg-sky-500/10 text-sky-700",
-              WARNING: "border-amber-500/20 bg-amber-500/10 text-amber-700",
-              DANGER: "border-orange-500/20 bg-orange-500/10 text-orange-700",
             };
 
   const label =
@@ -45,7 +42,7 @@ export function StatusBadge({
         ? laneModeLabel(value as LaneMode)
         : kind === "log"
           ? logStatusLabel(value as LogStatus)
-          : levelLabel(value as AlertLevel | BlacklistLevel);
+          : levelLabel(value as BlacklistLevel);
 
   return (
     <span
