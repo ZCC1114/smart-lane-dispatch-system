@@ -57,14 +57,17 @@ public class DeviceGatewayProperties {
 		private boolean enabled = true;
 		private String upTopicFilter = "/device/+/update";
 		private String downTopicTemplate = "/device/{didoDeviceId}/get";
+		private String payloadMode = "json";
 		private String relayMode = "ordinary";
 		private int pulseMilliseconds = 500;
+		private boolean enableRemoteConfigOnConnect = false;
+		private boolean enableRelayUploadOnConnect = false;
 	}
 
 	@Data
 	public static class DidoTcpProperties {
-		private String host = "192.168.0.18";
-		private int port = 50000;
+		private String host = "192.168.1.18";
+		private int port = 8080;
 		private int timeoutMs = 3000;
 		private String protocol = "A1";
 	}

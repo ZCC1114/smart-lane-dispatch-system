@@ -29,6 +29,18 @@ services:
     volumes:
       - redis-data:/data
 
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: smart-lane-mqtt
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "${MQTT_WS_PORT:-9001}:9001"
+    volumes:
+      - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt-data:/mosquitto/data
+      - mqtt-log:/mosquitto/log
+
   server:
     build:
       context: ./server
@@ -38,6 +50,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_started
+      mqtt:
         condition: service_started
     environment:
       SPRING_PROFILES_ACTIVE: mysql
@@ -49,6 +63,21 @@ services:
       APP_REDIS_ENABLED: "true"
       APP_CORS_ALLOWED_ORIGINS: http://localhost:${APP_HTTP_PORT:-3002},http://127.0.0.1:${APP_HTTP_PORT:-3002},http://localhost:3000,http://127.0.0.1:3000,http://localhost:3002,http://127.0.0.1:3002
       APP_JPA_DDL_AUTO: validate
+      APP_DEVICE_GATEWAY: ${APP_DEVICE_GATEWAY:-mock}
+      APP_DEVICE_MQTT_ENABLED: ${APP_DEVICE_MQTT_ENABLED:-false}
+      APP_DEVICE_MQTT_HOST: ${APP_DEVICE_MQTT_HOST:-mqtt}
+      APP_DEVICE_MQTT_PORT: ${APP_DEVICE_MQTT_PORT:-1883}
+      APP_DEVICE_MQTT_CLIENT_ID: ${APP_DEVICE_MQTT_CLIENT_ID:-smart-lane-dispatch-system}
+      APP_DEVICE_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-}
+      APP_DEVICE_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-}
+      APP_DEVICE_DIDO_PAYLOAD_MODE: ${APP_DEVICE_DIDO_PAYLOAD_MODE:-json}
+      APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT:-false}
+      APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT:-false}
+      APP_DEVICE_L01_DIDO_DEVICE_ID: ${APP_DEVICE_L01_DIDO_DEVICE_ID:-DIDO-01}
+      APP_DEVICE_L01_ENTRY_RED_RELAY: ${APP_DEVICE_L01_ENTRY_RED_RELAY:-A01}
+      APP_DEVICE_L01_ENTRY_GREEN_RELAY: ${APP_DEVICE_L01_ENTRY_GREEN_RELAY:-A02}
+      APP_DEVICE_L01_EXIT_RED_RELAY: ${APP_DEVICE_L01_EXIT_RED_RELAY:-A03}
+      APP_DEVICE_L01_EXIT_GREEN_RELAY: ${APP_DEVICE_L01_EXIT_GREEN_RELAY:-A04}
     expose:
       - "8080"
     healthcheck:
@@ -88,3 +117,5 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  mqtt-data:
+  mqtt-log:

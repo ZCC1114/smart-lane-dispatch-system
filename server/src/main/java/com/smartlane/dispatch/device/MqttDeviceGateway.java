@@ -45,11 +45,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private static final Logger log = LoggerFactory.getLogger(MqttDeviceGateway.class);
 	private static final ZoneOffset DEVICE_ZONE = ZoneOffset.ofHours(8);
+	private static final byte[] CX_ENABLE_REMOTE_CONFIG_COMMAND = hexBytes("4D9301010101A1000000");
+	private static final byte[] CX_ENABLE_RELAY_UPLOAD_COMMAND = hexBytes("4D930101010AA1000000");
 	private static final DateTimeFormatter DASH_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 	private static final DateTimeFormatter SLASH_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
 
 	private final DeviceGatewayProperties properties;
 	private final ObjectMapper objectMapper;
+	private final TcpDidoCommandService tcpDidoCommandService;
 	private final ObjectProvider<OperationsService> operationsServiceProvider;
 	private final LaneRuntimeStateService laneRuntimeStateService;
 	private final AtomicBoolean connecting = new AtomicBoolean(false);
@@ -68,10 +71,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	public MqttDeviceGateway(
 			DeviceGatewayProperties properties,
 			ObjectMapper objectMapper,
+			TcpDidoCommandService tcpDidoCommandService,
 			ObjectProvider<OperationsService> operationsServiceProvider,
 			LaneRuntimeStateService laneRuntimeStateService) {
 		this.properties = properties;
 		this.objectMapper = objectMapper;
+		this.tcpDidoCommandService = tcpDidoCommandService;
 		this.operationsServiceProvider = operationsServiceProvider;
 		this.laneRuntimeStateService = laneRuntimeStateService;
 	}
@@ -442,6 +447,10 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		if (!properties.getDido().isEnabled() || isBlank(binding.getDidoDeviceId())) {
 			return;
 		}
+		if (didoPayloadMode().startsWith("hex-")) {
+			syncDidoTrafficLightsAsHex(client, lane, binding);
+			return;
+		}
 
 		ObjectNode payload = objectMapper.createObjectNode();
 		putRelayState(payload, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
@@ -453,6 +462,28 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 		payload.put("res", nextMessageId("dido"));
 		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
+	}
+
+	private void syncDidoTrafficLightsAsHex(
+			SimpleMqttClient client,
+			Lane lane,
+			DeviceGatewayProperties.LaneBinding binding) throws IOException {
+		publishDidoRelayHex(client, binding, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
+		publishDidoRelayHex(client, binding, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
+		publishDidoRelayHex(client, binding, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
+		publishDidoRelayHex(client, binding, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+	}
+
+	private void publishDidoRelayHex(
+			SimpleMqttClient client,
+			DeviceGatewayProperties.LaneBinding binding,
+			String relay,
+			boolean on) throws IOException {
+		if (isBlank(relay)) {
+			return;
+		}
+		byte[] command = tcpDidoCommandService.buildRelayCommand(relayIndex(relay), on, didoHexProtocol());
+		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), binding), command);
 	}
 
 	private void syncParkingCamera(
@@ -512,6 +543,24 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			}
 		}
 		if (properties.getDido().isEnabled()) {
+			if (didoPayloadMode().startsWith("hex-")
+					&& (properties.getDido().isEnableRemoteConfigOnConnect()
+							|| properties.getDido().isEnableRelayUploadOnConnect())) {
+				for (String didoDeviceId : bindingsByDidoDeviceId.keySet()) {
+					try {
+						String topic = renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId);
+						if (properties.getDido().isEnableRemoteConfigOnConnect()) {
+							client.publish(topic, CX_ENABLE_REMOTE_CONFIG_COMMAND);
+						}
+						if (properties.getDido().isEnableRelayUploadOnConnect()) {
+							client.publish(topic, CX_ENABLE_RELAY_UPLOAD_COMMAND);
+						}
+					} catch (Exception ex) {
+						log.warn("Failed to publish CX DIDO startup command for device {}", didoDeviceId, ex);
+					}
+				}
+				return;
+			}
 			for (String didoDeviceId : bindingsByDidoDeviceId.keySet()) {
 				try {
 					ObjectNode payload = objectMapper.createObjectNode();
@@ -612,6 +661,23 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return 800000 + Math.max(1, Math.min(properties.getDido().getPulseMilliseconds() / 60000, 9999));
 		}
 		return 110000;
+	}
+
+	private String didoPayloadMode() {
+		String mode = properties.getDido().getPayloadMode();
+		return isBlank(mode) ? "json" : mode.trim().toLowerCase(Locale.ROOT);
+	}
+
+	private String didoHexProtocol() {
+		return "hex-a3".equals(didoPayloadMode()) ? "A3" : "A1";
+	}
+
+	private int relayIndex(String relay) {
+		String digits = relay.replaceAll("\\D+", "");
+		if (digits.isBlank()) {
+			throw new IllegalArgumentException("Relay key must contain a number: " + relay);
+		}
+		return Integer.parseInt(digits);
 	}
 
 	private String resolveSignalFromRelayFeedback(JsonNode message, String greenRelayKey, String redRelayKey) {
@@ -890,6 +956,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private boolean isBlank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private static byte[] hexBytes(String hex) {
+		String cleaned = hex.replaceAll("\\s+", "");
+		byte[] bytes = new byte[cleaned.length() / 2];
+		for (int index = 0; index < bytes.length; index++) {
+			bytes[index] = (byte) Integer.parseInt(cleaned.substring(index * 2, index * 2 + 2), 16);
+		}
+		return bytes;
 	}
 
 	private void closeClient() {

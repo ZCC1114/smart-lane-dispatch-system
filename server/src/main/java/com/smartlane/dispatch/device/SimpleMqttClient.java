@@ -103,9 +103,12 @@ public class SimpleMqttClient {
 	}
 
 	public synchronized void publish(String topic, String payload) throws IOException {
+		publish(topic, payload.getBytes(StandardCharsets.UTF_8));
+	}
+
+	public synchronized void publish(String topic, byte[] payloadBytes) throws IOException {
 		ensureConnected();
 		byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
-		byte[] payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
 		byte[] packet = new byte[2 + topicBytes.length + payloadBytes.length];
 		packet[0] = (byte) ((topicBytes.length >> 8) & 0xFF);
 		packet[1] = (byte) (topicBytes.length & 0xFF);

@@ -62,10 +62,22 @@ public class TcpDidoCommandService {
 		int timeoutMs = Math.max(500, properties.getDidoTcp().getTimeoutMs());
 		try (Socket socket = new Socket()) {
 			socket.connect(new InetSocketAddress(host, port), timeoutMs);
-			socket.setSoTimeout(timeoutMs);
+			socket.setSoTimeout(Math.min(300, timeoutMs));
+			byte[] greeting = readAvailableResponse(socket);
 			socket.getOutputStream().write(command);
 			socket.getOutputStream().flush();
-			return readAvailableResponse(socket);
+			socket.setSoTimeout(timeoutMs);
+			byte[] response = readAvailableResponse(socket);
+			if (greeting.length == 0) {
+				return response;
+			}
+			if (response.length == 0) {
+				return greeting;
+			}
+			ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+			buffer.write(greeting);
+			buffer.write(response);
+			return buffer.toByteArray();
 		} catch (IOException ex) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "TCP DIDO 指令发送失败: " + ex.getMessage(), ex);
 		}

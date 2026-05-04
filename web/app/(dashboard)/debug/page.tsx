@@ -22,9 +22,7 @@ import {
   Trash2,
   Wifi,
 } from "lucide-react";
-import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { TcpDidoRelayResponse } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
@@ -76,7 +74,7 @@ function byteHex(value: number) {
 function hexToBuffer(hex: string) {
   const cleaned = hex.replace(/\s+/g, "");
   if (!/^[0-9a-fA-F]+$/.test(cleaned) || cleaned.length % 2 !== 0) {
-    throw new Error("HEX 指令格式不正确");
+    throw new Error("Invalid HEX command");
   }
   return Buffer.from(cleaned, "hex");
 }
@@ -256,32 +254,32 @@ function buildMqttDidoEnableRelayUpload() {
 
 const FLOW_STEPS = [
   {
-    title: "确认网络",
+    title: "纭缃戠粶",
     desc: "电脑和 CX-5216E 在同一网段，先 ping 设备 IP。",
     icon: Network,
   },
   {
-    title: "启动 Broker",
-    desc: "电脑开放 MQTT TCP 1883；本页面连 WebSocket，设备连电脑 LAN IP:1883。",
+    title: "鍚姩 Broker",
+    desc: "电脑开放 MQTT TCP 1883；本页面走 WebSocket，设备连电脑 LAN IP:1883。",
     icon: Server,
   },
   {
-    title: "配置设备",
-    desc: "设备里填写 Broker IP、端口、设备 ID、上报/下发 Topic。",
+    title: "閰嶇疆璁惧",
+    desc: "在设备里填写 Broker IP、端口、设备 ID、上报和下发 Topic。",
     icon: Settings,
   },
   {
-    title: "手动控继电器",
+    title: "鎵嬪姩鎺х户鐢靛櫒",
     desc: "先只测 A01 吸合/断开，确认硬件动作和接线方向。",
     icon: Cpu,
   },
   {
-    title: "后端下发",
+    title: "鍚庣涓嬪彂",
     desc: "后台信号灯控制会向 /device/{didoId}/get 下发继电器命令。",
     icon: Send,
   },
   {
-    title: "反馈同步",
+    title: "鍙嶉鍚屾",
     desc: "设备向 /device/{didoId}/update 上报状态，页面日志应能看到反馈。",
     icon: CheckCircle2,
   },
@@ -309,7 +307,7 @@ export default function DebugPage() {
   const [devices, setDevices] = useState<TestDevice[]>(DEFAULT_DEVICES);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(DEFAULT_DEVICES[0]?.id ?? "");
   const [template, setTemplate] = useState<string>("mf-heartbeat");
-  const [paramPlate, setParamPlate] = useState("苏A12345");
+  const [paramPlate, setParamPlate] = useState("鑻廇12345");
   const [paramOutCount, setParamOutCount] = useState(1);
   const [paramHaveCar, setParamHaveCar] = useState(true);
   const [paramEntryGreen, setParamEntryGreen] = useState(true);
@@ -317,14 +315,6 @@ export default function DebugPage() {
   const [mqttDidoRelay, setMqttDidoRelay] = useState("A01");
   const [mqttDidoMode, setMqttDidoMode] = useState<MqttDidoMode>("json");
   const [mqttDidoMessage, setMqttDidoMessage] = useState("");
-  const [tcpHost, setTcpHost] = useState("192.168.0.18");
-  const [tcpPort, setTcpPort] = useState(50000);
-  const [tcpRelay, setTcpRelay] = useState("A01");
-  const [tcpProtocol, setTcpProtocol] = useState<"A1" | "A3">("A1");
-  const [tcpBusy, setTcpBusy] = useState(false);
-  const [tcpResult, setTcpResult] = useState<TcpDidoRelayResponse | null>(null);
-  const [tcpError, setTcpError] = useState("");
-
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
   /* MQTT connect / disconnect */
@@ -369,7 +359,7 @@ export default function DebugPage() {
         setConnState("idle");
       } else {
         setConnState("error");
-        setConnError(lastError || "MQTT WebSocket 连接失败，请确认 Broker 和 9001 端口已启动。");
+        setConnError(lastError || "MQTT WebSocket connection failed. Please confirm the broker and WS port 9001 are running.");
       }
       setClient(null);
     });
@@ -392,7 +382,7 @@ export default function DebugPage() {
           direction,
           deviceId: deviceId || topic,
           topic,
-          payload: text.length > 500 ? text.slice(0, 500) + "…" : text,
+          payload: text.length > 500 ? text.slice(0, 500) + "..." : text,
         },
         ...prev,
       ].slice(0, 200));
@@ -458,7 +448,7 @@ export default function DebugPage() {
           direction: "tx" as const,
           deviceId: dev.laneName,
           topic,
-          payload: payload.length > 500 ? payload.slice(0, 500) + "…" : payload,
+          payload: payload.length > 500 ? payload.slice(0, 500) + "..." : payload,
         },
         ...prev,
       ].slice(0, 200));
@@ -510,20 +500,20 @@ export default function DebugPage() {
   const mqttTcpPort = "1883";
   const deviceBrokerHost =
     brokerHost === "127.0.0.1" || brokerHost.toLowerCase() === "localhost"
-      ? "电脑的 192.168.0.x 地址"
+      ? "鐢佃剳鐨?192.168.0.x 鍦板潃"
       : brokerHost;
   const didoDeviceConfig = [
-    ["设备侧 Broker", deviceBrokerHost],
-    ["TCP 端口", mqttTcpPort],
-    ["设备 ID", selectedDevice?.didoDeviceId ?? "DIDO-01"],
-    ["下发 Topic", didoDownTopic],
-    ["上报 Topic", didoUpTopic],
+    ["璁惧渚?Broker", deviceBrokerHost],
+    ["TCP 绔彛", mqttTcpPort],
+    ["璁惧 ID", selectedDevice?.didoDeviceId ?? "DIDO-01"],
+    ["涓嬪彂 Topic", didoDownTopic],
+    ["涓婃姤 Topic", didoUpTopic],
   ];
 
   const publishMqttDido = useCallback(
     (payload: string, options?: { binaryHex?: boolean }) => {
       if (!client || connState !== "connected" || !selectedDevice) {
-        setMqttDidoMessage("请先连接 MQTT Broker，并选择 DIDO 设备。");
+        setMqttDidoMessage("Connect to the MQTT broker and select a DIDO device first.");
         return;
       }
       let publishPayload: string | Buffer = payload;
@@ -531,15 +521,15 @@ export default function DebugPage() {
         try {
           publishPayload = hexToBuffer(payload);
         } catch (error) {
-          setMqttDidoMessage(error instanceof Error ? error.message : "HEX 指令格式不正确");
+          setMqttDidoMessage(error instanceof Error ? error.message : "Invalid HEX command");
           return;
         }
       }
       client.publish(didoDownTopic, publishPayload);
       setMqttDidoMessage(
         options?.binaryHex
-          ? `已发送二进制 HEX 到 ${didoDownTopic}`
-          : `已发送到 ${didoDownTopic}`
+          ? `宸插彂閫佷簩杩涘埗 HEX 鍒?${didoDownTopic}`
+          : `宸插彂閫佸埌 ${didoDownTopic}`
       );
       setLogs((prev) => [
         {
@@ -556,46 +546,13 @@ export default function DebugPage() {
     [client, connState, didoDownTopic, selectedDevice]
   );
 
-  const controlTcpRelay = useCallback(
-    async (on: boolean) => {
-      setTcpBusy(true);
-      setTcpError("");
-      try {
-        const response = await api.controlTcpDidoRelay({
-          host: tcpHost.trim(),
-          port: tcpPort,
-          relay: tcpRelay.trim(),
-          on,
-          protocol: tcpProtocol,
-        });
-        setTcpResult(response);
-        setLogs((prev) => [
-          {
-            id: genId(),
-            ts: nowTime(),
-            direction: "tx" as const,
-            deviceId: "TCP DIDO",
-            topic: `${response.host}:${response.port} ${response.relay}`,
-            payload: `protocol=${response.protocol} command=${response.commandHex} response=${response.responseHex || "无返回"}`,
-          },
-          ...prev,
-        ].slice(0, 200));
-      } catch (error) {
-        setTcpError(error instanceof Error ? error.message : "TCP DIDO 指令发送失败");
-      } finally {
-        setTcpBusy(false);
-      }
-    },
-    [tcpHost, tcpPort, tcpProtocol, tcpRelay]
-  );
-
   return (
     <div className="flex flex-col gap-4">
       {/* Page title + broker config */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900">MQTT 硬件调试台</h1>
-          <p className="text-sm text-slate-500">模拟设备收发信号，实时联调测试</p>
+          <p className="text-sm text-slate-500">妯℃嫙璁惧鏀跺彂淇″彿锛屽疄鏃惰仈璋冩祴璇</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -623,7 +580,7 @@ export default function DebugPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 transition hover:bg-rose-100"
             >
               <Link2Off className="size-4" />
-              断开
+              鏂紑
             </button>
           ) : (
             <button
@@ -632,13 +589,13 @@ export default function DebugPage() {
               className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
             >
               <LinkIcon className="size-4" />
-              {connState === "connecting" ? "连接中…" : "连接"}
+              {connState === "connecting" ? "连接中" : "连接"}
             </button>
           )}
           {connState === "connected" && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-600">
               <Wifi className="size-3" />
-              已连接
+              宸茶繛鎺?
             </span>
           )}
           {connState === "error" && <span className="text-xs text-rose-500">{connError}</span>}
@@ -651,18 +608,18 @@ export default function DebugPage() {
           <div>
             <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
               <ClipboardList className="size-4 text-blue-500" />
-              DIDO 实物联调流程
+              DIDO 瀹炵墿鑱旇皟娴佺▼
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              按 1 到 6 做。先测单个继电器，再接红绿灯负载，最后用后台信号灯页面验证后端下发。
+              鎸?1 鍒?6 鍋氥€傚厛娴嬪崟涓户鐢靛櫒锛屽啀鎺ョ孩缁跨伅璐熻浇锛屾渶鍚庣敤鍚庡彴淇″彿鐏〉闈㈤獙璇佸悗绔笅鍙戙€?
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600">
-              页面 Broker: {brokerHost}:{brokerPort}
+              椤甸潰 Broker: {brokerHost}:{brokerPort}
             </span>
             <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600">
-              设备: {selectedDevice?.didoDeviceId ?? "-"}
+              璁惧: {selectedDevice?.didoDeviceId ?? "-"}
             </span>
             <span
               className={cn(
@@ -713,20 +670,20 @@ export default function DebugPage() {
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
               <h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-800">
                 <CheckCircle2 className="size-3.5 text-blue-600" />
-                本页操作顺序
+                鏈〉鎿嶄綔椤哄簭
               </h3>
               <div className="space-y-1.5 text-[11px] leading-5 text-slate-600">
-                <p>1. Broker 填电脑 IP，WS Port 填 Broker 的 WebSocket 端口，点“连接”。</p>
-                <p>2. 左侧选车道，确认 didoId 和设备里的设备 ID 一致。</p>
-                <p>3. 打开“信号灯控制”切换 1 号车道入口绿灯，右侧应收到后端下发。</p>
-                <p>4. 真实设备会自己上报反馈；没有实物时再用“DIDO反馈”模板模拟上报。</p>
+                <p>1. Broker 濉數鑴?IP锛學S Port 濉?Broker 鐨?WebSocket 绔彛锛岀偣鈥滆繛鎺モ€濄€</p>
+                <p>2. 宸︿晶閫夎溅閬擄紝纭 didoId 鍜岃澶囬噷鐨勮澶?ID 涓€鑷淬€</p>
+                <p>3. 鎵撳紑鈥滀俊鍙风伅鎺у埗鈥濆垏鎹?1 鍙疯溅閬撳叆鍙ｇ豢鐏紝鍙充晶搴旀敹鍒板悗绔笅鍙戙€</p>
+                <p>4. 鐪熷疄璁惧浼氳嚜宸变笂鎶ュ弽棣堬紱娌℃湁瀹炵墿鏃跺啀鐢ㄢ€淒IDO鍙嶉鈥濇ā鏉挎ā鎷熶笂鎶ャ€</p>
               </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-800">
                 <Settings className="size-3.5 text-blue-500" />
-                CX-5216E 设备侧填写
+                CX-5216E 璁惧渚у～鍐?
               </h3>
               <div className="grid gap-1">
                 {didoDeviceConfig.map(([label, value]) => (
@@ -741,13 +698,13 @@ export default function DebugPage() {
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <h3 className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-800">
                 <Terminal className="size-3.5 text-blue-500" />
-                手动继电器测试命令
+                鎵嬪姩缁х數鍣ㄦ祴璇曞懡浠?
               </h3>
               <CommandBlock>
-{`# A01 吸合
+{`# A01 鍚稿悎
 mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01":110000,"res":"manual-on"}'
 
-# A01 断开
+# A01 鏂紑
 mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01":100000,"res":"manual-off"}'`}
               </CommandBlock>
             </div>
@@ -761,13 +718,13 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
           <div>
             <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
               <Wifi className="size-4 text-emerald-600" />
-              MQTT DIDO 控制模式
+              MQTT DIDO 鎺у埗妯″紡
             </h2>
             <p className="mt-1 text-xs text-slate-600">
-              通过 Broker 下发 JSON 或 HEX 指令控制 DO 口；DIDO 需要订阅 {didoDownTopic}，上报 {didoUpTopic}。
+              閫氳繃 Broker 涓嬪彂 JSON 鎴?HEX 鎸囦护鎺у埗 DO 鍙ｏ紱DIDO 闇€瑕佽闃?{didoDownTopic}锛屼笂鎶?{didoUpTopic}銆?
             </p>
             <p className="mt-1 text-[11px] text-slate-500">
-              HEX 会按二进制 payload 发送；Broker 收到 /get 只代表下发成功，只有 /update 才是设备反馈。
+              HEX 浼氭寜浜岃繘鍒?payload 鍙戦€侊紱Broker 鏀跺埌 /get 鍙唬琛ㄤ笅鍙戞垚鍔燂紝鍙湁 /update 鎵嶆槸璁惧鍙嶉銆?
             </p>
           </div>
           <div
@@ -783,7 +740,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
         <div className="grid gap-3 xl:grid-cols-[1fr_1fr]">
           <div className="grid gap-3 md:grid-cols-[1fr_130px_150px_auto_auto_auto]">
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">下发 Topic</span>
+              <span className="mb-1 block text-[11px] font-semibold text-slate-600">涓嬪彂 Topic</span>
               <input
                 value={didoDownTopic}
                 readOnly
@@ -791,7 +748,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">DO 口</span>
+              <span className="mb-1 block text-[11px] font-semibold text-slate-600">DO 鍙</span>
               <select
                 value={mqttDidoRelay}
                 onChange={(event) => setMqttDidoRelay(event.target.value)}
@@ -808,13 +765,13 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               </select>
             </label>
             <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">下发格式</span>
+              <span className="mb-1 block text-[11px] font-semibold text-slate-600">涓嬪彂鏍煎紡</span>
               <select
                 value={mqttDidoMode}
                 onChange={(event) => setMqttDidoMode(event.target.value as MqttDidoMode)}
                 className="w-full rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500"
               >
-                <option value="json">JSON 控制</option>
+                <option value="json">JSON 鎺у埗</option>
                 <option value="hex-a1">HEX A1</option>
                 <option value="hex-a3">HEX A3</option>
               </select>
@@ -828,7 +785,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               disabled={connState !== "connected" || !selectedDevice}
               className="self-end rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
             >
-              打开
+              鎵撳紑
             </button>
             <button
               onClick={() =>
@@ -839,14 +796,14 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               disabled={connState !== "connected" || !selectedDevice}
               className="self-end rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-rose-500 disabled:opacity-50"
             >
-              关闭
+              鍏抽棴
             </button>
             <button
               onClick={() => publishMqttDido(buildMqttDidoReadAll())}
               disabled={connState !== "connected" || !selectedDevice}
               className="self-end rounded-lg border border-emerald-200 bg-white px-4 py-2 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
             >
-              读状态
+              璇荤姸鎬?
             </button>
           </div>
 
@@ -856,7 +813,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               disabled={connState !== "connected" || !selectedDevice}
               className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
             >
-              启用远程配置
+              鍚敤杩滅▼閰嶇疆
               <span className="mt-1 block font-mono text-[10px] font-semibold">4D9301010101A1000000</span>
             </button>
             <button
@@ -864,33 +821,33 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               disabled={connState !== "connected" || !selectedDevice}
               className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
             >
-              启用继电器状态上报
+              鍚敤缁х數鍣ㄧ姸鎬佷笂鎶?
               <span className="mt-1 block font-mono text-[10px] font-semibold">4D930101010AA1000000</span>
             </button>
           </div>
 
           <div className="rounded-lg border border-emerald-200 bg-white p-3">
-            <div className="mb-2 text-xs font-bold text-slate-800">MQTT 测试说明</div>
+            <div className="mb-2 text-xs font-bold text-slate-800">MQTT 娴嬭瘯璇存槑</div>
             <div className="grid gap-1 text-[11px] text-slate-600">
               <div>
-                设备订阅：
+                璁惧璁㈤槄锛?
                 <span className="font-mono text-slate-900">{didoDownTopic}</span>
               </div>
               <div>
-                设备上报：
+                璁惧涓婃姤锛?
                 <span className="font-mono text-slate-900">{didoUpTopic}</span>
               </div>
               <div className="font-semibold text-amber-700">
-                日志里的 /get 是下发回显；只有 /update 才是设备真实反馈。
+                鏃ュ織閲岀殑 /get 鏄笅鍙戝洖鏄撅紱鍙湁 /update 鎵嶆槸璁惧鐪熷疄鍙嶉銆?
               </div>
               <div>
-                打开示例：
+                鎵撳紑绀轰緥锛?
                 <span className="font-mono text-slate-900">
                   {buildMqttDidoRelay(mqttDidoRelay, true, mqttDidoMode)}
                 </span>
               </div>
               <div>
-                关闭示例：
+                鍏抽棴绀轰緥锛?
                 <span className="font-mono text-slate-900">
                   {buildMqttDidoRelay(mqttDidoRelay, false, mqttDidoMode)}
                 </span>
@@ -901,122 +858,18 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
         </div>
       </section>
 
-      {/* TCP DIDO direct control */}
-      <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
-        <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-              <Cpu className="size-4 text-amber-600" />
-              TCP DIDO 直连控制模式
-            </h2>
-            <p className="mt-1 text-xs text-slate-600">
-              用 CX-5216E 的原生 TCP 端口直接控制 DO 口；默认地址为 192.168.0.18:50000。
-            </p>
-          </div>
-          <div className="text-[11px] text-slate-600">
-            A1 为现场实测基础指令；A3 为文档兼容场景指令。
-          </div>
-        </div>
-
-        <div className="grid gap-3 xl:grid-cols-[1fr_1fr]">
-          <div className="grid gap-3 md:grid-cols-[1fr_110px_100px_110px_auto_auto]">
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">设备 IP</span>
-              <input
-                value={tcpHost}
-                onChange={(event) => setTcpHost(event.target.value)}
-                className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">端口</span>
-              <input
-                type="number"
-                value={tcpPort}
-                onChange={(event) => setTcpPort(Number(event.target.value))}
-                className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">DO 口</span>
-              <select
-                value={tcpRelay}
-                onChange={(event) => setTcpRelay(event.target.value)}
-                className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              >
-                {Array.from({ length: 16 }).map((_, index) => {
-                  const relay = `A${String(index + 1).padStart(2, "0")}`;
-                  return (
-                    <option key={relay} value={relay}>
-                      {relay}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-slate-600">协议</span>
-              <select
-                value={tcpProtocol}
-                onChange={(event) => setTcpProtocol(event.target.value as "A1" | "A3")}
-                className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              >
-                <option value="A1">A1 基础</option>
-                <option value="A3">A3 场景</option>
-              </select>
-            </label>
-            <button
-              onClick={() => controlTcpRelay(true)}
-              disabled={tcpBusy}
-              className="self-end rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
-            >
-              打开
-            </button>
-            <button
-              onClick={() => controlTcpRelay(false)}
-              disabled={tcpBusy}
-              className="self-end rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-rose-500 disabled:opacity-50"
-            >
-              关闭
-            </button>
-          </div>
-
-          <div className="rounded-lg border border-amber-200 bg-white p-3">
-            <div className="mb-2 text-xs font-bold text-slate-800">发送结果</div>
-            {tcpError ? <div className="text-xs font-semibold text-rose-600">{tcpError}</div> : null}
-            {tcpResult ? (
-              <div className="space-y-1 text-[11px] text-slate-600">
-                <div>
-                  指令：<span className="font-mono text-slate-900">{tcpResult.commandHex}</span>
-                </div>
-                <div>
-                  响应：
-                  <span className="font-mono text-slate-900">
-                    {tcpResult.responseHex || "无返回"}
-                    {tcpResult.responseText ? ` (${tcpResult.responseText})` : ""}
-                  </span>
-                </div>
-                <div>{tcpResult.message}</div>
-              </div>
-            ) : (
-              <div className="text-xs text-slate-500">点击打开/关闭后显示实际 HEX 指令和设备响应。</div>
-            )}
-          </div>
-        </div>
-      </section>
-
       {/* Main panels */}
       <div className="flex h-[calc(100vh-520px)] min-h-[360px] flex-1 gap-4 overflow-hidden">
         {/* Left: Device list */}
         <aside className="flex w-80 shrink-0 flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-bold text-slate-800">设备列表</h2>
+            <h2 className="text-sm font-bold text-slate-800">璁惧鍒楄〃</h2>
             <button
               onClick={addDevice}
               className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-200"
             >
               <Plus className="size-3.5" />
-              添加
+              娣诲姞
             </button>
           </div>
           <div className="flex-1 space-y-2 overflow-y-auto p-3">
@@ -1080,7 +933,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               </div>
             ))}
             {devices.length === 0 && (
-              <p className="text-center text-xs text-slate-400">点击&quot;添加&quot;创建测试设备</p>
+              <p className="text-center text-xs text-slate-400">鐐瑰嚮&quot;娣诲姞&quot;鍒涘缓娴嬭瘯璁惧</p>
             )}
           </div>
         </aside>
@@ -1089,13 +942,13 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
         <section className="flex min-w-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 flex items-center gap-2 text-sm font-bold text-slate-800">
             <Send className="size-4 text-blue-500" />
-            发送信号（模拟设备上报）
+            鍙戦€佷俊鍙凤紙妯℃嫙璁惧涓婃姤锛?
           </h2>
 
           <div className="space-y-4">
             {/* Device select */}
             <div>
-              <label className="mb-1.5 block text-xs text-slate-500">目标设备</label>
+              <label className="mb-1.5 block text-xs text-slate-500">鐩爣璁惧</label>
               <select
                 value={selectedDeviceId}
                 onChange={(e) => setSelectedDeviceId(e.target.value)}
@@ -1111,16 +964,16 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
 
             {/* Template select */}
             <div>
-              <label className="mb-1.5 block text-xs text-slate-500">消息模板</label>
+              <label className="mb-1.5 block text-xs text-slate-500">娑堟伅妯℃澘</label>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {[
-                  { key: "mf-heartbeat", label: "MF 心跳", icon: Radio },
-                  { key: "mf-plate", label: "MF 车牌识别", icon: Car },
-                  { key: "cam-heartbeat", label: "相机心跳", icon: Radio },
-                  { key: "cam-plate", label: "入口相机车牌", icon: Car },
-                  { key: "cam-pass", label: "相机计数(忽略)", icon: Monitor },
-                  { key: "cam-havecar", label: "在位响应(忽略)", icon: Activity },
-                  { key: "dido-feedback", label: "DIDO反馈", icon: Cpu },
+                  { key: "mf-heartbeat", label: "MF 蹇冭烦", icon: Radio },
+                  { key: "mf-plate", label: "MF 杞︾墝璇嗗埆", icon: Car },
+                  { key: "cam-heartbeat", label: "鐩告満蹇冭烦", icon: Radio },
+                  { key: "cam-plate", label: "鍏ュ彛鐩告満杞︾墝", icon: Car },
+                  { key: "cam-pass", label: "鐩告満璁℃暟(蹇界暐)", icon: Monitor },
+                  { key: "cam-havecar", label: "鍦ㄤ綅鍝嶅簲(蹇界暐)", icon: Activity },
+                  { key: "dido-feedback", label: "DIDO鍙嶉", icon: Cpu },
                 ].map((t) => (
                   <button
                     key={t.key}
@@ -1143,7 +996,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
               {(template === "mf-plate" || template === "cam-plate") && (
                 <label className="block">
-                  <span className="mb-1.5 block text-xs text-slate-500">车牌号</span>
+                  <span className="mb-1.5 block text-xs text-slate-500">杞︾墝鍙</span>
                   <input
                     value={paramPlate}
                     onChange={(e) => setParamPlate(e.target.value)}
@@ -1154,7 +1007,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
 
               {template === "cam-pass" && (
                 <label className="block">
-                  <span className="mb-1.5 block text-xs text-slate-500">出场计数 (outCount)</span>
+                  <span className="mb-1.5 block text-xs text-slate-500">鍑哄満璁℃暟 (outCount)</span>
                   <input
                     type="number"
                     min={0}
@@ -1173,7 +1026,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
                     onChange={(e) => setParamHaveCar(e.target.checked)}
                     className="size-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-sm text-slate-800">有车在位 (haveCar=1)</span>
+                  <span className="text-sm text-slate-800">鏈夎溅鍦ㄤ綅 (haveCar=1)</span>
                 </label>
               )}
 
@@ -1186,7 +1039,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
                       onChange={(e) => setParamEntryGreen(e.target.checked)}
                       className="size-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="text-sm text-slate-800">入口绿灯</span>
+                    <span className="text-sm text-slate-800">鍏ュ彛缁跨伅</span>
                   </label>
                   <label className="flex items-center gap-3">
                     <input
@@ -1195,27 +1048,27 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
                       onChange={(e) => setParamExitGreen(e.target.checked)}
                       className="size-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="text-sm text-slate-800">出口绿灯</span>
+                    <span className="text-sm text-slate-800">鍑哄彛缁跨伅</span>
                   </label>
                 </div>
               )}
 
               {template === "mf-heartbeat" && (
-                <p className="text-xs text-slate-500">发送 MF 心跳，payload 自动生成。</p>
+                <p className="text-xs text-slate-500">鍙戦€?MF 蹇冭烦锛宲ayload 鑷姩鐢熸垚銆</p>
               )}
               {template === "cam-heartbeat" && (
-                <p className="text-xs text-slate-500">发送智能相机心跳，payload 自动生成。</p>
+                <p className="text-xs text-slate-500">鍙戦€佹櫤鑳界浉鏈哄績璺筹紝payload 鑷姩鐢熸垚銆</p>
               )}
               {template === "cam-plate" && (
                 <p className="mt-2 text-xs text-slate-500">
-                  模拟入口相机真实 devAlarm 上报；后端只登记入场记录，不参与出场计数。
+                  妯℃嫙鍏ュ彛鐩告満鐪熷疄 devAlarm 涓婃姤锛涘悗绔彧鐧昏鍏ュ満璁板綍锛屼笉鍙備笌鍑哄満璁℃暟銆?
                 </p>
               )}
             </div>
 
             {/* Preview */}
             <div>
-              <label className="mb-1.5 block text-xs text-slate-500">目标 Topic</label>
+              <label className="mb-1.5 block text-xs text-slate-500">鐩爣 Topic</label>
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-600">
                 {selectedDevice && (
                   <span>
@@ -1235,7 +1088,7 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50"
             >
               <Send className="size-4" />
-              发送
+              鍙戦€?
             </button>
           </div>
         </section>
@@ -1243,17 +1096,17 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
         {/* Right: MQTT logs */}
         <section className="flex min-h-0 w-[420px] shrink-0 flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-bold text-slate-800">MQTT 信号日志（最新在上）</h2>
+            <h2 className="text-sm font-bold text-slate-800">MQTT 淇″彿鏃ュ織锛堟渶鏂板湪涓婏級</h2>
             <button
               onClick={() => setLogs([])}
               className="text-xs text-slate-400 transition hover:text-slate-600"
             >
-              清空
+              娓呯┖
             </button>
           </div>
           <div className="min-h-0 flex-1 basis-0 space-y-2 overflow-y-scroll p-3">
             {logs.length === 0 && (
-              <p className="py-8 text-center text-xs text-slate-400">等待接收消息…</p>
+              <p className="py-8 text-center text-xs text-slate-400">绛夊緟鎺ユ敹娑堟伅鈥</p>
             )}
             {logs.map((log) => (
               <div
@@ -1297,3 +1150,6 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
     </div>
   );
 }
+
+
+

@@ -14,8 +14,6 @@ import type {
   ManualDispatchRequest,
   ScreenEvent,
   SignalOverrideRequest,
-  TcpDidoRelayRequest,
-  TcpDidoRelayResponse,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
@@ -161,12 +159,6 @@ export const api = {
   updateDispatchRuntime(payload: DispatchRuntimeState) {
     return request<DispatchConfig>("/dispatch/runtime", {
       method: "PUT",
-      body: JSON.stringify(payload),
-    });
-  },
-  controlTcpDidoRelay(payload: TcpDidoRelayRequest) {
-    return request<TcpDidoRelayResponse>("/hardware-debug/tcp-dido/relay", {
-      method: "POST",
       body: JSON.stringify(payload),
     });
   },
