@@ -1,0 +1,294 @@
+2026-05-03 18:11:06.609880+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "blacklist_records" already exists; SQL statement:
+
+    create table blacklist_records (
+        id varchar(255) not null,
+        active boolean not null,
+        effective_date timestamp(6) with time zone not null,
+        level varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        reason varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:11:06.614380+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_configs" already exists; SQL statement:
+
+    create table dispatch_configs (
+        config_key varchar(255) not null,
+        config_value varchar(255) not null,
+        updated_at timestamp(6) with time zone not null,
+        updated_by varchar(255) not null,
+        primary key (config_key) [42101-232]
+2026-05-03 18:11:06.618884+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_tickets" already exists; SQL statement:
+
+    create table dispatch_tickets (
+        id varchar(255) not null,
+        actual_lane_id varchar(255),
+        actual_lane_name varchar(255),
+        assigned_at timestamp(6) with time zone,
+        assigned_lane_id varchar(255),
+        assigned_lane_name varchar(255),
+        closed_at timestamp(6) with time zone,
+        exit_time timestamp(6) with time zone,
+        lane_entry_time timestamp(6) with time zone,
+        notes varchar(255),
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        yard_entry_time timestamp(6) with time zone not null,
+        primary key (id) [42101-232]
+2026-05-03 18:11:06.641880+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "entry_logs" already exists; SQL statement:
+
+    create table entry_logs (
+        id varchar(255) not null,
+        entry_time timestamp(6) with time zone not null,
+        exit_time timestamp(6) with time zone,
+        lane_id varchar(255) not null,
+        lane_name varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:11:06.672880+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "lanes" already exists; SQL statement:
+
+    create table lanes (
+        id varchar(255) not null,
+        capacity integer not null,
+        code varchar(255) not null,
+        current_plate varchar(255),
+        last_action_at timestamp(6) with time zone not null,
+        last_entry_at timestamp(6) with time zone,
+        last_entry_plate varchar(255),
+        last_sensor_at timestamp(6) with time zone,
+        mode varchar(255) not null,
+        name varchar(255) not null,
+        priority boolean not null,
+        queue_head_at timestamp(6) with time zone,
+        sensor_status varchar(255),
+        status varchar(255) not null,
+        type varchar(255) not null,
+        vehicle_count integer not null,
+        zone varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:11:06.698882+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "screen_handled_events" already exists; SQL statement:
+
+    create table screen_handled_events (
+        id varchar(255) not null,
+        handled_at timestamp(6) with time zone not null,
+        operator varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:11:06.722394+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "user_accounts" already exists; SQL statement:
+
+    create table user_accounts (
+        username varchar(255) not null,
+        display_name varchar(255) not null,
+        password_hash varchar(255) not null,
+        role varchar(255) not null,
+        station varchar(255) not null,
+        system_protected boolean not null,
+        primary key (username) [42101-232]
+2026-05-03 18:26:13.870517+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "blacklist_records" already exists; SQL statement:
+
+    create table blacklist_records (
+        id varchar(255) not null,
+        active boolean not null,
+        effective_date timestamp(6) with time zone not null,
+        level varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        reason varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:26:13.874514+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_configs" already exists; SQL statement:
+
+    create table dispatch_configs (
+        config_key varchar(255) not null,
+        config_value varchar(255) not null,
+        updated_at timestamp(6) with time zone not null,
+        updated_by varchar(255) not null,
+        primary key (config_key) [42101-232]
+2026-05-03 18:26:13.875015+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_tickets" already exists; SQL statement:
+
+    create table dispatch_tickets (
+        id varchar(255) not null,
+        actual_lane_id varchar(255),
+        actual_lane_name varchar(255),
+        assigned_at timestamp(6) with time zone,
+        assigned_lane_id varchar(255),
+        assigned_lane_name varchar(255),
+        closed_at timestamp(6) with time zone,
+        exit_time timestamp(6) with time zone,
+        lane_entry_time timestamp(6) with time zone,
+        notes varchar(255),
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        yard_entry_time timestamp(6) with time zone not null,
+        primary key (id) [42101-232]
+2026-05-03 18:26:13.895515+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "entry_logs" already exists; SQL statement:
+
+    create table entry_logs (
+        id varchar(255) not null,
+        entry_time timestamp(6) with time zone not null,
+        exit_time timestamp(6) with time zone,
+        lane_id varchar(255) not null,
+        lane_name varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:26:13.920515+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "lanes" already exists; SQL statement:
+
+    create table lanes (
+        id varchar(255) not null,
+        capacity integer not null,
+        code varchar(255) not null,
+        current_plate varchar(255),
+        last_action_at timestamp(6) with time zone not null,
+        last_entry_at timestamp(6) with time zone,
+        last_entry_plate varchar(255),
+        last_sensor_at timestamp(6) with time zone,
+        mode varchar(255) not null,
+        name varchar(255) not null,
+        priority boolean not null,
+        queue_head_at timestamp(6) with time zone,
+        sensor_status varchar(255),
+        status varchar(255) not null,
+        type varchar(255) not null,
+        vehicle_count integer not null,
+        zone varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:26:13.941014+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "screen_handled_events" already exists; SQL statement:
+
+    create table screen_handled_events (
+        id varchar(255) not null,
+        handled_at timestamp(6) with time zone not null,
+        operator varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:26:13.960518+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "user_accounts" already exists; SQL statement:
+
+    create table user_accounts (
+        username varchar(255) not null,
+        display_name varchar(255) not null,
+        password_hash varchar(255) not null,
+        role varchar(255) not null,
+        station varchar(255) not null,
+        system_protected boolean not null,
+        primary key (username) [42101-232]
+2026-05-03 18:35:51.245344+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "blacklist_records" already exists; SQL statement:
+
+    create table blacklist_records (
+        id varchar(255) not null,
+        active boolean not null,
+        effective_date timestamp(6) with time zone not null,
+        level varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        reason varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:35:51.248843+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_configs" already exists; SQL statement:
+
+    create table dispatch_configs (
+        config_key varchar(255) not null,
+        config_value varchar(255) not null,
+        updated_at timestamp(6) with time zone not null,
+        updated_by varchar(255) not null,
+        primary key (config_key) [42101-232]
+2026-05-03 18:35:51.249843+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "dispatch_tickets" already exists; SQL statement:
+
+    create table dispatch_tickets (
+        id varchar(255) not null,
+        actual_lane_id varchar(255),
+        actual_lane_name varchar(255),
+        assigned_at timestamp(6) with time zone,
+        assigned_lane_id varchar(255),
+        assigned_lane_name varchar(255),
+        closed_at timestamp(6) with time zone,
+        exit_time timestamp(6) with time zone,
+        lane_entry_time timestamp(6) with time zone,
+        notes varchar(255),
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        yard_entry_time timestamp(6) with time zone not null,
+        primary key (id) [42101-232]
+2026-05-03 18:35:51.268203+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "entry_logs" already exists; SQL statement:
+
+    create table entry_logs (
+        id varchar(255) not null,
+        entry_time timestamp(6) with time zone not null,
+        exit_time timestamp(6) with time zone,
+        lane_id varchar(255) not null,
+        lane_name varchar(255) not null,
+        operator varchar(255) not null,
+        plate varchar(255) not null,
+        source varchar(255) not null,
+        status varchar(255) not null,
+        vehicle_type varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:35:51.292709+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "lanes" already exists; SQL statement:
+
+    create table lanes (
+        id varchar(255) not null,
+        capacity integer not null,
+        code varchar(255) not null,
+        current_plate varchar(255),
+        last_action_at timestamp(6) with time zone not null,
+        last_entry_at timestamp(6) with time zone,
+        last_entry_plate varchar(255),
+        last_sensor_at timestamp(6) with time zone,
+        mode varchar(255) not null,
+        name varchar(255) not null,
+        priority boolean not null,
+        queue_head_at timestamp(6) with time zone,
+        sensor_status varchar(255),
+        status varchar(255) not null,
+        type varchar(255) not null,
+        vehicle_count integer not null,
+        zone varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:35:51.314727+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "screen_handled_events" already exists; SQL statement:
+
+    create table screen_handled_events (
+        id varchar(255) not null,
+        handled_at timestamp(6) with time zone not null,
+        operator varchar(255) not null,
+        primary key (id) [42101-232]
+2026-05-03 18:35:51.336234+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "user_accounts" already exists; SQL statement:
+
+    create table user_accounts (
+        username varchar(255) not null,
+        display_name varchar(255) not null,
+        password_hash varchar(255) not null,
+        role varchar(255) not null,
+        station varchar(255) not null,
+        system_protected boolean not null,
+        primary key (username) [42101-232]
