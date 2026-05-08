@@ -12,6 +12,7 @@ import type {
   EntryLog,
   LaneSnapshot,
   ManualDispatchRequest,
+  RelayControlRequest,
   ScreenEvent,
   SignalOverrideRequest,
 } from "@/lib/types";
@@ -130,6 +131,16 @@ export const api = {
     return request<LaneSnapshot>(`/signals/${payload.laneId}`, {
       method: "POST",
       body: JSON.stringify(payload),
+    });
+  },
+  controlRelay(payload: RelayControlRequest) {
+    return request<void>(`/signals/${payload.laneId}/relay`, {
+      method: "POST",
+      body: JSON.stringify({
+        target: payload.target,
+        on: payload.on,
+        reason: payload.reason,
+      }),
     });
   },
   restoreAutoControl() {

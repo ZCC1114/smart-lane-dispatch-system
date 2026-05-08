@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { MoreVertical, Signal } from "lucide-react";
 import type { LaneSnapshot } from "@/lib/types";
-import { cn, formatShortTime, laneStatusLabel, laneTypeLabel, sensorStatusLabel } from "@/lib/utils";
+import { cn, formatPlateDisplay, formatShortTime, laneStatusLabel, laneTypeLabel, sensorStatusLabel } from "@/lib/utils";
 
 function activeSignal(lane: LaneSnapshot) {
   if (lane.entrySignal !== "OFFLINE") return lane.entrySignal;
@@ -99,7 +99,7 @@ export function LaneOverviewCard({
         </div>
         <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-secondary)]">
           <span>传感器 {sensorStatusLabel(lane.sensorStatus)}</span>
-          <span>{lane.currentPlate ?? "暂无当前车牌"}</span>
+          <span>{formatPlateDisplay(lane.currentPlate) || "暂无当前车牌"}</span>
         </div>
       </div>
 

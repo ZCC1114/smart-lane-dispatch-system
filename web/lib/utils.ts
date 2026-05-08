@@ -14,6 +14,25 @@ export function formatShortTime(value: string) {
   return format(new Date(value), "HH:mm:ss");
 }
 
+export function formatPlateDisplay(plate?: string | null) {
+  if (!plate) {
+    return "";
+  }
+
+  const trimmed = plate.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const compact = trimmed.replace(/[·•・．。\-.\s]/g, "");
+  const normalized = `${compact.slice(0, 1)}${compact.slice(1).toUpperCase()}`;
+  if (!/^[\u4e00-\u9fff][A-Z][A-Z0-9\u4e00-\u9fff]{5,6}$/.test(normalized)) {
+    return trimmed;
+  }
+
+  return `${normalized.slice(0, 2)}·${normalized.slice(2)}`;
+}
+
 export function laneTypeLabel(type: LaneType) {
   if (type === "ENTRY") return "入口";
   if (type === "EXIT") return "出口";

@@ -5,6 +5,7 @@ export type LaneStatus = "OPEN" | "BUSY" | "FULL" | "OFFLINE";
 export type LaneMode = "AUTO" | "MANUAL" | "OFFLINE";
 export type SignalState = "RED" | "GREEN" | "OFFLINE";
 export type SensorStatus = "ONLINE" | "DEGRADED" | "OFFLINE";
+export type RelayControlTarget = "ENTRY_RED" | "ENTRY_GREEN" | "EXIT_RED" | "EXIT_GREEN";
 export type LogStatus = "PASSED" | "REJECTED" | "MANUAL";
 export type BlacklistLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type DispatchCommandType =
@@ -110,6 +111,13 @@ export interface SignalOverrideRequest {
   reason: string;
 }
 
+export interface RelayControlRequest {
+  laneId: string;
+  target: RelayControlTarget;
+  on: boolean;
+  reason: string;
+}
+
 export interface ManualDispatchRequest {
   laneId: string;
   commandType: DispatchCommandType;
@@ -180,4 +188,3 @@ export interface BlacklistPayload {
   operator: string;
   active: boolean;
 }
-

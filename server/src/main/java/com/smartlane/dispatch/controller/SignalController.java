@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
 
+import com.smartlane.dispatch.dto.RelayControlRequest;
 import com.smartlane.dispatch.dto.SignalOverrideRequest;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.service.OperationsService;
@@ -29,6 +30,13 @@ public class SignalController {
 	@PreAuthorize("hasAnyRole('ADMIN','DISPATCHER')")
 	public Lane overrideSignal(@PathVariable String laneId, @Valid @RequestBody SignalOverrideRequest request) {
 		return operationsService.overrideSignal(laneId, request);
+	}
+
+	@PostMapping("/{laneId}/relay")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	@PreAuthorize("hasAnyRole('ADMIN','DISPATCHER')")
+	public void controlRelay(@PathVariable String laneId, @Valid @RequestBody RelayControlRequest request) {
+		operationsService.controlLaneRelay(laneId, request);
 	}
 
 	@PostMapping("/restore-auto")

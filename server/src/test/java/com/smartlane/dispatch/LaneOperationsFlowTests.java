@@ -172,6 +172,83 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void manualSignalGreenShouldNotTakeOverAutomaticEntryDispatch() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postSignalOverride(token, "L02", "GREEN", "RED", "测试手动开放非自动车道入口灯");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		List<Lane> lanesAfterOverride = operationsService.getLanes();
+		assertThat(lanesAfterOverride).filteredOn(lane -> "L01".equals(lane.getId()))
+				.singleElement()
+				.extracting(Lane::getEntrySignal)
+				.isEqualTo("GREEN");
+		assertThat(lanesAfterOverride).filteredOn(lane -> "L02".equals(lane.getId()))
+				.singleElement()
+				.extracting(Lane::getEntrySignal)
+				.isEqualTo("GREEN");
+
+		postYardEntry(token, "沪A55555", "2026-04-20T08:00:00+08:00");
+
+		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+	}
+
+	@Test
+	void manualRedOnAutomaticEntryLaneShouldNotAdvanceAutomaticDispatch() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postSignalOverride(token, "L01", "RED", "RED", "测试手动关闭自动入口车道入口灯");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getLanes()).filteredOn(lane -> "L01".equals(lane.getId()))
+				.singleElement()
+				.extracting(Lane::getEntrySignal)
+				.isEqualTo("RED");
+
+		postYardEntry(token, "沪A66666", "2026-04-20T08:00:00+08:00");
+
+		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+	}
+
+	@Test
+	void manualEntryGreenShouldStillTurnRedWhenLaneIsFull() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(1);
+		firstLane.setVehicleCount(1);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		mockMvc.perform(post("/api/signals/L01")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "entrySignal": "GREEN",
+					  "exitSignal": "GREEN",
+					  "mode": "MANUAL",
+					  "reason": "测试满位保护"
+					}
+					"""))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.entrySignal").value("RED"))
+			.andExpect(jsonPath("$.exitSignal").value("GREEN"));
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+	}
+
+	@Test
 	void exitLaneShouldAdvanceOnlyAfterCurrentLaneIsFullyCleared() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);
@@ -486,6 +563,21 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].capacity").value(8));
 	}
 
+	@Test
+	void runtimeStateShouldPreferRenderedTargetSignalsWhileDeviceFeedbackIsPending() {
+		Lane lane = buildLane("L01", "L01", "1号车道");
+		lane.setEntrySignal("GREEN");
+		lane.setExitSignal("RED");
+
+		laneRuntimeStateService.recordDeviceFeedback("L01", "RED", "RED", now(), "旧设备反馈");
+		laneRuntimeStateService.recordRenderedState("L01", "GREEN", "RED", "已恢复自动控制", now());
+
+		Lane applied = laneRuntimeStateService.applyRuntimeState(lane);
+		assertThat(applied.getEntrySignal()).isEqualTo("GREEN");
+		assertThat(applied.getExitSignal()).isEqualTo("RED");
+		assertThat(applied.getLedStatus()).isEqualTo("PENDING");
+	}
+
 	private void postYardEntry(String token, String plate, String capturedAt) throws Exception {
 		mockMvc.perform(post("/api/integration/yard-entries")
 				.header("Authorization", "Bearer " + token)
@@ -514,6 +606,22 @@ class LaneOperationsFlowTests {
 					  "entryTime": "%s"
 					}
 					""".formatted(laneId, plate, entryTime)))
+			.andExpect(status().isOk());
+	}
+
+	private void postSignalOverride(String token, String laneId, String entrySignal, String exitSignal, String reason) throws Exception {
+		mockMvc.perform(post("/api/signals/" + laneId)
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "%s",
+					  "entrySignal": "%s",
+					  "exitSignal": "%s",
+					  "mode": "MANUAL",
+					  "reason": "%s"
+					}
+					""".formatted(laneId, entrySignal, exitSignal, reason)))
 			.andExpect(status().isOk());
 	}
 

@@ -47,6 +47,7 @@ public class DeviceGatewayProperties {
 		private String willTopicFilter = "/device/+/will";
 		private String downTopicTemplate = "/device/{cameraDevId}/get";
 		private String yardEntryCameraDevId;
+		private String activeEntryCameraDevId;
 		private boolean requestVersionOnConnect = true;
 		private boolean haveCarPollEnabled = false;
 		private long haveCarPollMs = 30000;
@@ -87,5 +88,6 @@ public class DeviceGatewayProperties {
 		private String exitRedRelay;
 		private String exitGreenRelay;
 		private String presenceInputKey;
+		private String exitTriggerInputKey;
 	}
 }

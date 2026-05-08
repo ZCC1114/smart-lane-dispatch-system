@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { FilterSelect } from "@/components/filter-select";
 
 interface TablePaginationProps {
   page: number;
@@ -26,17 +27,13 @@ export function TablePagination({ page, pageSize, total, onPageChange, onPageSiz
         </span>
         <label className="flex items-center gap-2">
           <span>每页</span>
-          <select
-            value={pageSize}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-            className="h-8 rounded-sm border border-[var(--border-soft)] bg-white px-2 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40"
-          >
-            {pageSizeOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+          <FilterSelect
+            value={String(pageSize)}
+            size="sm"
+            className="w-[84px]"
+            onChange={(value) => onPageSizeChange(Number(value))}
+            options={pageSizeOptions.map((option) => ({ value: String(option), label: String(option) }))}
+          />
           <span>条</span>
         </label>
       </div>

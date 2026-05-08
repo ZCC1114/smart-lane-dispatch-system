@@ -8,7 +8,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.smartlane.dispatch.dto.TcpDidoRelayResponse;
 import com.smartlane.dispatch.entity.Lane;
@@ -82,6 +84,41 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 		}
 	}
 
+	@Override
+	public void controlRelay(Lane lane, String relayTarget, boolean on, String reason) {
+		DeviceGatewayProperties.LaneBinding binding = bindingsByLaneId.get(lane.getId());
+		if (binding == null) {
+			laneRuntimeStateService.markCommandPending(lane.getId(), "未配置 TCP DIDO 车道设备绑定", now());
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道未配置 TCP DIDO 设备绑定");
+		}
+
+		String relayKey = resolveRelayKey(binding, relayTarget);
+		if (relayKey == null || relayKey.isBlank()) {
+			laneRuntimeStateService.markCommandFailed(lane.getId(), "继电器映射缺失", now());
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道未配置该业务继电器");
+		}
+
+		String host = resolveHost(binding);
+		int port = resolvePort(binding);
+		try {
+			tcpDidoCommandService.controlRelay(host, port, relayKey, on, properties.getDidoTcp().getProtocol());
+			String message = relayDisplayName(relayTarget) + (on ? "已吸合" : "已关闭");
+			if (reason != null && !reason.isBlank()) {
+				message += " · " + reason;
+			}
+			laneRuntimeStateService.markCommandPublished(lane.getId(), "TCP DIDO 继电器指令已下发", now());
+			laneRuntimeStateService.recordDeviceMessage(lane.getId(), message, now());
+		} catch (RuntimeException ex) {
+			laneRuntimeStateService.markCommandFailed(lane.getId(), "TCP DIDO 继电器指令下发失败", now());
+			throw ex;
+		}
+	}
+
+	@Override
+	public void clearSyncState() {
+		lastLaneSyncStates.clear();
+	}
+
 	private void controlRelayIfPresent(String host, int port, String relay, boolean on) {
 		if (relay == null || relay.isBlank()) {
 			return;
@@ -107,6 +144,28 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			return binding.getDidoPort();
 		}
 		return properties.getDidoTcp().getPort();
+	}
+
+	private String resolveRelayKey(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {
+		String normalizedTarget = relayTarget == null ? "" : relayTarget.trim().toUpperCase().replace('-', '_');
+		return switch (normalizedTarget) {
+			case "ENTRY_RED" -> binding.getEntryRedRelay();
+			case "ENTRY_GREEN" -> binding.getEntryGreenRelay();
+			case "EXIT_RED" -> binding.getExitRedRelay();
+			case "EXIT_GREEN" -> binding.getExitGreenRelay();
+			default -> relayTarget;
+		};
+	}
+
+	private String relayDisplayName(String relayTarget) {
+		String normalizedTarget = relayTarget == null ? "" : relayTarget.trim().toUpperCase().replace('-', '_');
+		return switch (normalizedTarget) {
+			case "ENTRY_RED" -> "入口红灯";
+			case "ENTRY_GREEN" -> "入口绿灯";
+			case "EXIT_RED" -> "出口红灯";
+			case "EXIT_GREEN" -> "出口绿灯";
+			default -> relayTarget;
+		};
 	}
 
 	private OffsetDateTime now() {

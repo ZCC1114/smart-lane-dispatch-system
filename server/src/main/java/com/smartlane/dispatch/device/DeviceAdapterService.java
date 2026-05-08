@@ -47,6 +47,16 @@ public class DeviceAdapterService implements LaneDeviceGateway {
         laneRuntimeStateService.recordDeviceFeedback(lane.getId(), lane.getEntrySignal(), lane.getExitSignal(), now(), ledMessage);
     }
 
+    @Override
+    public void controlRelay(Lane lane, String relayTarget, boolean on, String reason) {
+        String message = relayTarget + (on ? " 已吸合" : " 已关闭");
+        if (reason != null && !reason.isBlank()) {
+            message += " · " + reason;
+        }
+        laneRuntimeStateService.markCommandPublished(lane.getId(), "模拟继电器指令已下发", now());
+        laneRuntimeStateService.recordDeviceMessage(lane.getId(), message, now());
+    }
+
     private OffsetDateTime now() {
         return OffsetDateTime.now(ZoneOffset.ofHours(8));
     }

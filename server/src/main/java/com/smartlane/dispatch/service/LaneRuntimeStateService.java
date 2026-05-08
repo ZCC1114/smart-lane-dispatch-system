@@ -104,11 +104,22 @@ public class LaneRuntimeStateService {
 
     public Lane applyRuntimeState(Lane lane) {
         LaneRuntimeState state = state(lane.getId());
-        lane.setEntrySignal(firstNonBlank(state.actualEntrySignal, "OFFLINE"));
-        lane.setExitSignal(firstNonBlank(state.actualExitSignal, "OFFLINE"));
+        lane.setEntrySignal(resolveDisplayedSignal(lane.getEntrySignal(), state.targetEntrySignal, state.actualEntrySignal, state.commandStatus));
+        lane.setExitSignal(resolveDisplayedSignal(lane.getExitSignal(), state.targetExitSignal, state.actualExitSignal, state.commandStatus));
         lane.setLedStatus(firstNonBlank(state.commandStatus, "PENDING"));
         lane.setLedMessage(firstNonBlank(state.message, "等待设备反馈"));
         return lane;
+    }
+
+    private String resolveDisplayedSignal(
+            String renderedSignal,
+            String targetSignal,
+            String actualSignal,
+            String commandStatus) {
+        if ("PENDING".equals(commandStatus) && !isBlank(targetSignal)) {
+            return targetSignal;
+        }
+        return firstNonBlank(actualSignal, targetSignal, renderedSignal, "OFFLINE");
     }
 
     public void clearAll() {

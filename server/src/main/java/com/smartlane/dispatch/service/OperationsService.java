@@ -32,6 +32,7 @@ import com.smartlane.dispatch.dto.DispatchConfigView;
 import com.smartlane.dispatch.dto.DispatchRuntimeRequest;
 import com.smartlane.dispatch.dto.LaneSensorPayload;
 import com.smartlane.dispatch.dto.ManualDispatchRequest;
+import com.smartlane.dispatch.dto.RelayControlRequest;
 import com.smartlane.dispatch.dto.SignalOverrideRequest;
 import com.smartlane.dispatch.dto.ScreenEventView;
 import com.smartlane.dispatch.dto.ThroughputPoint;
@@ -72,6 +73,7 @@ public class OperationsService {
 
 	private static final List<String> VALID_SIGNAL_STATES = List.of("RED", "GREEN", "OFFLINE");
 	private static final List<String> VALID_LANE_MODES = List.of("AUTO", "MANUAL", "OFFLINE");
+	private static final List<String> VALID_RELAY_CONTROL_TARGETS = List.of("ENTRY_RED", "ENTRY_GREEN", "EXIT_RED", "EXIT_GREEN");
 	private static final List<String> VALID_BLACKLIST_LEVELS = List.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
 	private static final List<String> VALID_SENSOR_STATES = List.of("ONLINE", "DEGRADED", "OFFLINE");
 	private static final List<String> VALID_COMMAND_TYPES = List.of(
@@ -155,6 +157,13 @@ public class OperationsService {
 		OffsetDateTime referenceTime = now();
 		List<Lane> lanes = refreshLaneRuntime(referenceTime);
 		return buildDispatchBoard(referenceTime, lanes);
+	}
+
+	@Transactional
+	public String resolveOpenEntryLaneIdForDevice(OffsetDateTime referenceTime) {
+		OffsetDateTime resolvedTime = resolveTime(referenceTime);
+		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
+		return resolveOpenEntryLaneId(lanes, resolvedTime);
 	}
 
 	public List<ScreenEventView> getScreenEvents() {
@@ -338,6 +347,7 @@ public class OperationsService {
 			ticket.setNotes(firstNonBlank(ticket.getNotes(), "日清关闭当前周期记录"));
 		}
 		laneRuntimeStateService.clearAll();
+		laneDeviceGateway.clearSyncState();
 
 		for (Lane lane : lanes) {
 			lane.setVehicleCount(0);
@@ -450,9 +460,18 @@ public class OperationsService {
 		return persistLaneRuntime(lane.getId(), referenceTime, "signal_override");
 	}
 
+	public void controlLaneRelay(String laneId, RelayControlRequest request) {
+		validateRelayControlTarget(request.target());
+		Lane lane = requireLane(laneId);
+		laneDeviceGateway.controlRelay(lane, request.target(), Boolean.TRUE.equals(request.on()), request.reason());
+	}
+
 	@Transactional
 	public void restoreAutoControl() {
 		OffsetDateTime referenceTime = now();
+		laneDeviceGateway.clearSyncState();
+		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
+		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		for (Lane lane : laneRepository.findAllByOrderByCodeAsc()) {
 			lane.setMode("AUTO");
 			lane.setLastActionAt(referenceTime);
@@ -465,6 +484,10 @@ public class OperationsService {
 	@Transactional
 	public void globalLockdown() {
 		OffsetDateTime referenceTime = now();
+		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
+		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
+		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, null, referenceTime);
+		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, null, referenceTime);
 		for (Lane lane : laneRepository.findAllByOrderByCodeAsc()) {
 			lane.setMode("MANUAL");
 			lane.setStatus("FULL");
@@ -581,12 +604,10 @@ public class OperationsService {
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
 		Map<String, Long> pendingCounts = pendingAssignmentCounts(capturedAt);
 		boolean entryDispatchEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
-		String manualEntryLaneId = selectManualEntryLaneId(lanes, laneOrder);
 		String activeAutoEntryLaneId = entryDispatchEnabled
 				? resolveAndPersistActiveEntryLaneId(lanes, laneOrder, pendingCounts, capturedAt)
 				: null;
-		String targetLaneId = firstNonBlank(manualEntryLaneId, activeAutoEntryLaneId);
-		Lane targetLane = laneById(lanes, targetLaneId);
+		Lane targetLane = laneById(lanes, activeAutoEntryLaneId);
 
 		DispatchTicket ticket = DispatchTicket.builder()
 				.id("DSP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
@@ -614,7 +635,7 @@ public class OperationsService {
 					capturedAt));
 
 			pendingCounts.merge(targetLane.getId(), 1L, Long::sum);
-			if (manualEntryLaneId == null && !canReserveEntrySlot(targetLane, pendingCounts.getOrDefault(targetLane.getId(), 0L))) {
+			if (!canReserveEntrySlot(targetLane, pendingCounts.getOrDefault(targetLane.getId(), 0L))) {
 				advanceEntryLane(capturedAt, targetLane.getId(), lanes, laneOrder, pendingCounts);
 			}
 		} else {
@@ -774,14 +795,28 @@ public class OperationsService {
 
 	@Transactional
 	public Lane simulateScreenLaneExit(String laneId, OffsetDateTime observedAt) {
+		return exitLaneByLoopTrigger(laneId, observedAt, "screen_lane_exit_simulated");
+	}
+
+	@Transactional
+	public Lane applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
+		return exitLaneByLoopTrigger(laneId, observedAt, "lane_exit_triggered");
+	}
+
+	private Lane exitLaneByLoopTrigger(String laneId, OffsetDateTime observedAt, String action) {
 		Lane lane = requireLane(laneId);
 		OffsetDateTime referenceTime = resolveTime(observedAt);
 		List<DispatchTicket> visibleTickets = dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(lane.getId());
-		if (visibleTickets.isEmpty()) {
-			return applyPassCountDelta(laneId, -1, referenceTime);
+		if (!visibleTickets.isEmpty()) {
+			return closeScreenExitTicket(visibleTickets.getFirst(), referenceTime, action);
 		}
 
-		return closeScreenExitTicket(visibleTickets.getFirst(), referenceTime, "screen_lane_exit_simulated");
+		List<EntryLog> activeLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(lane.getId());
+		if (!activeLogs.isEmpty()) {
+			return closeScreenExitLog(activeLogs.getFirst(), referenceTime, action);
+		}
+
+		return applyPassCountDelta(laneId, -1, referenceTime);
 	}
 
 	@Transactional
@@ -932,16 +967,12 @@ public class OperationsService {
 		Map<String, Long> pendingCounts = pendingAssignmentCounts(referenceTime);
 		boolean entryDispatchEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
 		boolean exitDispatchEnabled = currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled);
-		String manualEntryLaneId = selectManualEntryLaneId(lanes, laneOrder);
-		String manualExitLaneId = selectManualExitLaneId(lanes, laneOrder);
 		String activeAutoEntryLaneId = entryDispatchEnabled
 				? resolveAndPersistActiveEntryLaneId(lanes, laneOrder, pendingCounts, referenceTime)
 				: null;
 		String activeAutoExitLaneId = exitDispatchEnabled
 				? resolveAndPersistActiveExitLaneId(lanes, laneOrder, referenceTime, activeAutoEntryLaneId)
 				: null;
-		String openEntryLaneId = firstNonBlank(manualEntryLaneId, activeAutoEntryLaneId);
-		String openExitLaneId = firstNonBlank(manualExitLaneId, activeAutoExitLaneId);
 
 		for (Lane lane : lanes) {
 			long reservedCount = pendingCounts.getOrDefault(lane.getId(), 0L);
@@ -957,8 +988,8 @@ public class OperationsService {
 			if ("AUTO".equals(lane.getMode())) {
 				applyAutomaticSignals(
 						lane,
-						entryDispatchEnabled && lane.getId().equals(openEntryLaneId) && canReserveEntrySlot(lane, reservedCount),
-						exitDispatchEnabled && lane.getId().equals(openExitLaneId));
+						entryDispatchEnabled && lane.getId().equals(activeAutoEntryLaneId) && canReserveEntrySlot(lane, reservedCount),
+						exitDispatchEnabled && lane.getId().equals(activeAutoExitLaneId));
 				laneRuntimeStateService.recordRenderedState(lane.getId(), lane.getEntrySignal(), lane.getExitSignal(), resolveLedMessage(lane), referenceTime);
 			} else if ("MANUAL".equals(lane.getMode())) {
 				applyManualSignals(lane, referenceTime);
@@ -970,8 +1001,8 @@ public class OperationsService {
 			if (lane.getLastActionAt() == null) {
 				lane.setLastActionAt(referenceTime);
 			}
-			laneDeviceGateway.syncLane(lane);
 		}
+		laneDeviceGateway.syncBatch(lanes);
 
 		return laneRepository.saveAll(lanes).stream()
 				.map(laneRuntimeStateService::applyRuntimeState)
@@ -1031,10 +1062,6 @@ public class OperationsService {
 	private String resolveOpenEntryLaneId(List<Lane> lanes, OffsetDateTime referenceTime) {
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
 		Map<String, Long> pendingCounts = pendingAssignmentCounts(referenceTime);
-		String manualEntryLaneId = selectManualEntryLaneId(lanes, laneOrder);
-		if (!isBlank(manualEntryLaneId)) {
-			return manualEntryLaneId;
-		}
 		if (!currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled)) {
 			return null;
 		}
@@ -1043,10 +1070,6 @@ public class OperationsService {
 
 	private String resolveOpenExitLaneId(List<Lane> lanes, OffsetDateTime referenceTime, String activeEntryLaneId) {
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
-		String manualExitLaneId = selectManualExitLaneId(lanes, laneOrder);
-		if (!isBlank(manualExitLaneId)) {
-			return manualExitLaneId;
-		}
 		if (!currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled)) {
 			return null;
 		}
@@ -1088,42 +1111,13 @@ public class OperationsService {
 		return firstEligibleExitLaneId(orderedLanes, activeEntryLaneId);
 	}
 
-	private String selectManualEntryLaneId(List<Lane> lanes, List<String> laneOrder) {
-		return lanes.stream()
-				.filter(lane -> "MANUAL".equals(lane.getMode()))
-				.filter(lane -> "GREEN".equals(laneRuntimeStateService.targetEntrySignal(lane.getId(), lane.getEntrySignal())))
-				.sorted((left, right) -> compareManualLaneOrder(left, right, laneOrder))
-				.map(Lane::getId)
-				.findFirst()
-				.orElse(null);
-	}
-
-	private String selectManualExitLaneId(List<Lane> lanes, List<String> laneOrder) {
-		return lanes.stream()
-				.filter(lane -> "MANUAL".equals(lane.getMode()))
-				.filter(lane -> "GREEN".equals(laneRuntimeStateService.targetExitSignal(lane.getId(), lane.getExitSignal())))
-				.sorted((left, right) -> compareManualLaneOrder(left, right, laneOrder))
-				.map(Lane::getId)
-				.findFirst()
-				.orElse(null);
-	}
-
-	private int compareManualLaneOrder(Lane left, Lane right, List<String> laneOrder) {
-		int byActionTime = Comparator.nullsLast(Comparator.<OffsetDateTime>reverseOrder())
-				.compare(left.getLastActionAt(), right.getLastActionAt());
-		if (byActionTime != 0) {
-			return byActionTime;
-		}
-		return compareLaneOrder(left, right, laneOrder);
-	}
-
 	private boolean canReserveEntrySlot(Lane lane, long pendingCount) {
 		return canActivateLane(lane)
 				&& lane.getVehicleCount() + pendingCount < lane.getCapacity();
 	}
 
 	private boolean canActivateLane(Lane lane) {
-		return "AUTO".equals(lane.getMode())
+		return !"OFFLINE".equals(lane.getMode())
 				&& !"OFFLINE".equals(lane.getSensorStatus())
 				&& lane.getCapacity() > 0;
 	}
@@ -1644,6 +1638,13 @@ public class OperationsService {
 	private void validateOptionalSignal(String signal) {
 		if (!isBlank(signal) && !VALID_SIGNAL_STATES.contains(signal)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "信号灯状态非法");
+		}
+	}
+
+	private void validateRelayControlTarget(String target) {
+		String normalizedTarget = target == null ? null : target.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+		if (isBlank(normalizedTarget) || !VALID_RELAY_CONTROL_TARGETS.contains(normalizedTarget)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "继电器目标仅支持 ENTRY_RED、ENTRY_GREEN、EXIT_RED、EXIT_GREEN");
 		}
 	}
 

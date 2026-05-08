@@ -2,6 +2,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { formatPlateDisplay } from "@/lib/utils";
 
 const DESIGN_WIDTH = 1920;
 const DESIGN_HEIGHT = 1080;
@@ -180,11 +181,11 @@ function buildDisplayLanes(lanes: LaneSnapshot[]) {
   return Array.from({ length: 11 }, (_, index) => ordered[index] ?? null);
 }
 
-function laneOpenSignalState(lane: LaneSnapshot | null, activeLaneId: string | null, enabled: boolean) {
-  if (!lane) {
+function laneSignalState(signal: LaneSnapshot["entrySignal"] | LaneSnapshot["exitSignal"] | null | undefined) {
+  if (!signal || signal === "OFFLINE") {
     return "yellow";
   }
-  if (!enabled || lane.id !== activeLaneId) {
+  if (signal === "RED") {
     return "red";
   }
   return "green";
@@ -241,26 +242,8 @@ function InlinePlate({
           : "border-white bg-[linear-gradient(180deg,#f7fbff_0%,#2e72dd_100%)] text-white",
       ].join(" ")}
     >
-      {text}
+      {formatPlateDisplay(text) || text}
     </span>
-  );
-}
-
-function YellowTaxi({ x, y, width = 38, height = 66 }: { x: number; y: number; width?: number; height?: number }) {
-  return (
-    <div
-      className="absolute rounded-[45%_45%_36%_36%/12%_12%_18%_18%] border border-[#ffe36b] bg-[linear-gradient(180deg,#ffe568_0%,#ffc328_35%,#f2a20e_100%)] shadow-[0_0_14px_rgba(255,202,45,0.7)]"
-      style={{ left: x, top: y, width, height }}
-    >
-      <span className="absolute left-[18%] right-[18%] top-[9%] h-[18%] rounded-[4px] bg-[linear-gradient(180deg,#315273_0%,#172638_100%)] shadow-[inset_0_1px_3px_rgba(255,255,255,0.35)]" />
-      <span className="absolute left-[14%] right-[14%] top-[33%] h-[30%] rounded-[6px] bg-[linear-gradient(180deg,#ffd956_0%,#f6b31b_100%)] shadow-[inset_0_0_8px_rgba(255,255,255,0.35)]" />
-      <span className="absolute bottom-[10%] left-[20%] right-[20%] h-[16%] rounded-[4px] bg-[linear-gradient(180deg,#2f4f6e_0%,#172435_100%)] shadow-[inset_0_1px_3px_rgba(255,255,255,0.25)]" />
-      <span className="absolute left-1/2 top-[42%] h-[12%] w-[42%] -translate-x-1/2 rounded-[3px] bg-[#4b3410]/45" />
-      <span className="absolute left-[-5px] top-[24%] h-[16%] w-[6px] rounded bg-[#202936]" />
-      <span className="absolute right-[-5px] top-[24%] h-[16%] w-[6px] rounded bg-[#202936]" />
-      <span className="absolute bottom-[22%] left-[-5px] h-[16%] w-[6px] rounded bg-[#202936]" />
-      <span className="absolute bottom-[22%] right-[-5px] h-[16%] w-[6px] rounded bg-[#202936]" />
-    </div>
   );
 }
 
@@ -279,7 +262,7 @@ function Panel({
 }) {
   const image = size === "large" ? "Frame 1321315113.png" : "Frame 1321315113(1).png";
   const width = size === "large" ? 292 : 359;
-  const height = size === "large" ? 382 : 188;
+  const height = size === "large" ? 382 : 208;
 
   return (
     <section className="absolute overflow-hidden" style={{ left: x, top: y, width, height }}>
@@ -313,7 +296,7 @@ function AlertRow({
         !
       </span>
       <p className="absolute left-[24px] top-[7px] w-[250px] truncate text-[12px] font-bold text-white">
-        {event ? `事件：${event.plate} ${event.message}` : "暂无事件"}
+        {event ? `事件：${formatPlateDisplay(event.plate) || event.plate} ${event.message}` : "暂无事件"}
       </p>
       <p className="absolute left-[24px] top-[25px] text-[12px] text-[#bec7d0]">时间： {event ? formatScreenTime(event.occurredAt) : "--"}</p>
       {event ? (
@@ -422,38 +405,34 @@ function LaneVehicleStack({
     .slice(0, capacity)
     .map((ticket) => ({ id: ticket.id, plate: ticket.plate }));
   const slot = laneHeight / capacity;
-  const carHeight = Math.max(28, Math.min(68, slot * 0.66));
-  const carWidth = Math.max(20, Math.min(40, carHeight * 0.58));
-  const plateHeight = Math.max(16, Math.min(23, slot * 0.3));
-  const fontSize = Math.max(9, Math.min(14, plateHeight * 0.58));
+  const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
+  const plateWidth = 98;
+  const fontSize = Math.max(13, Math.min(17, plateHeight * 0.56));
 
   return (
     <>
       {rows.map((vehicle, index) => {
         const rowTop = laneTop + slot * index;
-        const plateTop = Math.max(4, carHeight * 0.48 - plateHeight / 2);
-        const contentHeight = Math.max(carHeight, plateTop + plateHeight);
-        const top = rowTop + Math.max(0, (slot - contentHeight) / 2);
+        const top = rowTop + Math.max(0, (slot - plateHeight) / 2);
         const centerX = x + 46;
         return (
           <div key={`${lane.id}-${vehicle.id}-${index}`}>
-            <YellowTaxi x={centerX - carWidth / 2} y={top} width={carWidth} height={carHeight} />
             <div
               className={[
-                "absolute flex items-center justify-center overflow-hidden border px-1 font-mono font-black leading-none shadow-[inset_0_0_7px_rgba(255,255,255,0.72),0_0_6px_rgba(0,0,0,0.45)]",
+                "absolute flex items-center justify-center overflow-hidden border px-[3px] font-mono font-black leading-none shadow-[inset_0_0_8px_rgba(255,255,255,0.78),0_0_6px_rgba(0,0,0,0.45)]",
                 plateTone(vehicle.plate) === "green"
                   ? "border-[#baffcf] bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a]"
-                  : "border-white bg-[linear-gradient(180deg,#f7fbff_0%,#2e72dd_100%)] text-white",
+                  : "border-[#d9e8ff] bg-[linear-gradient(180deg,#79b1ff_0%,#2e79f0_36%,#0c4fc8_100%)] text-white",
               ].join(" ")}
               style={{
-                left: centerX - 40,
-                top: top + plateTop,
-                width: 80,
+                left: centerX - plateWidth / 2,
+                top,
+                width: plateWidth,
                 height: plateHeight,
                 fontSize,
               }}
             >
-              <span className="max-w-full truncate">{vehicle.plate}</span>
+              <span className="max-w-full truncate tracking-[-0.02em]">{formatPlateDisplay(vehicle.plate) || vehicle.plate}</span>
             </div>
           </div>
         );
@@ -465,17 +444,9 @@ function LaneVehicleStack({
 function LaneOverlays({
   lanes,
   laneVehicles,
-  activeEntryLaneId,
-  activeExitLaneId,
-  entryDispatchEnabled,
-  exitDispatchEnabled,
 }: {
   lanes: LaneSnapshot[];
   laneVehicles: Record<string, DispatchTicket[]>;
-  activeEntryLaneId: string | null;
-  activeExitLaneId: string | null;
-  entryDispatchEnabled: boolean;
-  exitDispatchEnabled: boolean;
 }) {
   const laneX = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
   const displayLanes = buildDisplayLanes(lanes);
@@ -484,8 +455,8 @@ function LaneOverlays({
     <>
       {laneX.map((x, index) => (
         <div key={x}>
-          <Signal x={x + 5} y={205} state={laneOpenSignalState(displayLanes[index], activeExitLaneId, exitDispatchEnabled)} />
-          <Signal x={x + 5} y={917} state={laneOpenSignalState(displayLanes[index], activeEntryLaneId, entryDispatchEnabled)} />
+          <Signal x={x + 5} y={205} state={laneSignalState(displayLanes[index]?.exitSignal)} />
+          <Signal x={x + 5} y={917} state={laneSignalState(displayLanes[index]?.entrySignal)} />
           <div className="absolute top-[504px] w-[64px] text-center text-[34px] font-semibold leading-[58px] text-white/22" style={{ left: x + 16 }}>
             <p>等</p>
             <p>候</p>
@@ -512,10 +483,6 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const guideEntries = board?.waitingAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = board?.laneVehicles ?? {};
-  const activeEntryLaneId = board?.activeEntryLaneId ?? null;
-  const activeExitLaneId = board?.activeExitLaneId ?? null;
-  const entryDispatchEnabled = board?.entryDispatchEnabled ?? false;
-  const exitDispatchEnabled = board?.exitDispatchEnabled ?? false;
 
   useEffect(() => {
     if (!simulateLaneId && lanes[0]?.id) {
@@ -603,9 +570,17 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   }
 
   async function simulateLaneExit() {
+    const laneId = simulateLaneId || lanes[0]?.id || "";
+    if (!laneId) {
+      setSimulateMessage("请选择车道");
+      return;
+    }
+
     setSimulateMessage("提交中...");
-    const response = await fetch(`${API_BASE_URL}/screen/simulate/global-exit`, {
+    const response = await fetch(`${API_BASE_URL}/screen/simulate/lane-exit`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ laneId }),
     });
     if (!response.ok) {
       const message = await response.text();
@@ -615,7 +590,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
 
     const nextBoard = await fetchScreenBoard();
     setBoard(nextBoard);
-    setSimulateMessage("已模拟出场");
+    setSimulateMessage(`已模拟${laneLabel(lanes, laneId)}出场`);
   }
 
   const shellClassName =
@@ -669,10 +644,6 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <LaneOverlays
           lanes={lanes}
           laneVehicles={laneVehicles}
-          activeEntryLaneId={activeEntryLaneId}
-          activeExitLaneId={activeExitLaneId}
-          entryDispatchEnabled={entryDispatchEnabled}
-          exitDispatchEnabled={exitDispatchEnabled}
         />
 
         <Asset name="Group 48097127.png" className="absolute left-[1541px] top-[398px] h-[104px] w-[71px]" />
@@ -740,7 +711,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
               <div className="px-7 pt-5 text-[17px] leading-[30px] text-white">
                 <p>
                   车牌：
-                  <span className="font-mono font-black text-[#9fffc2]">{pendingEvent.plate || "-"}</span>
+                  <span className="font-mono font-black text-[#9fffc2]">{formatPlateDisplay(pendingEvent.plate) || pendingEvent.plate || "-"}</span>
                 </p>
                 <p className="truncate">内容：{pendingEvent.message}</p>
                 <p>时间：{formatScreenTime(pendingEvent.occurredAt)}</p>

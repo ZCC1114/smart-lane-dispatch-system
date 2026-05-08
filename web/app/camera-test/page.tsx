@@ -18,7 +18,7 @@ import {
   Terminal,
   Wifi,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatPlateDisplay } from "@/lib/utils";
 
 type LogDirection = "tx" | "rx" | "system";
 type CameraCommand = "getVerInfo" | "getHaveCar" | "getVideo" | "clearCount";
@@ -345,7 +345,7 @@ export default function CameraTestPage() {
                 </div>
                 <div className="grid grid-cols-[88px_1fr] gap-2">
                   <span className="text-slate-500">最近车牌</span>
-                  <span className="font-mono font-semibold">{latestPlate}</span>
+                  <span className="font-mono font-semibold">{formatPlateDisplay(latestPlate) || latestPlate}</span>
                 </div>
                 <div className="grid grid-cols-[88px_1fr] gap-2">
                   <span className="text-slate-500">alarmType</span>

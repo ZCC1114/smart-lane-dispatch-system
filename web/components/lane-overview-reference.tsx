@@ -3,7 +3,7 @@
 import { ArrowDown, ArrowLeft, ArrowUp, Car, CloudSun, Navigation, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { DispatchBoard, DispatchTicket, LaneSnapshot, SignalState } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, formatPlateDisplay } from "@/lib/utils";
 
 interface DisplayLane {
   slot: number;
@@ -116,7 +116,7 @@ function PlateBadge({ plate, tone = "green" }: { plate: string; tone?: "green" |
           : "border-[#d9ebff] bg-[linear-gradient(180deg,#f6fbff_0%,#2d72df_100%)] text-white",
       )}
     >
-      {plate}
+      {formatPlateDisplay(plate) || plate}
     </span>
   );
 }
@@ -154,7 +154,7 @@ function AlertRows({ variant, count = 3 }: { variant: "red" | "cyan"; count?: nu
           <div>
             <p className="truncate font-semibold text-white">
               <span className={cn("mr-1 inline-block size-3 rounded-full text-center text-[10px] leading-3", variant === "red" ? "bg-[#ff8b28]" : "bg-[#21d9ff]")}>!</span>
-              事件：苏B5M9J4{variant === "red" ? "为黑名单车辆" : "未进车道"}，请及时处理
+              事件：{formatPlateDisplay("苏B5M9J4")}{variant === "red" ? "为黑名单车辆" : "未进车道"}，请及时处理
             </p>
             <p className="mt-1 text-[#b8c7d6]">时间：2023/05/26 2:23:24</p>
           </div>

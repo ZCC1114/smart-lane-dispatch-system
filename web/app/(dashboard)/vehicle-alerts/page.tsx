@@ -3,11 +3,12 @@
 import { type FormEvent, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, Filter, Search } from "lucide-react";
+import { FilterSelect } from "@/components/filter-select";
 import { Panel } from "@/components/panel";
 import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
 import type { ScreenEventType } from "@/lib/types";
-import { cn, downloadCsv, formatDateTime, screenEventTypeLabel } from "@/lib/utils";
+import { cn, downloadCsv, formatDateTime, formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
 
 const eventTypes: Array<{ value: ScreenEventType; label: string }> = [
   { value: "blacklist", label: "黑名单" },
@@ -67,6 +68,7 @@ export default function VehicleAlertsPage() {
   const alerts = alertsQuery.data ?? [];
   const pageCount = Math.max(1, Math.ceil(alerts.length / pageSize));
   const currentPage = Math.min(page, pageCount);
+  const pageStartIndex = (currentPage - 1) * pageSize;
   const pagedAlerts = alerts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
@@ -87,9 +89,9 @@ export default function VehicleAlertsPage() {
               downloadCsv(
                 "vehicle-alerts.csv",
                 [
-                  ["告警ID", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
-                  ...alerts.map((alert) => [
-                    alert.id,
+                  ["序号", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
+                  ...alerts.map((alert, index) => [
+                    index + 1,
                     screenEventTypeLabel(alert.type),
                     alert.plate,
                     alert.handled ? "已处理" : "未处理",
@@ -110,21 +112,15 @@ export default function VehicleAlertsPage() {
         }
       >
         <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-[180px_220px_220px_120px_minmax(0,1fr)]">
-          <label className="relative block">
-            <Filter className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
-            <select
-              value={type}
-              onChange={(event) => setType(event.target.value)}
-              className="w-full appearance-none rounded-sm border border-[var(--border-soft)] bg-white py-3 pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40"
-            >
-              <option value="">全部类型</option>
-              {eventTypes.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FilterSelect
+            value={type}
+            onChange={setType}
+            icon={Filter}
+            options={[
+              { value: "", label: "全部类型" },
+              ...eventTypes.map((item) => ({ value: item.value, label: item.label })),
+            ]}
+          />
 
           <input
             type="datetime-local"
@@ -156,8 +152,8 @@ export default function VehicleAlertsPage() {
         </form>
 
         <div className="mt-5 overflow-hidden rounded-sm border border-[var(--border-soft)]">
-          <div className="grid grid-cols-[0.7fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr] gap-3 bg-slate-100 px-5 py-4 text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">
-            <span>告警 ID</span>
+          <div className="grid grid-cols-[0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
+            <span>序号</span>
             <span>类型</span>
             <span>车牌号码</span>
             <span>处理状态</span>
@@ -166,15 +162,15 @@ export default function VehicleAlertsPage() {
             <span>来源</span>
           </div>
           <div className="divide-y divide-[var(--border-soft)]">
-            {pagedAlerts.map((alert) => (
-              <div key={alert.id} className="grid grid-cols-[0.7fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr] gap-3 px-5 py-4 text-sm">
-                <span className="font-mono text-[var(--text-secondary)]">{alert.id}</span>
+            {pagedAlerts.map((alert, index) => (
+              <div key={alert.id} className="grid grid-cols-[0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr] gap-3 px-5 py-4 text-sm">
+                <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                 <span>
                   <span className={cn("inline-flex rounded-sm border px-2 py-1 text-xs font-semibold", eventTypeClass(alert.type))}>
                     {screenEventTypeLabel(alert.type)}
                   </span>
                 </span>
-                <span className="font-mono font-semibold text-[var(--text-primary)]">{alert.plate}</span>
+                <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(alert.plate) || alert.plate}</span>
                 <span>
                   <span
                     className={cn(

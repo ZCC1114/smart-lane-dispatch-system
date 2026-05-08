@@ -1,27 +1,16 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, GripVertical, RotateCcw, Save } from "lucide-react";
 import { Panel } from "@/components/panel";
 import { api } from "@/lib/api";
 import { canDispatch } from "@/lib/permissions";
-import type { DispatchBoard, DispatchConfig, LaneSnapshot } from "@/lib/types";
+import type { DispatchConfig, LaneSnapshot } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
 const emptyLanes: LaneSnapshot[] = [];
-const initialBoard: DispatchBoard = {
-  generatedAt: "",
-  activeEntryLaneId: null,
-  activeExitLaneId: null,
-  activeEntryLaneName: null,
-  activeExitLaneName: null,
-  entryDispatchEnabled: false,
-  exitDispatchEnabled: false,
-  waitingAssignments: [],
-  recentDispatches: [],
-};
 const initialDispatchConfig: DispatchConfig = {
   entryLaneOrder: "1-11",
   entryDispatchEnabled: false,
@@ -48,12 +37,8 @@ export default function DispatchPage() {
     queryKey: ["dispatch-config"],
     queryFn: api.getDispatchConfig,
   });
-  const dispatchBoardQuery = useQuery({
-    queryKey: ["dispatch-board"],
-    queryFn: api.getDispatchBoard,
-  });
   const [configDraft, setConfigDraft] = useState<OrderDraft>({});
-  const [reserveMinutesDraft, setReserveMinutesDraft] = useState("2");
+  const [reserveMinutesDraftOverride, setReserveMinutesDraftOverride] = useState<string | null>(null);
   const [capacityDraft, setCapacityDraft] = useState<Record<string, number>>({});
   const [selectedLaneIds, setSelectedLaneIds] = useState<string[]>([]);
   const [bulkCapacityValue, setBulkCapacityValue] = useState<string>("");
@@ -63,7 +48,6 @@ export default function DispatchPage() {
 
   const lanes = lanesQuery.data ?? emptyLanes;
   const currentConfig = dispatchConfigQuery.data ?? initialDispatchConfig;
-  const dispatchBoard = dispatchBoardQuery.data ?? initialBoard;
   const entryOrder = configDraft.entryLaneOrder ?? resolveLaneOrder(currentConfig.entryLaneOrder, lanes);
   const selectedLaneSet = useMemo(() => new Set(selectedLaneIds), [selectedLaneIds]);
   const allLaneIds = useMemo(() => lanes.map((lane) => lane.id), [lanes]);
@@ -72,6 +56,7 @@ export default function DispatchPage() {
     () => lanes.filter((lane) => selectedLaneSet.has(lane.id)).map((lane) => lane.name),
     [lanes, selectedLaneSet],
   );
+  const reserveMinutesDraft = reserveMinutesDraftOverride ?? String(currentConfig.assignmentReserveMinutes ?? 2);
   const parsedReserveMinutes = Number(reserveMinutesDraft);
   const reserveMinutesValid = Number.isInteger(parsedReserveMinutes) && parsedReserveMinutes >= 1 && parsedReserveMinutes <= 60;
   const configForm: DispatchConfig = {
@@ -125,6 +110,7 @@ export default function DispatchPage() {
 
   async function handleSettingsSaveSuccess(nextConfig: DispatchConfig, updatedLanes: LaneSnapshot[]) {
     setConfigDraft({});
+    setReserveMinutesDraftOverride(null);
     clearSavedCapacityDraft(updatedLanes);
     queryClient.setQueryData(["dispatch-config"], nextConfig);
     await Promise.all([
@@ -159,6 +145,7 @@ export default function DispatchPage() {
     mutationFn: api.dailyReset,
     onSuccess: async (nextConfig) => {
       queryClient.setQueryData(["dispatch-config"], nextConfig);
+      setReserveMinutesDraftOverride(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["dispatch-config"] }),
         queryClient.invalidateQueries({ queryKey: ["dispatch-board"] }),
@@ -175,10 +162,6 @@ export default function DispatchPage() {
   });
 
   const capacityMutationPending = configMutation.isPending;
-
-  useEffect(() => {
-    setReserveMinutesDraft(String(currentConfig.assignmentReserveMinutes ?? 2));
-  }, [currentConfig.assignmentReserveMinutes]);
 
   function handleConfigSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -304,41 +287,20 @@ export default function DispatchPage() {
       ) : null}
 
       <section className="panel-surface rounded-2xl p-6">
-        <div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-[var(--text-muted)]">调度设置</p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--text-primary)]">日清、入口顺序与车道容量</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-              入口按场地总入口预分配保留位顺序推进，出口按当前放行车道清空后再切到下一条车道。
-            </p>
           </div>
-          <div className="mt-5 grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
-            <div className="rounded-2xl border border-[var(--border-soft)] bg-white px-4 py-3">
-              <p className="text-xs font-medium text-[var(--text-muted)]">当前入口车道</p>
-              <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                {dispatchBoard.activeEntryLaneName ?? dispatchBoard.activeEntryLaneId ?? "未开启"}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-soft)] bg-white px-4 py-3">
-              <p className="text-xs font-medium text-[var(--text-muted)]">当前出口车道</p>
-              <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
-                {dispatchBoard.activeExitLaneName ?? dispatchBoard.activeExitLaneId ?? "未开启"}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-soft)] bg-white px-4 py-3">
-              <p className="text-xs font-medium text-[var(--text-muted)]">待入道车辆</p>
-              <p className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{dispatchBoard.waitingAssignments.length}</p>
-            </div>
-            <button
-              type="button"
-              disabled={disabled || dailyResetMutation.isPending}
-              onClick={() => dailyResetMutation.mutate()}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
-            >
-              <RotateCcw className="size-4" />
-              {dailyResetMutation.isPending ? "日清中..." : "清空车道并重启"}
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={disabled || dailyResetMutation.isPending}
+            onClick={() => dailyResetMutation.mutate()}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+          >
+            <RotateCcw className="size-4" />
+            {dailyResetMutation.isPending ? "日清中..." : "清空车道并重启"}
+          </button>
         </div>
       </section>
 
@@ -358,7 +320,7 @@ export default function DispatchPage() {
                   step={1}
                   value={reserveMinutesDraft}
                   disabled={disabled || dispatchConfigQuery.isLoading || configMutation.isPending}
-                  onChange={(event) => setReserveMinutesDraft(event.target.value)}
+                  onChange={(event) => setReserveMinutesDraftOverride(event.target.value)}
                   className="h-12 w-full rounded-xl border border-[var(--border-soft)] bg-white px-3 pr-12 text-center text-sm font-semibold tabular-nums text-[var(--text-primary)] outline-none focus:border-sky-400/40 disabled:opacity-60"
                 />
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--text-secondary)]">分钟</span>

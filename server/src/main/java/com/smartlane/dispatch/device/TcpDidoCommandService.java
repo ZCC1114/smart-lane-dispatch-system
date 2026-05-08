@@ -51,10 +51,16 @@ public class TcpDidoCommandService {
 		if (relayIndex < 1 || relayIndex > 16) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前 TCP DIDO 控制仅支持 A01-A16");
 		}
+		int mask = 1 << (relayIndex - 1);
+		int state = on ? mask : 0;
+		return buildRelayCommand(state, mask, protocol);
+	}
+
+	public byte[] buildRelayCommand(int stateMask, int enableMask, String protocol) {
 		String normalizedProtocol = normalizeProtocol(protocol);
 		return switch (normalizedProtocol) {
-			case "A3" -> buildA3SceneCommand(relayIndex, on);
-			default -> buildA1BasicCommand(relayIndex, on);
+			case "A3" -> buildA3SceneCommand(stateMask, enableMask);
+			default -> buildA1BasicCommand(stateMask, enableMask);
 		};
 	}
 
@@ -97,35 +103,36 @@ public class TcpDidoCommandService {
 		return buffer.toByteArray();
 	}
 
-	private byte[] buildA1BasicCommand(int relayIndex, boolean on) {
-		int mask = 1 << (relayIndex - 1);
-		int state = on ? mask : 0;
+	private byte[] buildA1BasicCommand(int stateMask, int enableMask) {
+		if ((stateMask & ~0xFFFF) != 0 || (enableMask & ~0xFFFF) != 0) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A1 协议当前仅支持 A01-A16");
+		}
 		return new byte[] {
 				(byte) 0xCC,
 				(byte) 0xDD,
 				(byte) 0xA1,
 				0x01,
-				(byte) ((state >> 8) & 0xFF),
-				(byte) (state & 0xFF),
-				(byte) ((mask >> 8) & 0xFF),
-				(byte) (mask & 0xFF),
+				(byte) ((stateMask >> 8) & 0xFF),
+				(byte) (stateMask & 0xFF),
+				(byte) ((enableMask >> 8) & 0xFF),
+				(byte) (enableMask & 0xFF),
 				(byte) 0xA4,
 				0x48
 		};
 	}
 
-	private byte[] buildA3SceneCommand(int relayIndex, boolean on) {
-		int group = (relayIndex - 1) / 8;
-		int bit = 1 << ((relayIndex - 1) % 8);
+	private byte[] buildA3SceneCommand(int stateMask, int enableMask) {
 		byte[] command = new byte[20];
 		command[0] = (byte) 0xCC;
 		command[1] = (byte) 0xDD;
 		command[2] = (byte) 0xA3;
 		command[3] = 0x01;
-		int stateOffset = 4 + (5 - group);
-		int enableOffset = 10 + (5 - group);
-		command[stateOffset] = (byte) (on ? bit : 0);
-		command[enableOffset] = (byte) bit;
+		for (int group = 0; group < 6; group++) {
+			int stateOffset = 4 + (5 - group);
+			int enableOffset = 10 + (5 - group);
+			command[stateOffset] = (byte) ((stateMask >> (group * 8)) & 0xFF);
+			command[enableOffset] = (byte) ((enableMask >> (group * 8)) & 0xFF);
+		}
 		command[18] = (byte) 0xDD;
 		command[19] = (byte) 0xCC;
 		return command;

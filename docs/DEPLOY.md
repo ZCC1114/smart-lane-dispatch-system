@@ -1,5 +1,7 @@
 # 部署说明
 
+Ubuntu 25.10 生产服务器的完整 Docker 部署、启动、设备配置和运维手册见: [UBUNTU_25_10_DOCKER_DEPLOY.md](./UBUNTU_25_10_DOCKER_DEPLOY.md)。
+
 ## 方式一: 本地开发
 
 1. 启动后端:
@@ -86,6 +88,10 @@ APP_DEVICE_MQTT_HOST=192.168.1.10 \
 APP_DEVICE_MQTT_PORT=1883 \
 APP_DEVICE_MQTT_USERNAME='mqtt-user' \
 APP_DEVICE_MQTT_PASSWORD='mqtt-password' \
+APP_DEVICE_DIDO_PAYLOAD_MODE=hex-a1 \
+APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-01 \
+APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.1.18 \
+APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080 \
 SPRING_PROFILES_ACTIVE=mysql \
 ./mvnw spring-boot:run
 ```
@@ -95,6 +101,14 @@ SPRING_PROFILES_ACTIVE=mysql \
 - `车牌识别.pdf`: 订阅 `/{sn}/mf/up`，处理 `heartbeat` 与 `plateResult`；下发 `ledControl`、`ioOutput`、`plateResultResp` 到 `/{sn}/mf/down`。
 - `计数报警.docx`: 订阅 `/device/{cameraDevId}/update` 和 `/device/{cameraDevId}/will`，处理 `heartbeat`、`devAlarm`、`passCount`、`getHaveCarRsp`；定时下发 `getHaveCar`，启动后可下发 `getVerInfo`。
 - `dido模块.pdf`: 下发继电器红绿灯控制，默认使用普通吸合/断开命令 `110000` / `100000`；读取 DIDO 输入状态并可按 `presenceInputKey` 同步车道是否有车。
+
+当前现场如果是 1 台 CX 继电器设备、DO1-DO11 分别对应 1-11 号车道入口灯，可以直接使用内置默认绑定:
+
+- `L01-L11` 共用 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID`
+- `entry-green-relay` 默认映射为 `A01-A11`
+- 单灯模式下: 对应车道 `entry-green-relay` 吸合 = 绿灯，关闭 = 红灯
+
+修改 `.env` 或容器环境变量后，需要重启 `server` 容器/进程让新配置生效。
 
 车道与设备绑定需要按现场设备编号配置。`application.properties` 示例:
 
