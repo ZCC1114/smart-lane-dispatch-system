@@ -1,6 +1,0 @@
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\x64lib\LedSDKDemo_CSharp.exe.config
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\x64lib\LedSDKDemo_CSharp.exe
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\x64lib\LedSDKDemo_CSharp.pdb
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\demo\obj\x64\Debug\LedSDKDemo_CSharp.csproj.CoreCompileInputs.cache
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\demo\obj\x64\Debug\LedSDKDemo_CSharp.exe
-E:\WorkGit\BX-V-VI\bx.dual.csharp\src\demo\obj\x64\Debug\LedSDKDemo_CSharp.pdb
