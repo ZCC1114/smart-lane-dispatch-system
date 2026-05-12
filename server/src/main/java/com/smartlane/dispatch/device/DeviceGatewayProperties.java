@@ -38,6 +38,9 @@ public class DeviceGatewayProperties {
 		private boolean enabled = true;
 		private String upTopicFilter = "/+/mf/up";
 		private String downTopicTemplate = "/{mfSn}/mf/down";
+		private String yardEntrySn;
+		private String yardEntryGroupId;
+		private String yardEntryDeviceNo;
 	}
 
 	@Data

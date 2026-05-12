@@ -99,7 +99,7 @@ export default function EntriesPage() {
                 [
                   ["序号", "车牌号码", "车道编号", "车道名称", "入场时间", "离场时间", "车辆类型", "通行状态", "操作员"],
                   ...logs.map((log, index) => [
-                    index + 1,
+                    String(index + 1),
                     log.plate,
                     log.laneId,
                     log.laneName,

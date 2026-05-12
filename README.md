@@ -97,6 +97,152 @@ cp .env.example .env
 - Swagger：`http://localhost:3002/swagger-ui.html`
 - 健康检查：`http://localhost:3002/actuator/health`
 
+## 现场配置填写
+
+生产或现场联调时，优先只改仓库根目录的 `.env` 文件。不要直接改 `server/src/main/resources/application.properties`，它只是读取 `.env` 里的环境变量。
+
+### 1. 基础服务配置
+
+```dotenv
+APP_HTTP_PORT=3002
+APP_PUBLIC_HOST=<服务器局域网IP，例如192.168.124.3>
+APP_CORS_ALLOWED_ORIGINS=http://<服务器局域网IP>:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
+APP_JWT_SECRET=<生产环境随机长密钥，不要用示例值>
+
+MYSQL_ROOT_PASSWORD=<MySQL root密码>
+MYSQL_USER=smartlane
+MYSQL_PASSWORD=<业务数据库密码>
+```
+
+如果所有服务都用 `compose.yaml` 里的内置 Mosquitto，MQTT 主机保持 `mqtt`：
+
+```dotenv
+APP_DEVICE_GATEWAY=mqtt
+APP_DEVICE_MQTT_ENABLED=true
+APP_DEVICE_MQTT_HOST=mqtt
+APP_DEVICE_MQTT_PORT=1883
+APP_DEVICE_MQTT_USERNAME=
+APP_DEVICE_MQTT_PASSWORD=
+```
+
+如果改用外部 MQTT Broker，再把 `APP_DEVICE_MQTT_HOST` 改成外部 Broker 的 IP。
+
+### 2. 总入口 MF 摄像头
+
+总入口使用 MF 协议，Topic 是 `/{sn}/mf/up`。根据现场报文填写下面 3 个值：
+
+```dotenv
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=<Topic里的sn>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=<报文data.groupId>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<报文data.deviceNo>
+```
+
+以当前测试通过的设备为例：
+
+```dotenv
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
+```
+
+### 3. 1-11 车道 Smart Camera
+
+1-11 车道不用 MF，只填每条车道的 Smart Camera 设备码，也就是 `/device/{cameraDevId}/update` 里的 `{cameraDevId}` 或报文里的 `devId`。
+
+以 `18030023526b` 作为 1 号车道入口摄像头为例：
+
+```dotenv
+APP_DEVICE_L01_CAMERA_DEV_ID=18030023526b
+```
+
+现场 11 条车道完整填写模板：
+
+```dotenv
+APP_DEVICE_L01_CAMERA_DEV_ID=<1号车道Smart Camera设备码，例如18030023526b>
+APP_DEVICE_L02_CAMERA_DEV_ID=<2号车道Smart Camera设备码>
+APP_DEVICE_L03_CAMERA_DEV_ID=<3号车道Smart Camera设备码>
+APP_DEVICE_L04_CAMERA_DEV_ID=<4号车道Smart Camera设备码>
+APP_DEVICE_L05_CAMERA_DEV_ID=<5号车道Smart Camera设备码>
+APP_DEVICE_L06_CAMERA_DEV_ID=<6号车道Smart Camera设备码>
+APP_DEVICE_L07_CAMERA_DEV_ID=<7号车道Smart Camera设备码>
+APP_DEVICE_L08_CAMERA_DEV_ID=<8号车道Smart Camera设备码>
+APP_DEVICE_L09_CAMERA_DEV_ID=<9号车道Smart Camera设备码>
+APP_DEVICE_L10_CAMERA_DEV_ID=<10号车道Smart Camera设备码>
+APP_DEVICE_L11_CAMERA_DEV_ID=<11号车道Smart Camera设备码>
+```
+
+注意：不要再填写 `APP_DEVICE_Lxx_MF_*`，车道入口没有这类配置。
+
+### 4. DIDO 红绿灯和地感
+
+默认按 1 台 CX/DIDO 设备控制 11 条车道：
+
+```dotenv
+APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-01
+APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.1.18
+APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080
+```
+
+默认接线规则：
+
+- `A01-A11`：1-11 号车道入口绿灯继电器
+- `B01-B11`：1-11 号车道出口地感输入
+
+如果现场接线一致，下面这些默认值不用改：
+
+```dotenv
+APP_DEVICE_L01_ENTRY_GREEN_RELAY=A01
+APP_DEVICE_L01_EXIT_TRIGGER_INPUT_KEY=B01
+
+APP_DEVICE_L02_ENTRY_GREEN_RELAY=A02
+APP_DEVICE_L02_EXIT_TRIGGER_INPUT_KEY=B02
+
+APP_DEVICE_L03_ENTRY_GREEN_RELAY=A03
+APP_DEVICE_L03_EXIT_TRIGGER_INPUT_KEY=B03
+
+APP_DEVICE_L04_ENTRY_GREEN_RELAY=A04
+APP_DEVICE_L04_EXIT_TRIGGER_INPUT_KEY=B04
+
+APP_DEVICE_L05_ENTRY_GREEN_RELAY=A05
+APP_DEVICE_L05_EXIT_TRIGGER_INPUT_KEY=B05
+
+APP_DEVICE_L06_ENTRY_GREEN_RELAY=A06
+APP_DEVICE_L06_EXIT_TRIGGER_INPUT_KEY=B06
+
+APP_DEVICE_L07_ENTRY_GREEN_RELAY=A07
+APP_DEVICE_L07_EXIT_TRIGGER_INPUT_KEY=B07
+
+APP_DEVICE_L08_ENTRY_GREEN_RELAY=A08
+APP_DEVICE_L08_EXIT_TRIGGER_INPUT_KEY=B08
+
+APP_DEVICE_L09_ENTRY_GREEN_RELAY=A09
+APP_DEVICE_L09_EXIT_TRIGGER_INPUT_KEY=B09
+
+APP_DEVICE_L10_ENTRY_GREEN_RELAY=A10
+APP_DEVICE_L10_EXIT_TRIGGER_INPUT_KEY=B10
+
+APP_DEVICE_L11_ENTRY_GREEN_RELAY=A11
+APP_DEVICE_L11_EXIT_TRIGGER_INPUT_KEY=B11
+```
+
+如果现场 DIDO 的 IP、端口、设备 ID 或接线口不一样，只改对应值。
+
+### 5. 修改后重启
+
+`.env` 改完后重启服务让配置生效：
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+查看后端和 MQTT 日志：
+
+```bash
+docker compose logs -f server
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
+```
+
 ## 说明
 
 - 默认开发模式使用 H2；Compose 部署模式使用 `MySQL + Redis + Nginx`

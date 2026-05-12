@@ -98,8 +98,8 @@ SPRING_PROFILES_ACTIVE=mysql \
 
 已接入的协议:
 
-- `车牌识别.pdf`: 订阅 `/{sn}/mf/up`，处理 `heartbeat` 与 `plateResult`；下发 `ledControl`、`ioOutput`、`plateResultResp` 到 `/{sn}/mf/down`。
-- `计数报警.docx`: 订阅 `/device/{cameraDevId}/update` 和 `/device/{cameraDevId}/will`，处理 `heartbeat`、`devAlarm`、`passCount`、`getHaveCarRsp`；定时下发 `getHaveCar`，启动后可下发 `getVerInfo`。
+- `车牌识别.pdf`: 总入口 MF 摄像头订阅 `/{sn}/mf/up`，通过 `APP_DEVICE_PARKING_MF_YARD_ENTRY_*` 配置后生成预分配记录；下发 `plateResultResp` 到 `/{sn}/mf/down`。
+- `计数报警.docx`: 1-11 车道入口 Smart Camera 订阅 `/device/{cameraDevId}/update` 和 `/device/{cameraDevId}/will`，每条车道通过 `APP_DEVICE_Lxx_CAMERA_DEV_ID` 绑定；处理 `heartbeat`、`devAlarm`、`passCount`、`getHaveCarRsp`；定时下发 `getHaveCar`，启动后可下发 `getVerInfo`。
 - `dido模块.pdf`: 下发继电器红绿灯控制，默认使用普通吸合/断开命令 `110000` / `100000`；读取 DIDO 输入状态并可按 `presenceInputKey` 同步车道是否有车。
 
 当前现场如果是 1 台 CX 继电器设备、DO1-DO11 分别对应 1-11 号车道入口灯，可以直接使用内置默认绑定:
@@ -120,10 +120,11 @@ app.device.mqtt.port=1883
 app.device.mqtt.username=mqtt-user
 app.device.mqtt.password=mqtt-password
 
+app.device.parking-mf.yard-entry-sn=MF-YARD-SN
+app.device.parking-mf.yard-entry-group-id=YARD-GROUP
+app.device.parking-mf.yard-entry-device-no=YARD-CAMERA-NO
+
 app.device.lanes[0].lane-id=L01
-app.device.lanes[0].mf-sn=MF-SN-001
-app.device.lanes[0].mf-group-id=1
-app.device.lanes[0].mf-device-no=CAM-ENTRY-01
 app.device.lanes[0].camera-dev-id=SMART-CAM-01
 app.device.lanes[0].dido-device-id=DIDO-01
 app.device.lanes[0].entry-red-relay=A01

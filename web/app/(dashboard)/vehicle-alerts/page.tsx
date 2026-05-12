@@ -91,7 +91,7 @@ export default function VehicleAlertsPage() {
                 [
                   ["序号", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
                   ...alerts.map((alert, index) => [
-                    index + 1,
+                    String(index + 1),
                     screenEventTypeLabel(alert.type),
                     alert.plate,
                     alert.handled ? "已处理" : "未处理",

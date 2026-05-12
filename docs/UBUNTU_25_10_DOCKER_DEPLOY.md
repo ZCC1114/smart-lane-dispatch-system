@@ -230,6 +230,13 @@ APP_DEVICE_MQTT_CLIENT_ID=smart-lane-dispatch-system
 APP_DEVICE_MQTT_USERNAME=
 APP_DEVICE_MQTT_PASSWORD=
 
+# 总入口 MF 车牌识别摄像头，Topic 为 /{sn}/mf/up。
+# 至少填写 SN；如果同一 SN 下有多路相机，再填写 groupId/deviceNo。
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=
+
+# 计数报警协议相机 devId；使用 MF 协议时保持为空。
 APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID=
 APP_DEVICE_SMART_CAMERA_ACTIVE_ENTRY_CAMERA_DEV_ID=
 
@@ -251,6 +258,7 @@ APP_DISPATCH_ASSIGNMENT_RESERVE_MINUTES=2
 
 - `APP_PUBLIC_HOST` 仅作为部署记录，设备配置时使用这个服务器 IP。
 - `APP_DEVICE_MQTT_HOST=mqtt` 是后端容器访问 Mosquitto 容器的地址，不要改成服务器 IP，除非使用外部 MQTT Broker。
+- `APP_DEVICE_PARKING_MF_YARD_ENTRY_SN` 如果配置，表示这个 MF 摄像头作为总入口相机，收到 `plateResult` 后生成预分配记录和大屏引导数据。
 - `APP_DEVICE_SMART_CAMERA_ACTIVE_ENTRY_CAMERA_DEV_ID` 如果配置，表示这个相机作为“自动流程当前入口车道”的共享入口相机。
 - `APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID` 如果配置，表示这个相机作为总入口相机，负责生成预分配记录和引导牌数据。
 - `APP_JWT_SECRET` 必须在生产环境替换，不能使用样例值。
@@ -504,14 +512,24 @@ APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID=<总入口相机devId>
 - 使用方式 A 时，车牌会进入“自动流程当前入口车道”，不会因为手动打开其他车道绿灯而改变分配目标。
 - 使用方式 B 时，每个相机固定代表对应车道入口。
 
-### 8.4 传统车牌识别设备配置
+### 8.4 MF 车牌识别设备配置
 
-如果现场使用 `/{sn}/mf/up`、`/{sn}/mf/down` 协议的车牌识别设备，按每条车道配置:
+现场只有总入口使用 `/{sn}/mf/up`、`/{sn}/mf/down` 协议的 MF 车牌识别设备。1-11 车道入口使用 Smart Camera，在 8.3 的 `APP_DEVICE_Lxx_CAMERA_DEV_ID` 中配置。
+
+总入口 MF 摄像头配置:
 
 ```dotenv
-APP_DEVICE_L01_MF_SN=<1号车道设备SN>
-APP_DEVICE_L01_MF_GROUP_ID=<设备groupId>
-APP_DEVICE_L01_MF_DEVICE_NO=<设备deviceNo>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=<总入口MF设备SN，例如00E02721A3A7>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=<总入口MF报文data.groupId，可为空>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo，例如22K5000202407828>
+```
+
+如果就是当前测试通过的报文，可以先按下面填，再到现场核对是否变化:
+
+```dotenv
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
 ```
 
 对应 Topic:
@@ -564,7 +582,45 @@ docker compose exec mqtt mosquitto_pub \
 
 如果系统使用 `APP_DEVICE_DIDO_PAYLOAD_MODE=hex-a1`，实际后端会下发 HEX payload，不是 JSON。上面 JSON 命令只用于验证设备是否支持 JSON 控制。
 
-### 9.3 验证摄像头入道
+### 9.3 验证总入口 MF 抓拍预分配
+
+监听 MF 上报:
+
+```bash
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/+/mf/up' -v
+```
+
+让总入口摄像头抓拍一辆车，应看到类似:
+
+```json
+{
+  "cmd": "plateResult",
+  "sn": "00E02721A3A7",
+  "data": {
+    "deviceNo": "22K5000202407828",
+    "groupId": "9QHZNII",
+    "plateNo": "苏B3R89T",
+    "parkingTime": "2026-05-12 14:53:36"
+  }
+}
+```
+
+然后在页面检查:
+
+```text
+司机大屏 -> 待入道车辆出现该车牌和推荐车道
+调度后台 -> 当前入口开放车道或预留数随推荐结果更新
+```
+
+如果摄像头已上报但页面没有推荐记录，重点检查 `.env` 中:
+
+```dotenv
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=
+```
+
+### 9.4 验证车道入口摄像头入道
 
 让摄像头抓拍一辆车，监听:
 
@@ -593,7 +649,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/update
 车辆流水 -> 生成车辆进出流水
 ```
 
-### 9.4 验证地感出场
+### 9.5 验证地感出场
 
 短接或触发对应 IN 口，例如 `IN8`:
 

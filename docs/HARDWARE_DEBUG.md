@@ -16,20 +16,19 @@
           │         │ (Mosquitto) │            │
           │         └──────┬──────┘            │
           │                │                    │
-    [总入口摄像头]          │              [司机大屏]
-    REST API上报           │              /screen
+    [总入口MF摄像头]        │              [司机大屏]
+    MQTT上报               │              /screen
                          │
         ┌────────────────┼────────────────┐
         │                │                │
-   [停车相机MF]     [智能相机]        [DIDO模块]
-   (车道入口)        (车道出口)       (红绿灯控制)
+   [Smart Camera]    [DIDO模块]      [REST模拟]
+   (1-11车道入口)    (红绿灯/地感)    (人工联调)
 ```
 
 | 设备 | 数量 | 通信方式 | 作用 |
 |------|------|----------|------|
-| 总入口摄像头 | 1 | REST API | 抓拍进入蓄车池的车辆（未进车道） |
-| 停车相机(MF) | N | MQTT | 车道入口车牌识别 + LED显示 + 道闸 |
-| 智能相机 | N | MQTT | 车道出口计数 + 地感检测 |
+| 总入口 MF 摄像头 | 1 | MQTT | 抓拍进入蓄车池的车辆，生成推荐车道 |
+| Smart Camera | 11 | MQTT | 1-11 车道入口车牌识别、车道计数、地感检测 |
 | DIDO模块 | N | MQTT | 红绿灯继电器控制 |
 | 司机大屏 | 1 | HTTP/WebSocket | 显示车辆推荐车道 |
 
@@ -72,10 +71,10 @@ mosquitto_pub -h 127.0.0.1 -p 1883 -t "test/hello" -m "broker ok"
 
 向硬件厂商索取以下信息，填入表格：
 
-| 车道 | laneId | mfSn | mfGroupId | cameraDevId | didoDeviceId | 备注 |
-|------|--------|------|-----------|-------------|--------------|------|
-| 1号车道 | L01 | MF001 | 1 | CAM01 | DIDO01 | |
-| 2号车道 | L02 | MF002 | 2 | CAM02 | DIDO02 | |
+| 车道 | laneId | cameraDevId | didoDeviceId | 入口绿灯继电器 | 出口地感输入 | 备注 |
+|------|--------|-------------|--------------|----------------|--------------|------|
+| 1号车道 | L01 | 18030023526b | DIDO01 | A01 | B01 | 示例 |
+| 2号车道 | L02 | <2号车道Smart Camera设备码> | DIDO01 | A02 | B02 | |
 | ... | | | | | | |
 
 ### 2.3 后端配置
@@ -94,14 +93,16 @@ app.device.mqtt.client-id=smart-lane-dispatch-system
 app.device.mqtt.username=               # 如果有认证则填
 app.device.mqtt.password=
 
+# 总入口 MF 摄像头，只负责蓄车池入口预分配
+app.device.parking-mf.yard-entry-sn=<总入口MF设备SN>
+app.device.parking-mf.yard-entry-group-id=<总入口MF报文data.groupId>
+app.device.parking-mf.yard-entry-device-no=<总入口MF报文data.deviceNo>
+
 # ============================================================
 # 车道与设备绑定（示例配了2条，实际配11条）
 # ============================================================
 app.device.lanes[0].lane-id=L01
-app.device.lanes[0].mf-sn=MF001
-app.device.lanes[0].mf-group-id=1
-app.device.lanes[0].mf-device-no=CAM01
-app.device.lanes[0].camera-dev-id=SMART-CAM-01
+app.device.lanes[0].camera-dev-id=18030023526b
 app.device.lanes[0].dido-device-id=DIDO-01
 app.device.lanes[0].entry-red-relay=A01
 app.device.lanes[0].entry-green-relay=A02
@@ -110,9 +111,6 @@ app.device.lanes[0].exit-green-relay=A04
 app.device.lanes[0].presence-input-key=B01
 
 app.device.lanes[1].lane-id=L02
-app.device.lanes[1].mf-sn=MF002
-app.device.lanes[1].mf-group-id=2
-app.device.lanes[1].mf-device-no=CAM02
 app.device.lanes[1].camera-dev-id=SMART-CAM-02
 app.device.lanes[1].dido-device-id=DIDO-02
 app.device.lanes[1].entry-red-relay=A01
@@ -192,92 +190,83 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/update" -m '{
 
 ---
 
-## 四、阶段 2：停车相机(MF)联调
+## 四、阶段 2：总入口 MF 联调
 
 ### 4.1 测试目标
 
-验证车道入口车牌识别 + LED显示 + 道闸控制。
+验证总入口 MF 摄像头抓拍后，后端能生成蓄车池预分配记录。1-11 车道入口不使用 MF，车道入口联调见下一节 Smart Camera。
 
 ### 4.2 MF 协议说明
 
-- **上报 Topic**：`/{mfSn}/mf/up`
-- **下发 Topic**：`/{mfSn}/mf/down`
+- **上报 Topic**：`/{sn}/mf/up`
+- **下发 Topic**：`/{sn}/mf/down`
 - **关键 cmd**：
   - `heartbeat` - 心跳
   - `plateResult` - 车牌识别结果
-  - `ledControl` - LED控制（下发）
-  - `ioOutput` - 道闸开关（下发）
+  - `plateResultResp` - 抓拍确认（下发）
 
 ### 4.3 联调步骤
 
 **Step 1：模拟心跳（验证设备在线）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/MF001/mf/up" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "heartbeat",
-  "sn": "MF001",
+  "sn": "00E02721A3A7",
   "timestamp": 1713936000000,
   "data": {
     "deviceStatus": [
-      {"deviceNo": "CAM01", "network": "online"}
+      {"deviceNo": "22K5000202407828", "network": "online"}
     ]
   }
 }'
 ```
 
-**验证**：后端日志 `停车相机在线`，前端该车道传感器状态变为"在线"。
+**验证**：后端识别该设备为总入口 MF，且不会把它绑定到 L01-L11 的车道在线状态。
 
-**Step 2：模拟车牌识别（车辆进入车道）**
+**Step 2：模拟车牌识别（车辆进入蓄车池总入口）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/MF001/mf/up" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "plateResult",
-  "sn": "MF001",
+  "sn": "00E02721A3A7",
   "msgId": "test-001",
-  "timestamp": 1713936100000,
+  "timestamp": 1778568817063,
+  "timezone": "Asia/Shanghai",
   "data": {
-    "groupId": "1",
-    "deviceNo": "CAM01",
-    "plateNo": "苏A12345",
-    "parkingTime": "2024-04-24 12:15:00"
+    "groupId": "9QHZNII",
+    "deviceNo": "22K5000202407828",
+    "plateNo": "苏B3R89T",
+    "parkingTime": "2026-05-12 14:53:36"
   }
 }'
 ```
 
 **预期结果**：
 
-1. 后端日志：`registerVehicleEntryFromDevice` -> `vehicle_entry_captured`
-2. 车道 1 的 `vehicleCount` +1
-3. `EntryLog` 新增一条记录
-4. 前端该车道显示当前车牌 "苏A12345"
+1. 司机大屏待入道列表出现该车牌和推荐车道
+2. 调度后台出现对应预分配记录
+3. L01-L11 的车道车辆数不会因为总入口 MF 抓拍直接增加
 
-**Step 3：验证 LED 和道闸下发**
-
-当车道入口绿灯时，后端会自动向 MF 发送：
-
-- `ledControl`：显示"入口开放，请驶入本车道"
-- `ioOutput`：action=open（开闸）
-
-监听下发 Topic：
+**Step 3：验证抓拍确认下发**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -t "/MF001/mf/down"
+mosquitto_sub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/down"
 ```
 
 **预期收到**：
 
 ```json
-{"cmd":"ledControl","msgId":"...","timestamp":...,"sn":"MF001","data":{"groupId":"1","voice":"入口开放，请驶入本车道","show":[{"text":"苏A12345"}]}}
-{"cmd":"ioOutput","msgId":"...","timestamp":...,"sn":"MF001","data":{"groupId":"1","action":"open"}}
+{"cmd":"plateResultResp","msgId":"...","timestamp":...,"sn":"00E02721A3A7","data":{"groupId":"9QHZNII","deviceNo":"22K5000202407828","success":true}}
 ```
 
 ### 4.4 常见问题
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| plateResult 无响应 | lane binding 匹配失败 | 检查 `sn` + `groupId` + `deviceNo` 是否与配置一致 |
-| LED 不显示 | groupId 不对 | 确认 `mf-group-id` 配置 |
-| 道闸不开 | 入口信号不是 GREEN | 确认该车道是当前的 `activeEntryLaneId` |
+| plateResult 无响应 | 总入口 MF 匹配失败 | 检查 `APP_DEVICE_PARKING_MF_YARD_ENTRY_SN`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO` |
+| 车道车辆数被增加 | 设备被误当作车道入口 | 确认配置中没有 L01-L11 的 MF 绑定项，车道只填 `APP_DEVICE_Lxx_CAMERA_DEV_ID` |
+| 下发 Topic 没消息 | Topic 模板不一致 | 检查 `APP_DEVICE_PARKING_MF_DOWN_TOPIC_TEMPLATE` |
 
 ---
 
@@ -383,9 +372,35 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
 
 ### 6.2 联调步骤
 
-总入口摄像头**不走 MQTT**，直接调用后端 REST API。
+总入口摄像头优先走 MQTT。MF 协议摄像头上报 `/{sn}/mf/up`，后端通过 `APP_DEVICE_PARKING_MF_YARD_ENTRY_*` 判断它是总入口设备，并生成预分配记录。REST API 仍可作为人工模拟入口。
 
-**Step 1：调用总入口抓拍 API**
+**Step 1：配置总入口 MF 摄像头**
+
+```dotenv
+APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=<总入口MF设备SN>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=<总入口MF报文data.groupId，可为空>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo>
+```
+
+**Step 2：模拟或监听总入口 MQTT 抓拍**
+
+```bash
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
+  "cmd": "plateResult",
+  "sn": "00E02721A3A7",
+  "msgId": "yard-mf-001",
+  "timestamp": 1778568817063,
+  "timezone": "Asia/Shanghai",
+  "data": {
+    "deviceNo": "22K5000202407828",
+    "groupId": "9QHZNII",
+    "plateNo": "苏B88888",
+    "parkingTime": "2026-05-12 14:53:36"
+  }
+}'
+```
+
+**可选：调用总入口抓拍 API 做软件模拟**
 
 ```bash
 curl -X POST http://localhost:8080/api/integration/yard-entries \
@@ -412,13 +427,13 @@ curl -X POST http://localhost:8080/api/integration/yard-entries \
 }
 ```
 
-**Step 2：验证司机大屏**
+**Step 3：验证司机大屏**
 
 打开 `http://localhost:3000/screen`，应该看到：
 
 - 待入道车辆列表中出现 "苏B88888 -> 出租车蓄车道 01"
 
-**Step 3：车辆按推荐进入车道**
+**Step 4：车辆按推荐进入车道**
 
 ```bash
 curl -X POST http://localhost:8080/api/integration/vehicle-entries \
@@ -536,18 +551,18 @@ pub_dido() {
   mosquitto_pub -h $BROKER -p $PORT -t "/device/DIDO-01/update" -m "$1"
 }
 
-# ---------- MF 停车相机 ----------
+# ---------- 总入口 MF 摄像头 ----------
 pub_mf_heartbeat() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/MF001/mf/up" -m '{
-    "cmd":"heartbeat","sn":"MF001","timestamp":'$(date +%s000)',
-    "data":{"deviceStatus":[{"deviceNo":"CAM01","network":"online"}]}
+  mosquitto_pub -h $BROKER -p $PORT -t "/00E02721A3A7/mf/up" -m '{
+    "cmd":"heartbeat","sn":"00E02721A3A7","timestamp":'$(date +%s000)',
+    "data":{"deviceStatus":[{"deviceNo":"22K5000202407828","network":"online"}]}
   }'
 }
 
 pub_mf_plate() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/MF001/mf/up" -m '{
-    "cmd":"plateResult","sn":"MF001","msgId":"test-'$(date +%s)'",
-    "data":{"groupId":"1","deviceNo":"CAM01","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
+  mosquitto_pub -h $BROKER -p $PORT -t "/00E02721A3A7/mf/up" -m '{
+    "cmd":"plateResult","sn":"00E02721A3A7","msgId":"test-'$(date +%s)'",
+    "data":{"groupId":"9QHZNII","deviceNo":"22K5000202407828","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
   }'
 }
 

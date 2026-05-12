@@ -351,6 +351,11 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		if (data.path("deviceStatus").isArray()) {
 			for (JsonNode deviceStatus : data.path("deviceStatus")) {
 				String deviceNo = text(deviceStatus.path("deviceNo"));
+				String groupId = text(deviceStatus.path("groupId"));
+				if (isYardEntryParkingMf(sn, groupId, deviceNo)) {
+					log.debug("Yard entry parking MF camera is online, sn={}, groupId={}, deviceNo={}", sn, groupId, deviceNo);
+					continue;
+				}
 				String network = text(deviceStatus.path("network"));
 				for (DeviceGatewayProperties.LaneBinding binding : findMfBindings(sn, null, deviceNo)) {
 					updateLaneDeviceStatus(
@@ -372,6 +377,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		String groupId = text(data.path("groupId"));
 		String deviceNo = text(data.path("deviceNo"));
 		String plate = text(data.path("plateNo"));
+		OffsetDateTime capturedAt = parseDeviceTime(firstNonBlank(text(data.path("parkingTime")), text(data.path("uploadTime")), text(message.path("timestamp"))));
+		if (isYardEntryParkingMf(sn, groupId, deviceNo)) {
+			if (!isBlank(plate)) {
+				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD");
+			}
+			publishParkingMfResponse(sn, "plateResultResp", text(message.path("msgId")));
+			return;
+		}
+
 		DeviceGatewayProperties.LaneBinding binding = firstBinding(findMfBindings(sn, groupId, deviceNo));
 		if (binding == null) {
 			log.warn("Parking plate result cannot be mapped to lane, sn={}, groupId={}, deviceNo={}", sn, groupId, deviceNo);
@@ -382,7 +396,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			registerVehicleEntryFromDevice(
 					binding.getLaneId(),
 					plate,
-					parseDeviceTime(firstNonBlank(text(data.path("parkingTime")), text(data.path("uploadTime")), text(message.path("timestamp")))),
+					capturedAt,
 					"出租车",
 					"ALPR");
 		}
@@ -829,6 +843,21 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			String sn,
 			String cmd,
 			String sourceMsgId) throws IOException {
+		publishParkingMfResponse(renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding), firstNonBlank(sn, binding.getMfSn()), cmd, sourceMsgId);
+	}
+
+	private void publishParkingMfResponse(
+			String sn,
+			String cmd,
+			String sourceMsgId) throws IOException {
+		publishParkingMfResponse(renderParkingMfTopic(sn), sn, cmd, sourceMsgId);
+	}
+
+	private void publishParkingMfResponse(
+			String topic,
+			String sn,
+			String cmd,
+			String sourceMsgId) throws IOException {
 		SimpleMqttClient client = mqttClient;
 		if (client == null || !client.isConnected()) {
 			return;
@@ -837,9 +866,9 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		payload.put("cmd", cmd);
 		payload.put("msgId", firstNonBlank(sourceMsgId, nextMessageId(cmd)));
 		payload.put("timestamp", System.currentTimeMillis());
-		payload.put("sn", firstNonBlank(sn, binding.getMfSn()));
+		payload.put("sn", sn);
 		payload.set("data", objectMapper.createObjectNode());
-		client.publish(renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
+		client.publish(topic, objectMapper.writeValueAsString(payload));
 	}
 
 	private void publishSmartCameraCommand(
@@ -873,6 +902,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				.replace("{didoDeviceId}", deviceId)
 				.replace("{cameraDevId}", deviceId)
 				.replace("{deviceId}", deviceId);
+	}
+
+	private String renderParkingMfTopic(String sn) {
+		return properties.getParkingMf().getDownTopicTemplate()
+				.replace("{mfSn}", nullToEmpty(sn))
+				.replace("{deviceId}", nullToEmpty(sn));
 	}
 
 	private void putRelayState(ObjectNode payload, String relayKey, boolean on) {
@@ -1046,6 +1081,21 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		return !isBlank(devId)
 				&& !isBlank(properties.getSmartCamera().getYardEntryCameraDevId())
 				&& devId.equals(properties.getSmartCamera().getYardEntryCameraDevId());
+	}
+
+	private boolean isYardEntryParkingMf(String sn, String groupId, String deviceNo) {
+		DeviceGatewayProperties.ParkingMfProperties parkingMf = properties.getParkingMf();
+		boolean configured = !isBlank(parkingMf.getYardEntrySn())
+				|| !isBlank(parkingMf.getYardEntryGroupId())
+				|| !isBlank(parkingMf.getYardEntryDeviceNo());
+		return configured
+				&& matchesConfigured(parkingMf.getYardEntrySn(), sn)
+				&& matchesConfigured(parkingMf.getYardEntryGroupId(), groupId)
+				&& matchesConfigured(parkingMf.getYardEntryDeviceNo(), deviceNo);
+	}
+
+	private boolean matchesConfigured(String expected, String actual) {
+		return isBlank(expected) || expected.equals(actual);
 	}
 
 	private boolean isActiveEntrySmartCamera(String devId) {
