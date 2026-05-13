@@ -103,21 +103,19 @@ app.device.parking-mf.yard-entry-device-no=<总入口MF报文data.deviceNo>
 # ============================================================
 app.device.lanes[0].lane-id=L01
 app.device.lanes[0].camera-dev-id=18030023526b
-app.device.lanes[0].dido-device-id=DIDO-01
-app.device.lanes[0].entry-red-relay=A01
-app.device.lanes[0].entry-green-relay=A02
-app.device.lanes[0].exit-red-relay=A03
-app.device.lanes[0].exit-green-relay=A04
-app.device.lanes[0].presence-input-key=B01
+app.device.lanes[0].entry-dido-device-id=DIDO-ENTRY-01
+app.device.lanes[0].exit-dido-device-id=DIDO-EXIT-01
+app.device.lanes[0].entry-green-relay=A01
+app.device.lanes[0].exit-green-relay=A01
+app.device.lanes[0].exit-trigger-input-key=B01
 
 app.device.lanes[1].lane-id=L02
 app.device.lanes[1].camera-dev-id=SMART-CAM-02
-app.device.lanes[1].dido-device-id=DIDO-02
-app.device.lanes[1].entry-red-relay=A01
+app.device.lanes[1].entry-dido-device-id=DIDO-ENTRY-01
+app.device.lanes[1].exit-dido-device-id=DIDO-EXIT-01
 app.device.lanes[1].entry-green-relay=A02
-app.device.lanes[1].exit-red-relay=A03
-app.device.lanes[1].exit-green-relay=A04
-app.device.lanes[1].presence-input-key=B01
+app.device.lanes[1].exit-green-relay=A02
+app.device.lanes[1].exit-trigger-input-key=B02
 ```
 
 **重启后端**，观察日志：
@@ -155,26 +153,23 @@ MQTT device gateway indexed 11 lane bindings
 **Step 2：在 MQTT 客户端监听下发消息**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/get"
+mosquitto_sub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/get"
 ```
 
 **预期结果**（收到 JSON）：
 
 ```json
-{"A01": 100000, "A02": 110000, "A03": 100000, "A04": 100000, "res": "dido-12345"}
+{"A01": 110000, "res": "dido-12345"}
 ```
 
-- A01(入口红灯)=断开, A02(入口绿灯)=吸合 -> 入口绿灯亮
-- A03(出口红灯)=断开, A04(出口绿灯)=断开 -> 出口红灯亮
+- 入口 DIDO 的 A01 吸合 -> 1 号车道入口绿灯亮
+- 出口 DIDO 的出口灯和地感不在这个 Topic 中
 
 **Step 3：模拟 DIDO 继电器状态反馈**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/update" -m '{
-  "A01": 100000,
-  "A02": 110000,
-  "A03": 100000,
-  "A04": 100000
+mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/update" -m '{
+  "A01": 110000
 }'
 ```
 
@@ -184,7 +179,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-01/update" -m '{
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| 没收到 MQTT 消息 | Topic 不匹配 | 检查 `dido-device-id` 与 Topic 中的设备ID是否一致 |
+| 没收到 MQTT 消息 | Topic 不匹配 | 检查 `entry-dido-device-id` / `exit-dido-device-id` 与 Topic 中的设备 ID 是否一致 |
 | DIDO 不响应 | 继电器键名不对 | 确认 `entry-red-relay` 等配置与实际硬件口对应 |
 | 红绿灯反了 | 继电器逻辑反了 | 检查 `resolveSignalFromRelayFeedback` 逻辑，或交换 red/green 配置 |
 
@@ -548,7 +543,7 @@ PORT="1883"
 
 # ---------- DIDO ----------
 pub_dido() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/device/DIDO-01/update" -m "$1"
+  mosquitto_pub -h $BROKER -p $PORT -t "/device/DIDO-EXIT-01/update" -m "$1"
 }
 
 # ---------- 总入口 MF 摄像头 ----------

@@ -86,6 +86,12 @@ public class DeviceGatewayProperties {
 		private String didoDeviceId;
 		private String didoHost;
 		private Integer didoPort;
+		private String entryDidoDeviceId;
+		private String entryDidoHost;
+		private Integer entryDidoPort;
+		private String exitDidoDeviceId;
+		private String exitDidoHost;
+		private Integer exitDidoPort;
 		private String entryRedRelay;
 		private String entryGreenRelay;
 		private String exitRedRelay;

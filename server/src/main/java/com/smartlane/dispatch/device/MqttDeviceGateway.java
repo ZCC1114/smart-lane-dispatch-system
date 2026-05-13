@@ -96,7 +96,9 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			addBinding(bindingsByMfSn, binding.getMfSn(), binding);
 			addBinding(bindingsByMfGroupId, binding.getMfGroupId(), binding);
 			addBinding(bindingsByMfDeviceNo, binding.getMfDeviceNo(), binding);
-			addBinding(bindingsByDidoDeviceId, binding.getDidoDeviceId(), binding);
+			addDidoBinding(binding.getEntryDidoDeviceId(), binding);
+			addDidoBinding(binding.getExitDidoDeviceId(), binding);
+			addDidoBinding(binding.getDidoDeviceId(), binding);
 			if (!isBlank(binding.getCameraDevId())) {
 				bindingsByCameraDevId.put(binding.getCameraDevId(), binding);
 			}
@@ -149,15 +151,16 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				log.warn("Failed to sync parking camera for lane {}", lane.getId(), ex);
 			}
 
-			if (properties.getDido().isEnabled() && !isBlank(binding.getDidoDeviceId())) {
-				didoDeviceLanes.computeIfAbsent(binding.getDidoDeviceId(), ignored -> new ArrayList<>()).add(lane);
+			if (properties.getDido().isEnabled()) {
+				addDidoLane(didoDeviceLanes, resolveEntryDidoDeviceId(binding), lane);
+				addDidoLane(didoDeviceLanes, resolveExitDidoDeviceId(binding), lane);
 			}
 		}
 
 		for (Map.Entry<String, List<Lane>> entry : didoDeviceLanes.entrySet()) {
 			String didoDeviceId = entry.getKey();
 			List<Lane> deviceLanes = entry.getValue();
-			String nextDeviceSyncState = buildDidoDeviceSyncState(deviceLanes);
+			String nextDeviceSyncState = buildDidoDeviceSyncState(didoDeviceId, deviceLanes);
 			if (nextDeviceSyncState.equals(lastDidoDeviceSyncStates.get(didoDeviceId))) {
 				continue;
 			}
@@ -187,7 +190,8 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			laneRuntimeStateService.markCommandPending(lane.getId(), "未配置车道设备绑定", now());
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道未配置 CX 设备绑定");
 		}
-		if (!properties.getDido().isEnabled() || isBlank(binding.getDidoDeviceId())) {
+		String didoDeviceId = resolveRelayDidoDeviceId(binding, relayTarget);
+		if (!properties.getDido().isEnabled() || isBlank(didoDeviceId)) {
 			laneRuntimeStateService.markCommandFailed(lane.getId(), "未配置 DIDO/CX 继电器设备", now());
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道未配置 DIDO/CX 继电器设备");
 		}
@@ -206,12 +210,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 		try {
 			if (didoPayloadMode().startsWith("hex-")) {
-				publishDidoRelayHex(client, binding, relayKey, on);
+				publishDidoRelayHex(client, didoDeviceId, relayKey, on);
 			} else {
 				ObjectNode payload = objectMapper.createObjectNode();
 				payload.put(relayKey, didoRelayValue(on));
 				payload.put("res", nextMessageId("dido-manual"));
-				client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
+				client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), objectMapper.writeValueAsString(payload));
 			}
 			String message = relayDisplayName(relayTarget) + (on ? "已吸合" : "已关闭");
 			if (!isBlank(reason)) {
@@ -571,8 +575,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 		OffsetDateTime observedAt = now();
 		for (DeviceGatewayProperties.LaneBinding binding : bindings) {
-			String entrySignal = resolveSignalFromRelayFeedback(message, binding.getEntryGreenRelay(), binding.getEntryRedRelay());
-			String exitSignal = resolveSignalFromRelayFeedback(message, binding.getExitGreenRelay(), binding.getExitRedRelay());
+			boolean entryDevice = didoDeviceId.equals(resolveEntryDidoDeviceId(binding));
+			boolean exitDevice = didoDeviceId.equals(resolveExitDidoDeviceId(binding));
+			String entrySignal = entryDevice
+					? resolveSignalFromRelayFeedback(message, binding.getEntryGreenRelay(), binding.getEntryRedRelay())
+					: null;
+			String exitSignal = exitDevice
+					? resolveSignalFromRelayFeedback(message, binding.getExitGreenRelay(), binding.getExitRedRelay())
+					: null;
 			if (!isBlank(entrySignal) || !isBlank(exitSignal)) {
 				updateLaneSignalFeedback(
 						binding.getLaneId(),
@@ -581,10 +591,10 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 						observedAt,
 						"DIDO 继电器状态已反馈");
 			}
-			if (!isBlank(binding.getExitTriggerInputKey()) && message.has(binding.getExitTriggerInputKey())) {
+			if (exitDevice && !isBlank(binding.getExitTriggerInputKey()) && message.has(binding.getExitTriggerInputKey())) {
 				handleLaneExitTriggerInput(didoDeviceId, binding, message.path(binding.getExitTriggerInputKey()), observedAt);
 			}
-			if (!isBlank(binding.getPresenceInputKey()) && message.has(binding.getPresenceInputKey())) {
+			if (exitDevice && !isBlank(binding.getPresenceInputKey()) && message.has(binding.getPresenceInputKey())) {
 				applyLanePresenceSignal(binding.getLaneId(), intValue(message.path(binding.getPresenceInputKey())) == 1, observedAt);
 			}
 		}
@@ -604,36 +614,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		applyLaneExitTrigger(binding.getLaneId(), observedAt);
 	}
 
-	private void syncDidoTrafficLights(
-			SimpleMqttClient client,
-			Lane lane,
-			DeviceGatewayProperties.LaneBinding binding) throws IOException {
-		if (!properties.getDido().isEnabled() || isBlank(binding.getDidoDeviceId())) {
-			return;
-		}
-		if (didoPayloadMode().startsWith("hex-")) {
-			syncDidoTrafficLightsAsHex(client, lane, binding);
-			return;
-		}
-
-		ObjectNode payload = objectMapper.createObjectNode();
-		putRelayState(payload, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-		putRelayState(payload, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-		putRelayState(payload, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-		putRelayState(payload, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
-		if (payload.isEmpty()) {
-			return;
-		}
-		payload.put("res", nextMessageId("dido"));
-		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
-	}
-
 	private void syncDidoTrafficLightsForDevice(
 			SimpleMqttClient client,
 			String didoDeviceId,
 			List<Lane> lanes) throws IOException {
 		if (didoPayloadMode().startsWith("hex-")) {
-			byte[] command = buildDidoBatchHexCommand(lanes);
+			byte[] command = buildDidoBatchHexCommand(didoDeviceId, lanes);
 			if (command != null && command.length > 0) {
 				client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), command);
 			}
@@ -646,10 +632,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			if (binding == null) {
 				continue;
 			}
-			putRelayState(payload, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-			putRelayState(payload, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-			putRelayState(payload, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-			putRelayState(payload, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+			if (isEntryDidoDevice(didoDeviceId, binding)) {
+				putRelayState(payload, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
+				putRelayState(payload, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
+			}
+			if (isExitDidoDevice(didoDeviceId, binding)) {
+				putRelayState(payload, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
+				putRelayState(payload, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+			}
 		}
 		if (payload.isEmpty()) {
 			return;
@@ -658,29 +648,19 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), objectMapper.writeValueAsString(payload));
 	}
 
-	private void syncDidoTrafficLightsAsHex(
-			SimpleMqttClient client,
-			Lane lane,
-			DeviceGatewayProperties.LaneBinding binding) throws IOException {
-		publishDidoRelayHex(client, binding, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-		publishDidoRelayHex(client, binding, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-		publishDidoRelayHex(client, binding, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-		publishDidoRelayHex(client, binding, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
-	}
-
 	private void publishDidoRelayHex(
 			SimpleMqttClient client,
-			DeviceGatewayProperties.LaneBinding binding,
+			String didoDeviceId,
 			String relay,
 			boolean on) throws IOException {
 		if (isBlank(relay)) {
 			return;
 		}
 		byte[] command = tcpDidoCommandService.buildRelayCommand(relayIndex(relay), on, didoHexProtocol());
-		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), binding), command);
+		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), command);
 	}
 
-	private byte[] buildDidoBatchHexCommand(List<Lane> lanes) {
+	private byte[] buildDidoBatchHexCommand(String didoDeviceId, List<Lane> lanes) {
 		int stateMask = 0;
 		int enableMask = 0;
 		for (Lane lane : lanes) {
@@ -688,18 +668,22 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			if (binding == null) {
 				continue;
 			}
-			int[] entryRed = applyRelayMask(binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
-			stateMask = entryRed[0];
-			enableMask = entryRed[1];
-			int[] entryGreen = applyRelayMask(binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
-			stateMask = entryGreen[0];
-			enableMask = entryGreen[1];
-			int[] exitRed = applyRelayMask(binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
-			stateMask = exitRed[0];
-			enableMask = exitRed[1];
-			int[] exitGreen = applyRelayMask(binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
-			stateMask = exitGreen[0];
-			enableMask = exitGreen[1];
+			if (isEntryDidoDevice(didoDeviceId, binding)) {
+				int[] entryRed = applyRelayMask(binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
+				stateMask = entryRed[0];
+				enableMask = entryRed[1];
+				int[] entryGreen = applyRelayMask(binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
+				stateMask = entryGreen[0];
+				enableMask = entryGreen[1];
+			}
+			if (isExitDidoDevice(didoDeviceId, binding)) {
+				int[] exitRed = applyRelayMask(binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
+				stateMask = exitRed[0];
+				enableMask = exitRed[1];
+				int[] exitGreen = applyRelayMask(binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
+				stateMask = exitGreen[0];
+				enableMask = exitGreen[1];
+			}
 		}
 		if (enableMask == 0) {
 			return null;
@@ -717,18 +701,35 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		return new int[] { nextStateMask, nextEnableMask };
 	}
 
-	private String buildDidoDeviceSyncState(List<Lane> lanes) {
+	private String buildDidoDeviceSyncState(String didoDeviceId, List<Lane> lanes) {
 		return lanes.stream()
 				.map(lane -> {
 					DeviceGatewayProperties.LaneBinding binding = bindingsByLaneId.get(lane.getId());
 					if (binding == null) {
 						return lane.getId();
 					}
-					return lane.getId()
-							+ ":" + firstNonBlank(binding.getEntryRedRelay(), "-") + "=" + lane.getEntrySignal()
-							+ ":" + firstNonBlank(binding.getEntryGreenRelay(), "-") + "=" + lane.getEntrySignal()
-							+ ":" + firstNonBlank(binding.getExitRedRelay(), "-") + "=" + lane.getExitSignal()
-							+ ":" + firstNonBlank(binding.getExitGreenRelay(), "-") + "=" + lane.getExitSignal();
+					StringBuilder state = new StringBuilder(lane.getId());
+					if (isEntryDidoDevice(didoDeviceId, binding)) {
+						state.append(":")
+								.append(firstNonBlank(binding.getEntryRedRelay(), "-"))
+								.append("=")
+								.append(lane.getEntrySignal())
+								.append(":")
+								.append(firstNonBlank(binding.getEntryGreenRelay(), "-"))
+								.append("=")
+								.append(lane.getEntrySignal());
+					}
+					if (isExitDidoDevice(didoDeviceId, binding)) {
+						state.append(":")
+								.append(firstNonBlank(binding.getExitRedRelay(), "-"))
+								.append("=")
+								.append(lane.getExitSignal())
+								.append(":")
+								.append(firstNonBlank(binding.getExitGreenRelay(), "-"))
+								.append("=")
+								.append(lane.getExitSignal());
+					}
+					return state.toString();
 				})
 				.sorted()
 				.reduce((left, right) -> left + "|" + right)
@@ -894,6 +895,8 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				.replace("{mfSn}", nullToEmpty(binding.getMfSn()))
 				.replace("{mfGroupId}", nullToEmpty(binding.getMfGroupId()))
 				.replace("{cameraDevId}", nullToEmpty(binding.getCameraDevId()))
+				.replace("{entryDidoDeviceId}", nullToEmpty(resolveEntryDidoDeviceId(binding)))
+				.replace("{exitDidoDeviceId}", nullToEmpty(resolveExitDidoDeviceId(binding)))
 				.replace("{didoDeviceId}", nullToEmpty(binding.getDidoDeviceId()));
 	}
 
@@ -924,6 +927,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			case "EXIT_RED" -> binding.getExitRedRelay();
 			case "EXIT_GREEN" -> binding.getExitGreenRelay();
 			default -> relayTarget;
+		};
+	}
+
+	private String resolveRelayDidoDeviceId(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {
+		String normalizedTarget = normalizeRelayTarget(relayTarget);
+		return switch (normalizedTarget) {
+			case "ENTRY_RED", "ENTRY_GREEN" -> resolveEntryDidoDeviceId(binding);
+			case "EXIT_RED", "EXIT_GREEN" -> resolveExitDidoDeviceId(binding);
+			default -> firstNonBlank(resolveEntryDidoDeviceId(binding), resolveExitDidoDeviceId(binding));
 		};
 	}
 
@@ -1075,6 +1087,42 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		if (!isBlank(key)) {
 			target.computeIfAbsent(key, ignored -> new ArrayList<>()).add(binding);
 		}
+	}
+
+	private void addDidoBinding(String didoDeviceId, DeviceGatewayProperties.LaneBinding binding) {
+		if (isBlank(didoDeviceId)) {
+			return;
+		}
+		List<DeviceGatewayProperties.LaneBinding> bindings = bindingsByDidoDeviceId.computeIfAbsent(didoDeviceId, ignored -> new ArrayList<>());
+		if (!bindings.contains(binding)) {
+			bindings.add(binding);
+		}
+	}
+
+	private void addDidoLane(Map<String, List<Lane>> target, String didoDeviceId, Lane lane) {
+		if (isBlank(didoDeviceId)) {
+			return;
+		}
+		List<Lane> lanes = target.computeIfAbsent(didoDeviceId, ignored -> new ArrayList<>());
+		if (lanes.stream().noneMatch(existing -> existing.getId().equals(lane.getId()))) {
+			lanes.add(lane);
+		}
+	}
+
+	private String resolveEntryDidoDeviceId(DeviceGatewayProperties.LaneBinding binding) {
+		return firstNonBlank(binding.getEntryDidoDeviceId(), binding.getDidoDeviceId());
+	}
+
+	private String resolveExitDidoDeviceId(DeviceGatewayProperties.LaneBinding binding) {
+		return firstNonBlank(binding.getExitDidoDeviceId(), binding.getDidoDeviceId());
+	}
+
+	private boolean isEntryDidoDevice(String didoDeviceId, DeviceGatewayProperties.LaneBinding binding) {
+		return !isBlank(didoDeviceId) && didoDeviceId.equals(resolveEntryDidoDeviceId(binding));
+	}
+
+	private boolean isExitDidoDevice(String didoDeviceId, DeviceGatewayProperties.LaneBinding binding) {
+		return !isBlank(didoDeviceId) && didoDeviceId.equals(resolveExitDidoDeviceId(binding));
 	}
 
 	private boolean isYardEntryCamera(String devId) {

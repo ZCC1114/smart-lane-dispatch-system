@@ -63,13 +63,15 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			return;
 		}
 
-		String host = resolveHost(binding);
-		int port = resolvePort(binding);
 		try {
-			controlRelayIfPresent(host, port, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(host, port, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(host, port, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-			controlRelayIfPresent(host, port, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+			String entryHost = resolveEntryHost(binding);
+			int entryPort = resolveEntryPort(binding);
+			String exitHost = resolveExitHost(binding);
+			int exitPort = resolveExitPort(binding);
+			controlRelayIfPresent(entryHost, entryPort, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
+			controlRelayIfPresent(entryHost, entryPort, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
+			controlRelayIfPresent(exitHost, exitPort, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
+			controlRelayIfPresent(exitHost, exitPort, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
 			lastLaneSyncStates.put(lane.getId(), nextSyncState);
 			laneRuntimeStateService.markCommandPublished(lane.getId(), "TCP DIDO 指令已下发", now());
 			laneRuntimeStateService.recordDeviceFeedback(
@@ -80,7 +82,7 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 					"TCP DIDO 已按目标灯态执行");
 		} catch (Exception ex) {
 			laneRuntimeStateService.markCommandFailed(lane.getId(), "TCP DIDO 指令下发失败", now());
-			log.warn("Failed to sync lane {} to TCP DIDO {}:{}", lane.getId(), host, port, ex);
+			log.warn("Failed to sync lane {} to TCP DIDO", lane.getId(), ex);
 		}
 	}
 
@@ -98,8 +100,8 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道未配置该业务继电器");
 		}
 
-		String host = resolveHost(binding);
-		int port = resolvePort(binding);
+		String host = resolveRelayHost(binding, relayTarget);
+		int port = resolveRelayPort(binding, relayTarget);
 		try {
 			tcpDidoCommandService.controlRelay(host, port, relayKey, on, properties.getDidoTcp().getProtocol());
 			String message = relayDisplayName(relayTarget) + (on ? "已吸合" : "已关闭");
@@ -132,18 +134,62 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 		log.debug("TCP DIDO relay command {} {} -> {}", relay, on ? "ON" : "OFF", response.responseHex());
 	}
 
-	private String resolveHost(DeviceGatewayProperties.LaneBinding binding) {
+	private String resolveEntryHost(DeviceGatewayProperties.LaneBinding binding) {
+		if (binding.getEntryDidoHost() != null && !binding.getEntryDidoHost().isBlank()) {
+			return binding.getEntryDidoHost();
+		}
 		if (binding.getDidoHost() != null && !binding.getDidoHost().isBlank()) {
 			return binding.getDidoHost();
 		}
 		return properties.getDidoTcp().getHost();
 	}
 
-	private int resolvePort(DeviceGatewayProperties.LaneBinding binding) {
+	private int resolveEntryPort(DeviceGatewayProperties.LaneBinding binding) {
+		if (binding.getEntryDidoPort() != null && binding.getEntryDidoPort() > 0) {
+			return binding.getEntryDidoPort();
+		}
 		if (binding.getDidoPort() != null && binding.getDidoPort() > 0) {
 			return binding.getDidoPort();
 		}
 		return properties.getDidoTcp().getPort();
+	}
+
+	private String resolveExitHost(DeviceGatewayProperties.LaneBinding binding) {
+		if (binding.getExitDidoHost() != null && !binding.getExitDidoHost().isBlank()) {
+			return binding.getExitDidoHost();
+		}
+		if (binding.getDidoHost() != null && !binding.getDidoHost().isBlank()) {
+			return binding.getDidoHost();
+		}
+		return properties.getDidoTcp().getHost();
+	}
+
+	private int resolveExitPort(DeviceGatewayProperties.LaneBinding binding) {
+		if (binding.getExitDidoPort() != null && binding.getExitDidoPort() > 0) {
+			return binding.getExitDidoPort();
+		}
+		if (binding.getDidoPort() != null && binding.getDidoPort() > 0) {
+			return binding.getDidoPort();
+		}
+		return properties.getDidoTcp().getPort();
+	}
+
+	private String resolveRelayHost(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {
+		String normalizedTarget = relayTarget == null ? "" : relayTarget.trim().toUpperCase().replace('-', '_');
+		return switch (normalizedTarget) {
+			case "ENTRY_RED", "ENTRY_GREEN" -> resolveEntryHost(binding);
+			case "EXIT_RED", "EXIT_GREEN" -> resolveExitHost(binding);
+			default -> resolveEntryHost(binding);
+		};
+	}
+
+	private int resolveRelayPort(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {
+		String normalizedTarget = relayTarget == null ? "" : relayTarget.trim().toUpperCase().replace('-', '_');
+		return switch (normalizedTarget) {
+			case "ENTRY_RED", "ENTRY_GREEN" -> resolveEntryPort(binding);
+			case "EXIT_RED", "EXIT_GREEN" -> resolveExitPort(binding);
+			default -> resolveEntryPort(binding);
+		};
 	}
 
 	private String resolveRelayKey(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {

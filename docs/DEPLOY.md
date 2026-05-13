@@ -89,9 +89,12 @@ APP_DEVICE_MQTT_PORT=1883 \
 APP_DEVICE_MQTT_USERNAME='mqtt-user' \
 APP_DEVICE_MQTT_PASSWORD='mqtt-password' \
 APP_DEVICE_DIDO_PAYLOAD_MODE=hex-a1 \
-APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-01 \
+APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-ENTRY-01 \
 APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.1.18 \
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080 \
+APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=DIDO-EXIT-01 \
+APP_DEVICE_SHARED_EXIT_DIDO_HOST=192.168.1.19 \
+APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080 \
 SPRING_PROFILES_ACTIVE=mysql \
 ./mvnw spring-boot:run
 ```
@@ -102,11 +105,12 @@ SPRING_PROFILES_ACTIVE=mysql \
 - `计数报警.docx`: 1-11 车道入口 Smart Camera 订阅 `/device/{cameraDevId}/update` 和 `/device/{cameraDevId}/will`，每条车道通过 `APP_DEVICE_Lxx_CAMERA_DEV_ID` 绑定；处理 `heartbeat`、`devAlarm`、`passCount`、`getHaveCarRsp`；定时下发 `getHaveCar`，启动后可下发 `getVerInfo`。
 - `dido模块.pdf`: 下发继电器红绿灯控制，默认使用普通吸合/断开命令 `110000` / `100000`；读取 DIDO 输入状态并可按 `presenceInputKey` 同步车道是否有车。
 
-当前现场如果是 1 台 CX 继电器设备、DO1-DO11 分别对应 1-11 号车道入口灯，可以直接使用内置默认绑定:
+当前现场按 2 台 CX/DIDO 设备绑定:
 
-- `L01-L11` 共用 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID`
-- `entry-green-relay` 默认映射为 `A01-A11`
-- 单灯模式下: 对应车道 `entry-green-relay` 吸合 = 绿灯，关闭 = 红灯
+- 入口 DIDO: `L01-L11` 共用 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID`，`entry-green-relay` 默认映射为 `A01-A11`
+- 出口 DIDO: `L01-L11` 共用 `APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID`，`exit-green-relay` 默认映射为 `A01-A11`
+- 出口 DIDO: `exit-trigger-input-key` 默认映射为 `B01-B11`，用于接收出口地感 IN 信号
+- 单灯模式下: 对应车道 green relay 吸合 = 绿灯，关闭 = 红灯
 
 修改 `.env` 或容器环境变量后，需要重启 `server` 容器/进程让新配置生效。
 
@@ -126,12 +130,11 @@ app.device.parking-mf.yard-entry-device-no=YARD-CAMERA-NO
 
 app.device.lanes[0].lane-id=L01
 app.device.lanes[0].camera-dev-id=SMART-CAM-01
-app.device.lanes[0].dido-device-id=DIDO-01
-app.device.lanes[0].entry-red-relay=A01
-app.device.lanes[0].entry-green-relay=A02
-app.device.lanes[0].exit-red-relay=A03
-app.device.lanes[0].exit-green-relay=A04
-app.device.lanes[0].presence-input-key=B01
+app.device.lanes[0].entry-dido-device-id=DIDO-ENTRY-01
+app.device.lanes[0].exit-dido-device-id=DIDO-EXIT-01
+app.device.lanes[0].entry-green-relay=A01
+app.device.lanes[0].exit-green-relay=A01
+app.device.lanes[0].exit-trigger-input-key=B01
 ```
 
 11 条车道需要配置 `app.device.lanes[0]` 到 `app.device.lanes[10]`。如果现场 MQTT Topic 与文档不同，可以覆盖:

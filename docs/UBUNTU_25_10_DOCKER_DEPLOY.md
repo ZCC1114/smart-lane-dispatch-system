@@ -27,7 +27,8 @@
   |     |-- MQTT Broker Host: 192.168.124.3
   |     |-- MQTT Broker Port: 1883
   |
-  |-- CX 继电器设备 DIDO-01
+  |-- 入口 CX/DIDO 设备 DIDO-ENTRY-01
+  |-- 出口 CX/DIDO 设备 DIDO-EXIT-01
         |-- MQTT Broker Host: 192.168.124.3
         |-- MQTT Broker Port: 1883
         |-- DO1-DO11: 1-11 号车道入口灯
@@ -244,9 +245,12 @@ APP_DEVICE_DIDO_PAYLOAD_MODE=hex-a1
 APP_DEVICE_DIDO_RELAY_MODE=ordinary
 APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT=false
 APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT=false
-APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-01
+APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-ENTRY-01
 APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.124.18
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080
+APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=DIDO-EXIT-01
+APP_DEVICE_SHARED_EXIT_DIDO_HOST=192.168.124.19
+APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080
 
 APP_DISPATCH_ENTRY_LANE_ORDER=1-11
 APP_DISPATCH_ENTRY_ENABLED_DEFAULT=false
@@ -365,26 +369,41 @@ APP_DEVICE_MQTT_PASSWORD=<mqtt-password>
 
 ### 8.2 CX 继电器设备配置
 
-当前业务按 1 台 CX 继电器设备设计:
+当前业务按 2 台 CX/DIDO 继电器设备设计:
 
 ```text
-设备 ID: DIDO-01
-上报 Topic: /device/DIDO-01/update
-下发 Topic: /device/DIDO-01/get
+入口设备 ID: DIDO-ENTRY-01
+入口上报 Topic: /device/DIDO-ENTRY-01/update
+入口下发 Topic: /device/DIDO-ENTRY-01/get
+
+出口设备 ID: DIDO-EXIT-01
+出口上报 Topic: /device/DIDO-EXIT-01/update
+出口下发 Topic: /device/DIDO-EXIT-01/get
 ```
 
-在 CX 官方配置软件中填写:
+入口 CX/DIDO 在官方配置软件中填写:
 
 ```text
 服务器地址: 192.168.124.3
 服务器端口: 1883
-设备 ID: DIDO-01
-发布 Topic: /device/DIDO-01/update
-订阅 Topic: /device/DIDO-01/get
+设备 ID: DIDO-ENTRY-01
+发布 Topic: /device/DIDO-ENTRY-01/update
+订阅 Topic: /device/DIDO-ENTRY-01/get
 用户名/密码: 留空，除非 Mosquitto 开启认证
 ```
 
-继电器出口映射:
+出口 CX/DIDO 在官方配置软件中填写:
+
+```text
+服务器地址: 192.168.124.3
+服务器端口: 1883
+设备 ID: DIDO-EXIT-01
+发布 Topic: /device/DIDO-EXIT-01/update
+订阅 Topic: /device/DIDO-EXIT-01/get
+用户名/密码: 留空，除非 Mosquitto 开启认证
+```
+
+入口 CX/DIDO 继电器输出映射:
 
 ```text
 DO1  -> L01 1号车道入口灯
@@ -416,14 +435,46 @@ L10 entry-green-relay=A10
 L11 entry-green-relay=A11
 ```
 
+出口 CX/DIDO 继电器输出映射:
+
+```text
+DO1  -> L01 1号车道出口灯
+DO2  -> L02 2号车道出口灯
+DO3  -> L03 3号车道出口灯
+DO4  -> L04 4号车道出口灯
+DO5  -> L05 5号车道出口灯
+DO6  -> L06 6号车道出口灯
+DO7  -> L07 7号车道出口灯
+DO8  -> L08 8号车道出口灯
+DO9  -> L09 9号车道出口灯
+DO10 -> L10 10号车道出口灯
+DO11 -> L11 11号车道出口灯
+```
+
+系统默认映射:
+
+```text
+L01 exit-green-relay=A01
+L02 exit-green-relay=A02
+L03 exit-green-relay=A03
+L04 exit-green-relay=A04
+L05 exit-green-relay=A05
+L06 exit-green-relay=A06
+L07 exit-green-relay=A07
+L08 exit-green-relay=A08
+L09 exit-green-relay=A09
+L10 exit-green-relay=A10
+L11 exit-green-relay=A11
+```
+
 单灯模式规则:
 
 ```text
-对应 DO 口吸合 = 入口绿灯
-对应 DO 口断开 = 入口红灯
+对应 DO 口吸合 = 绿灯
+对应 DO 口断开 = 红灯
 ```
 
-地感入口映射:
+出口 CX/DIDO 地感入口映射:
 
 ```text
 IN1  -> L01 1号车道出口地感
@@ -441,13 +492,14 @@ IN11 -> L11 11号车道出口地感
 
 系统默认把 `B01-B11` 作为出口地感输入键。DIDO 上报从未触发变为触发时，系统认为对应车道有 1 辆车驶出。
 
-如果现场 CX 设备 ID 不是 `DIDO-01`，修改 `.env`:
+如果现场 CX 设备 ID 不是示例值，修改 `.env`:
 
 ```dotenv
-APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=<真实设备ID>
+APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=<入口真实设备ID>
+APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=<出口真实设备ID>
 ```
 
-并把 CX 设备 Topic 改为:
+并把两台 CX 设备 Topic 分别改为:
 
 ```text
 上报 Topic: /device/<真实设备ID>/update
@@ -566,7 +618,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
 docker compose exec mqtt mosquitto_pub \
   -h 127.0.0.1 \
   -p 1883 \
-  -t '/device/DIDO-01/get' \
+  -t '/device/DIDO-ENTRY-01/get' \
   -m '{"A01":110000,"res":"manual-on"}'
 ```
 
@@ -576,7 +628,7 @@ docker compose exec mqtt mosquitto_pub \
 docker compose exec mqtt mosquitto_pub \
   -h 127.0.0.1 \
   -p 1883 \
-  -t '/device/DIDO-01/get' \
+  -t '/device/DIDO-ENTRY-01/get' \
   -m '{"A01":100000,"res":"manual-off"}'
 ```
 
@@ -654,7 +706,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/update
 短接或触发对应 IN 口，例如 `IN8`:
 
 ```text
-CX 上报 /device/DIDO-01/update 中 B08 从 0 变为 1
+出口 CX/DIDO 上报 /device/DIDO-EXIT-01/update 中 B08 从 0 变为 1
 系统认为 L08 有 1 辆车出场
 车辆流水中对应记录写入出场时间
 车道总览中 L08 车牌减少
@@ -664,10 +716,10 @@ CX 上报 /device/DIDO-01/update 中 B08 从 0 变为 1
 
 ```bash
 docker compose logs -f server
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/update' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-EXIT-01/update' -v
 ```
 
-重点确认上报 JSON 中是否有 `B08`，以及设备 ID 是否与 `.env` 中 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID` 一致。
+重点确认上报 JSON 中是否有 `B08`，以及设备 ID 是否与 `.env` 中 `APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID` 一致。
 
 ## 10. 日常运维
 
@@ -864,8 +916,9 @@ docker compose logs -f server
 
 检查:
 
-- CX 设备 ID 是否与 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID` 一致。
-- CX 订阅 Topic 是否为 `/device/DIDO-01/get`。
+- 入口 CX/DIDO 设备 ID 是否与 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID` 一致。
+- 出口 CX/DIDO 设备 ID 是否与 `APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID` 一致。
+- CX 订阅 Topic 是否分别为 `/device/DIDO-ENTRY-01/get`、`/device/DIDO-EXIT-01/get`。
 - 后端是否连接 MQTT 成功。
 - `APP_DEVICE_DIDO_PAYLOAD_MODE` 是否符合设备能力，当前 CX 联调默认 `hex-a1`。
 - DO 口接线是否与 A01-A11 映射一致。
@@ -873,7 +926,7 @@ docker compose logs -f server
 监听下发:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/get' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/get' -v
 ```
 
 点击页面信号灯控制，应该能看到后端下发消息。
@@ -882,7 +935,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/
 
 检查:
 
-- CX 上报 Topic 是否为 `/device/DIDO-01/update`。
+- 出口 CX/DIDO 上报 Topic 是否为 `/device/DIDO-EXIT-01/update`。
 - 上报 payload 是否包含 `B01-B11`。
 - 触发是否产生从 `0` 到 `1` 的变化。
 - 对应车道是否已有在场车辆。
@@ -890,7 +943,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/
 监听:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/update' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-EXIT-01/update' -v
 ```
 
 ## 14. 交付检查清单
@@ -904,7 +957,8 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-01/
 - 浏览器能访问 `http://服务器IP:3002`。
 - 默认管理员密码已修改或替换。
 - 摄像头 MQTT 能上报到 `/device/{devId}/update`。
-- CX 设备能接收 `/device/DIDO-01/get` 下发。
+- 入口 CX/DIDO 能接收 `/device/DIDO-ENTRY-01/get` 下发。
+- 出口 CX/DIDO 能接收 `/device/DIDO-EXIT-01/get` 下发。
 - DO1-DO11 与 1-11 号车道入口灯映射正确。
 - IN1-IN11 与 1-11 号车道出口地感映射正确。
 - 车牌抓拍能生成车辆流水。
