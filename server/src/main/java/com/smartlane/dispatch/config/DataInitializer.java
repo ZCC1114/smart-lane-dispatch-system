@@ -8,10 +8,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
-import com.smartlane.dispatch.entity.BlacklistRecord;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
-import com.smartlane.dispatch.repository.BlacklistRecordRepository;
 import com.smartlane.dispatch.repository.EntryLogRepository;
 import com.smartlane.dispatch.repository.LaneRepository;
 
@@ -19,16 +17,13 @@ import com.smartlane.dispatch.repository.LaneRepository;
 public class DataInitializer implements CommandLineRunner {
 
 	private final LaneRepository laneRepository;
-	private final BlacklistRecordRepository blacklistRecordRepository;
 	private final EntryLogRepository entryLogRepository;
 	private final boolean seedDemoEntryLogs;
 
 	public DataInitializer(LaneRepository laneRepository,
-			BlacklistRecordRepository blacklistRecordRepository,
 			EntryLogRepository entryLogRepository,
 			@Value("${app.seed-demo-entry-logs:false}") boolean seedDemoEntryLogs) {
 		this.laneRepository = laneRepository;
-		this.blacklistRecordRepository = blacklistRecordRepository;
 		this.entryLogRepository = entryLogRepository;
 		this.seedDemoEntryLogs = seedDemoEntryLogs;
 	}
@@ -36,7 +31,6 @@ public class DataInitializer implements CommandLineRunner {
 	@Override
 	public void run(String... args) {
 		initLanes();
-		initBlacklist();
 		initEntryLogs();
 	}
 
@@ -60,22 +54,6 @@ public class DataInitializer implements CommandLineRunner {
 		);
 
 		laneRepository.saveAll(lanes);
-	}
-
-	private void initBlacklist() {
-		if (blacklistRecordRepository.count() > 0) {
-			return;
-		}
-
-		List<BlacklistRecord> records = List.of(
-			createBlacklistRecord("苏B·E54G1", "套牌车嫌疑，需重点排查", "HIGH"),
-			createBlacklistRecord("苏B·A12594", "多次拒载乘客投诉", "MEDIUM"),
-			createBlacklistRecord("苏B·88888", "非法营运，无证上岗", "CRITICAL"),
-			createBlacklistRecord("苏B·66666", "未按时参加安全培训", "LOW"),
-			createBlacklistRecord("苏B·12345", "故意遮挡车牌号", "HIGH")
-		);
-
-		blacklistRecordRepository.saveAll(records);
 	}
 
 	private void initEntryLogs() {
@@ -126,18 +104,6 @@ public class DataInitializer implements CommandLineRunner {
 		lane.setSensorStatus("ONLINE");
 		lane.setLastSensorAt(OffsetDateTime.now());
 		return lane;
-	}
-
-	private BlacklistRecord createBlacklistRecord(String plate, String reason, String level) {
-		BlacklistRecord record = new BlacklistRecord();
-		record.setId(UUID.randomUUID().toString());
-		record.setPlate(plate);
-		record.setReason(reason);
-		record.setLevel(level);
-		record.setEffectiveDate(OffsetDateTime.now().minusDays((int) (Math.random() * 30)));
-		record.setOperator("系统管理员");
-		record.setActive(true);
-		return record;
 	}
 
 	private EntryLog createEntryLog(String plate, String laneId, String laneName, OffsetDateTime entryTime, OffsetDateTime exitTime, String status) {

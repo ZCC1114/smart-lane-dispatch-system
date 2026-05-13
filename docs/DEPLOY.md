@@ -49,6 +49,7 @@ cp .env.example .env
 
 - `mysql`: 业务持久化
 - `redis`: 仪表盘缓存
+- `mqtt`: Eclipse Mosquitto Broker，供摄像头、CX/DIDO 和后端通信
 - `server`: Spring Boot API + WebSocket
 - `web`: Next.js 前端
 - `nginx`: 统一入口，转发 `/`、`/api`、`/ws`
@@ -64,6 +65,8 @@ cp .env.example .env
 - `MYSQL_USER`
 - `MYSQL_PASSWORD`
 - `REDIS_PORT`
+- `MQTT_PORT`
+- `MQTT_WS_PORT`
 - `APP_BOOTSTRAP_ADMIN_ENABLED`
 - `APP_BOOTSTRAP_ADMIN_USERNAME`
 - `APP_BOOTSTRAP_ADMIN_PASSWORD`
@@ -173,10 +176,21 @@ app.device.dido.down-topic-template=/device/{didoDeviceId}/get
 - `deploy/mysql/init/01-bootstrap.sql` 用于创建默认数据库
 - `deploy/mysql/init/02-schema.sql` 用于创建业务表、索引与约束
 - `deploy/mysql/init/03-seed.sql` 用于初始化 `admin` 管理员、`L01` 到 `L11` 车道数据，以及默认入口/出口顺序配置
+- Docker Compose 会把 `deploy/mysql/init` 挂载到 MySQL 容器的 `/docker-entrypoint-initdb.d`，首次创建 `mysql-data` volume 时会自动执行这些 SQL
 - 后端默认使用 `spring.jpa.hibernate.ddl-auto=validate`，只校验表结构，不会自动建表或自动改表
-- 数据库为空时，需要先手动执行上述 SQL 脚本；否则后端会因表结构缺失启动失败
+- 如果连接的是已有空数据库，或非 Docker 部署的本机 MySQL，需要先手动执行上述 SQL 脚本；否则后端会因表结构缺失启动失败
+- MySQL 官方镜像只会在数据目录为空时执行初始化脚本；已有 `mysql-data` volume 不会重复初始化
 - 初始化后的默认登录账号为 `admin / Admin@123`，正式交付前应立即改密或替换为现场账号
 - 如需运维兜底管理员，可显式开启 `APP_BOOTSTRAP_ADMIN_ENABLED=true`，系统会创建或重置一个受保护 `ADMIN` 账号
+
+本地 Docker 环境如需完全重置基础数据，可以删除 volume 后重启:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+注意: `down -v` 会删除 MySQL、Redis、MQTT 持久化数据，生产环境不要直接执行。
 
 本地 MySQL 手动初始化示例:
 

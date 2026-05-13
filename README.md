@@ -3,8 +3,8 @@
 基于项目说明文档、技术文档和本地 Figma MCP 设计稿实现的完整前后端项目。当前仓库包含：
 
 - `web/`: `Next.js 16 + React 19 + TypeScript + Tailwind CSS 4 + TanStack Query + Zustand`
-- `server/`: `Spring Boot 3.5 + Spring Security + JPA + MySQL/H2 + Redis + WebSocket`
-- `deploy/`: `Nginx + MySQL 初始化脚本`
+- `server/`: `Spring Boot 3.5 + Spring Security + JPA + MySQL + Redis + WebSocket`
+- `deploy/`: `Nginx + Mosquitto + MySQL 初始化脚本`
 - `docs/`: 接口与部署文档
 - `scripts/`: 一键启动/停止脚本
 
@@ -85,6 +85,8 @@ npm run dev
 
 ## Docker Compose
 
+本地和生产都可以直接用 Docker Compose 启动完整运行栈，包含 `MySQL 8.4`、`Redis 7.4`、`Mosquitto MQTT`、后端、前端和 Nginx。
+
 ```bash
 cp .env.example .env
 ./scripts/start-stack.sh
@@ -96,6 +98,30 @@ cp .env.example .env
 - 后端 API：`http://localhost:3002/api`
 - Swagger：`http://localhost:3002/swagger-ui.html`
 - 健康检查：`http://localhost:3002/actuator/health`
+
+首次创建 `mysql-data` volume 时，MySQL 容器会自动执行 `deploy/mysql/init` 下的初始化脚本：
+
+- `01-bootstrap.sql`：创建默认数据库 `smart_lane_dispatch`
+- `02-schema.sql`：创建业务表、索引与约束
+- `03-seed.sql`：写入默认管理员账号、`L01-L11` 共 11 条车道，以及默认调度配置
+
+默认登录账号：
+
+```text
+用户名：admin
+密码：Admin@123
+```
+
+生产环境首次登录后应立即修改或替换现场管理员账号。
+
+注意：`deploy/mysql/init` 只会在 MySQL 数据目录为空时自动执行一次。如果本地测试需要重建基础数据，可以删除容器 volume 后重新启动：
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+`down -v` 会删除 MySQL、Redis、MQTT 的持久化数据，生产环境不要这样重置。
 
 ## 现场配置填写
 
@@ -266,9 +292,10 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
 
 ## 说明
 
-- 默认开发模式使用 H2；Compose 部署模式使用 `MySQL + Redis + Nginx`
-- 系统默认不再生成演示账号、车道、日志或黑名单数据
-- 如果数据库为空，接口会返回空结果；登录需要数据库中预先存在真实用户，或显式启用 bootstrap admin
+- 后端本地和 Compose 部署都默认使用 MySQL，不再使用 H2 内存库或 `create-drop`
+- Compose 部署模式使用 `MySQL + Redis + Mosquitto + Nginx`
+- Docker 首次创建 `mysql-data` volume 时会初始化默认账号、11 条车道和基础调度配置
+- 如果连接的是已有空数据库，需要手动执行 `deploy/mysql/init` 下的 SQL；否则后端会因表结构缺失启动失败
 - 如需运维引导管理员，可通过 `APP_BOOTSTRAP_ADMIN_*` 环境变量显式创建受保护管理员账号
 - bootstrap admin 的启用方式、轮换和保护规则见 `docs/DEPLOY.md`
 - 接口清单见 `docs/API.md`

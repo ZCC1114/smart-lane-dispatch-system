@@ -26,7 +26,7 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: "smart-lane-auth",
+      name: "smart-lane-auth-v2",
       storage: createJSONStorage(() => localStorage),
     },
   ),

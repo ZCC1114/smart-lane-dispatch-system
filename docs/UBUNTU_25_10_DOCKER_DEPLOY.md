@@ -28,11 +28,15 @@
   |     |-- MQTT Broker Port: 1883
   |
   |-- 入口 CX/DIDO 设备 DIDO-ENTRY-01
+  |     |-- MQTT Broker Host: 192.168.124.3
+  |     |-- MQTT Broker Port: 1883
+  |     |-- DO1-DO11: 1-11 号车道入口灯
+  |
   |-- 出口 CX/DIDO 设备 DIDO-EXIT-01
-        |-- MQTT Broker Host: 192.168.124.3
-        |-- MQTT Broker Port: 1883
-        |-- DO1-DO11: 1-11 号车道入口灯
-        |-- IN1-IN11: 1-11 号车道出口地感
+  |     |-- MQTT Broker Host: 192.168.124.3
+  |     |-- MQTT Broker Port: 1883
+  |     |-- DO1-DO11: 1-11 号车道出口灯
+  |     |-- IN1-IN11: 1-11 号车道出口地感
 ```
 
 实际 IP 以现场为准。下面以 `192.168.124.3` 举例，部署时替换为生产服务器固定 IP。
@@ -319,6 +323,8 @@ http://192.168.124.3:3002
 ```
 
 首次登录后应立即修改或替换现场管理员账号。当前初始化 SQL 位于 `deploy/mysql/init/03-seed.sql`。
+
+MySQL 容器首次创建 `mysql-data` volume 时会自动执行 `deploy/mysql/init` 下的 SQL，创建表结构并初始化默认账号、`L01-L11` 车道和基础调度配置。已有 volume 不会重复执行初始化脚本。
 
 ## 7. 防火墙和端口
 
@@ -959,7 +965,8 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-EXI
 - 摄像头 MQTT 能上报到 `/device/{devId}/update`。
 - 入口 CX/DIDO 能接收 `/device/DIDO-ENTRY-01/get` 下发。
 - 出口 CX/DIDO 能接收 `/device/DIDO-EXIT-01/get` 下发。
-- DO1-DO11 与 1-11 号车道入口灯映射正确。
+- 入口 CX/DIDO 的 DO1-DO11 与 1-11 号车道入口灯映射正确。
+- 出口 CX/DIDO 的 DO1-DO11 与 1-11 号车道出口灯映射正确。
 - IN1-IN11 与 1-11 号车道出口地感映射正确。
 - 车牌抓拍能生成车辆流水。
 - 地感触发能生成出场时间。

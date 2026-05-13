@@ -4,9 +4,10 @@ WORKDIR /app
 COPY pom.xml ./
 COPY .mvn .mvn
 COPY mvnw mvnw
+COPY lib lib
 COPY src src
 
-RUN chmod +x mvnw && ./mvnw -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 chmod +x mvnw && ./mvnw -DskipTests package
 
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
