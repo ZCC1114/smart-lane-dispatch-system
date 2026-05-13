@@ -37,7 +37,14 @@ public class ScreenController {
 
 	@GetMapping("/board")
 	public ScreenBoardView getBoard() {
-		return ScreenBoardView.from(operationsService.getDispatchBoard(), operationsService.getRecentEntryLogs(5), operationsService.getScreenLaneVehicles(), operationsService.getScreenEvents(), operationsService.getLanes());
+		return ScreenBoardView.from(
+				operationsService.getDispatchBoard(),
+				operationsService.getRecentEntryLogs(10),
+				operationsService.getRecentYardEntries(10),
+				operationsService.getRecentGuideAssignments(10),
+				operationsService.getScreenLaneVehicles(),
+				operationsService.getScreenBoardEvents(10),
+				operationsService.getLanes());
 	}
 
 	@GetMapping("/events")

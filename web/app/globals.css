@@ -131,6 +131,19 @@ textarea {
   animation: lane-flow-scroll 1.5s linear infinite;
 }
 
+.screen-scroll-viewport {
+  overflow: hidden;
+}
+
+.screen-scroll-track {
+  animation: screen-vertical-scroll var(--screen-scroll-duration, 18s) linear infinite;
+  will-change: transform;
+}
+
+.screen-scroll-viewport:hover .screen-scroll-track {
+  animation-play-state: paused;
+}
+
 @keyframes lane-flow-scroll {
   from {
     transform: translateX(-34%);
@@ -138,6 +151,16 @@ textarea {
 
   to {
     transform: translateX(0);
+  }
+}
+
+@keyframes screen-vertical-scroll {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(calc(-1 * var(--screen-scroll-distance, 0px)));
   }
 }
 

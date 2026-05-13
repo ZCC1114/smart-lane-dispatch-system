@@ -254,6 +254,36 @@ public class OperationsService {
 				.toList();
 	}
 
+	public List<DispatchTicket> getRecentYardEntries(int limit) {
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> currentCycleStart == null || !ticketTime(ticket).isBefore(currentCycleStart))
+				.limit(Math.max(1, limit))
+				.toList();
+	}
+
+	public List<DispatchTicket> getRecentGuideAssignments(int limit) {
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> currentCycleStart == null || !ticketTime(ticket).isBefore(currentCycleStart))
+				.filter(ticket -> !isBlank(ticket.getAssignedLaneId()) || !isBlank(ticket.getAssignedLaneName()))
+				.sorted(Comparator.comparing(
+						ticket -> firstNonNull(ticket.getAssignedAt(), ticket.getYardEntryTime()),
+						Comparator.nullsLast(Comparator.reverseOrder())))
+				.limit(Math.max(1, limit))
+				.toList();
+	}
+
+	public List<ScreenEventView> getScreenBoardEvents(int perTypeLimit) {
+		int limit = Math.max(1, perTypeLimit);
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		Map<String, Integer> typeCounts = new HashMap<>();
+		return getScreenEvents(null, null, null, true).stream()
+				.filter(event -> currentCycleStart == null || event.occurredAt() == null || !event.occurredAt().isBefore(currentCycleStart))
+				.filter(event -> typeCounts.merge(event.type(), 1, Integer::sum) <= limit)
+				.toList();
+	}
+
 	public Map<String, List<DispatchTicket>> getScreenLaneVehicles() {
 		List<Lane> lanes = refreshLaneRuntime(now());
 		Map<String, List<DispatchTicket>> result = new HashMap<>();

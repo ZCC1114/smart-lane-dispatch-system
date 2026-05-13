@@ -23,7 +23,14 @@ public record ScreenBoardView(
 		List<ScreenEventView> events,
 		List<Lane> lanes) {
 
-	public static ScreenBoardView from(DispatchBoardView board, List<EntryLog> recentEntryLogs, Map<String, List<DispatchTicket>> laneVehicles, List<ScreenEventView> events, List<Lane> lanes) {
+	public static ScreenBoardView from(
+			DispatchBoardView board,
+			List<EntryLog> recentEntryLogs,
+			List<DispatchTicket> recentDispatches,
+			List<DispatchTicket> guideAssignments,
+			Map<String, List<DispatchTicket>> laneVehicles,
+			List<ScreenEventView> events,
+			List<Lane> lanes) {
 		return new ScreenBoardView(
 				board.generatedAt(),
 				board.activeEntryLaneId(),
@@ -32,8 +39,8 @@ public record ScreenBoardView(
 				board.activeExitLaneName(),
 				board.entryDispatchEnabled(),
 				board.exitDispatchEnabled(),
-				board.waitingAssignments(),
-				board.recentDispatches(),
+				guideAssignments,
+				recentDispatches,
 				recentEntryLogs,
 				laneVehicles,
 				events,

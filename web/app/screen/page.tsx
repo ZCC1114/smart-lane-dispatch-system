@@ -1,13 +1,18 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { formatPlateDisplay } from "@/lib/utils";
 
 const DESIGN_WIDTH = 1920;
 const DESIGN_HEIGHT = 1080;
 const ASSET = "/screen-assets";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const BLUE_PLATE_CLASS = "border-2 border-white bg-[#1f6fe5] text-white shadow-[0_0_7px_rgba(0,0,0,0.45)]";
+const GREEN_PLATE_CLASS =
+  "border-2 border-white bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a] shadow-[inset_0_0_9px_rgba(255,255,255,0.72),0_0_7px_rgba(0,0,0,0.45)]";
+const ALERT_BUTTON_BLUE_CLASS = "border-[#55ddff] bg-[linear-gradient(180deg,#1fb7e6_0%,#08699d_100%)]";
+const ALERT_BUTTON_ORANGE_CLASS = "border-[#ff9366] bg-[linear-gradient(180deg,#c94b32_0%,#7f241b_100%)]";
 
 interface DispatchTicket {
   id: string;
@@ -57,6 +62,8 @@ interface ScreenEvent {
   occurredAt: string;
   sourceId: string | null;
   sourceName: string | null;
+  handled: boolean;
+  handledAt: string | null;
 }
 
 interface ScreenBoardData {
@@ -206,6 +213,13 @@ function plateTone(plate?: string | null) {
   return "green";
 }
 
+function screenScrollStyle(rowCount: number, rowHeight: number): CSSProperties {
+  return {
+    "--screen-scroll-distance": `${rowCount * rowHeight}px`,
+    "--screen-scroll-duration": `${Math.max(14, rowCount * 2.4)}s`,
+  } as CSSProperties;
+}
+
 function Asset({
   name,
   className,
@@ -235,11 +249,9 @@ function InlinePlate({
   return (
     <span
       className={[
-        "inline-flex items-center justify-center border font-mono font-black leading-none shadow-[inset_0_0_9px_rgba(255,255,255,0.72),0_0_7px_rgba(0,0,0,0.45)]",
+        "inline-flex items-center justify-center font-mono font-black leading-none",
         scale === "large" ? "h-[36px] min-w-[136px] px-3 text-[20px]" : scale === "entry" ? "h-[34px] w-[124px] px-2 text-[17px]" : "h-[23px] min-w-[88px] px-2 text-[14px]",
-        tone === "green"
-          ? "border-[#baffcf] bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a]"
-          : "border-white bg-[linear-gradient(180deg,#f7fbff_0%,#2e72dd_100%)] text-white",
+        tone === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
       ].join(" ")}
     >
       {formatPlateDisplay(text) || text}
@@ -284,24 +296,42 @@ function AlertRow({
   blue?: boolean;
   onHandle: (event: ScreenEvent) => void;
 }) {
+  const handled = event?.handled ?? false;
+  const blueRow = blue || handled;
+
   return (
     <div className="relative mb-[9px] h-[40px] overflow-hidden">
-      <Asset name="Frame 427319724.png" className="absolute inset-0 h-[40px] w-[335px]" />
+      <Asset name="Frame 427319724.png" className={["absolute inset-0 h-[40px] w-[335px]", blueRow ? "opacity-30" : ""].join(" ")} />
+      {blueRow ? (
+        <div className="absolute inset-0 h-[40px] w-[335px] border border-[#28d8ff]/75 bg-[linear-gradient(90deg,rgba(14,125,199,0.68),rgba(11,67,124,0.5))] shadow-[inset_0_0_16px_rgba(40,216,255,0.24)]" />
+      ) : null}
       <span
         className={[
           "absolute left-[7px] top-[8px] grid size-[11px] place-items-center rounded-full text-[9px] font-bold text-white",
-          blue ? "bg-[#16d7ff]" : "bg-[#ff8c22]",
+          blueRow ? "bg-[#16d7ff]" : "bg-[#ff8c22]",
         ].join(" ")}
       >
         !
       </span>
-      <p className="absolute left-[24px] top-[7px] w-[250px] truncate text-[12px] font-bold text-white">
+      <p className="absolute left-[24px] top-[6px] w-[226px] truncate text-[12px] font-bold leading-[14px] text-white">
         {event ? `事件：${formatPlateDisplay(event.plate) || event.plate} ${event.message}` : "暂无事件"}
       </p>
-      <p className="absolute left-[24px] top-[25px] text-[12px] text-[#bec7d0]">时间： {event ? formatScreenTime(event.occurredAt) : "--"}</p>
+      <p className="absolute left-[24px] top-[22px] text-[12px] leading-[14px] text-[#bec7d0]">时间： {event ? formatScreenTime(event.occurredAt) : "--"}</p>
       {event ? (
-        <button type="button" onClick={() => onHandle(event)} className="absolute right-[5px] top-[11px] h-[18px] w-[36px]">
-          <Asset name="Frame 427319726.png" className="h-[18px] w-[36px]" />
+        <button
+          type="button"
+          disabled={handled}
+          onClick={() => {
+            if (!handled) {
+              onHandle(event);
+            }
+          }}
+          className={[
+            "absolute right-[5px] top-[9px] flex h-[22px] w-[64px] items-center justify-center whitespace-nowrap border text-[10px] font-bold leading-none text-white shadow-[0_0_8px_rgba(0,0,0,0.35)]",
+            blueRow ? ALERT_BUTTON_BLUE_CLASS : ALERT_BUTTON_ORANGE_CLASS,
+          ].join(" ")}
+        >
+          {handled ? "已处理" : "处理"}
         </button>
       ) : null}
     </div>
@@ -319,31 +349,57 @@ function EventRows({
   blue?: boolean;
   onHandle: (event: ScreenEvent) => void;
 }) {
-  const rows = events.filter((event) => event.type === type).slice(0, 3);
+  const rows = events.filter((event) => event.type === type).slice(0, 10);
+  const visibleRows = 3;
+  const rowHeight = 49;
+
+  if (rows.length === 0) {
+    return (
+      <>
+        {Array.from({ length: visibleRows }).map((_, index) => (
+          <AlertRow key={`${type}-${index}`} blue={blue} onHandle={onHandle} />
+        ))}
+      </>
+    );
+  }
+
+  const displayRows = rows.length > visibleRows ? [...rows, ...rows] : rows;
 
   return (
-    <>
-      {Array.from({ length: 3 }).map((_, index) => (
-        <AlertRow key={rows[index]?.id ?? `${type}-${index}`} event={rows[index]} blue={blue} onHandle={onHandle} />
-      ))}
-    </>
+    <div className="screen-scroll-viewport" style={{ height: visibleRows * rowHeight }}>
+      <div className={rows.length > visibleRows ? "screen-scroll-track" : undefined} style={rows.length > visibleRows ? screenScrollStyle(rows.length, rowHeight) : undefined}>
+        {displayRows.map((event, index) => (
+          <AlertRow key={`${event.id}-${index}`} event={event} blue={blue} onHandle={onHandle} />
+        ))}
+        {rows.length < visibleRows
+          ? Array.from({ length: visibleRows - rows.length }).map((_, index) => (
+              <AlertRow key={`${type}-empty-${index}`} blue={blue} onHandle={onHandle} />
+            ))
+          : null}
+      </div>
+    </div>
   );
 }
 
-function EntryInfoRows({ logs }: { logs: EntryLog[] }) {
-  const rows = logs.slice(0, 5);
+function EntryInfoRows({ tickets }: { tickets: DispatchTicket[] }) {
+  const rows = tickets.slice(0, 10);
+  const visibleRows = 6;
+  const rowHeight = 52;
+  const displayRows = rows.length > visibleRows ? [...rows, ...rows] : rows;
 
   return (
-    <div className="space-y-[7px]">
-      {rows.map((log) => (
-        <div key={log.id} className="grid h-[45px] grid-cols-[124px_1fr] items-center gap-[7px] border-b border-[#4d7593]/80">
-          <InlinePlate text={log.plate} tone={plateTone(log.plate)} scale="entry" />
-          <div className="min-w-0 text-[11px] leading-[16px] text-white">
-            <p className="whitespace-nowrap">时间:{formatScreenTime(log.entryTime)}</p>
+    <div className="screen-scroll-viewport" style={{ height: visibleRows * rowHeight }}>
+      <div className={rows.length > visibleRows ? "screen-scroll-track" : undefined} style={rows.length > visibleRows ? screenScrollStyle(rows.length, rowHeight) : undefined}>
+        {displayRows.map((ticket, index) => (
+          <div key={`${ticket.id}-${index}`} className="mb-[7px] grid h-[45px] grid-cols-[124px_1fr] items-center gap-[7px] border-b border-[#4d7593]/80">
+            <InlinePlate text={ticket.plate} tone={plateTone(ticket.plate)} scale="entry" />
+            <div className="min-w-0 text-[11px] leading-[16px] text-white">
+              <p className="whitespace-nowrap">时间:{formatScreenTime(ticket.yardEntryTime)}</p>
+            </div>
           </div>
-        </div>
-      ))}
-      {rows.length === 0 ? <div className="pt-6 text-center text-[16px] text-white/70">暂无入场车辆</div> : null}
+        ))}
+        {rows.length === 0 ? <div className="pt-6 text-center text-[16px] text-white/70">暂无入场车辆</div> : null}
+      </div>
     </div>
   );
 }
@@ -355,24 +411,67 @@ function GuideRows({ tickets }: { tickets: DispatchTicket[] }) {
       const rightTime = new Date(right.assignedAt ?? right.yardEntryTime).getTime();
       return rightTime - leftTime;
     })
-    .slice(0, 6);
+    .slice(0, 10);
+  const visibleRows = 6;
+  const rowHeight = 54;
+  const displayRows = rows.length > visibleRows ? [...rows, ...rows] : rows;
 
   return (
-    <div className="space-y-[15px] pt-[2px]">
-      {rows.map((ticket) => (
-        <div key={ticket.id} className="relative h-[39px]">
-          <div className="absolute left-0 top-[3px]">
-            <InlinePlate text={ticket.plate} tone={plateTone(ticket.plate)} scale="large" />
+    <div className="screen-scroll-viewport" style={{ height: visibleRows * rowHeight }}>
+      <div className={rows.length > visibleRows ? "screen-scroll-track" : undefined} style={rows.length > visibleRows ? screenScrollStyle(rows.length, rowHeight) : undefined}>
+        {displayRows.map((ticket, index) => (
+          <div key={`${ticket.id}-${index}`} className="relative mb-[15px] h-[39px]">
+            <div className="absolute left-0 top-[3px]">
+              <InlinePlate text={ticket.plate} tone={plateTone(ticket.plate)} scale="large" />
+            </div>
+            <GuideTriangle className="left-[150px] top-[8px]" />
+            <div className="absolute left-[174px] top-0 flex h-[39px] w-[94px] items-center justify-center border border-[#f1a21f] bg-[linear-gradient(180deg,#df9823_0%,#995100_100%)] text-[23px] font-black leading-none text-white shadow-[inset_0_0_12px_rgba(255,255,255,0.25)]">
+              <GuideButtonTriangle className="left-[7px] top-[14px]" />
+              <span className="relative z-10">{laneNumber(ticket.assignedLaneName)}</span>
+              <GuideButtonTriangle className="right-[7px] top-[14px]" direction="left" />
+            </div>
           </div>
-          <span className="absolute left-[150px] top-[9px] h-0 w-0 border-y-[9px] border-l-[14px] border-y-transparent border-l-[#ffc247] drop-shadow-[0_0_5px_#ffc247]" />
-          <div className="absolute left-[174px] top-0 h-[39px] w-[108px] border border-[#f1a21f] bg-[linear-gradient(180deg,#df9823_0%,#995100_100%)] text-center text-[25px] font-black leading-[37px] text-white shadow-[inset_0_0_12px_rgba(255,255,255,0.25)]">
-            {laneNumber(ticket.assignedLaneName)}
-          </div>
-        </div>
-      ))}
-      {rows.length === 0 ? <div className="pt-6 text-center text-[16px] text-white/70">暂无引导车辆</div> : null}
+        ))}
+        {rows.length === 0 ? <div className="pt-6 text-center text-[16px] text-white/70">暂无引导车辆</div> : null}
+      </div>
     </div>
   );
+}
+
+function GuideTriangle({ className = "", direction = "right" }: { className?: string; direction?: "left" | "right" }) {
+  const width = 18;
+  const height = 22;
+  const clipPath = "polygon(0 0, 58% 0, 100% 50%, 58% 100%, 0 100%, 34% 50%)";
+  const outerStyle: CSSProperties = {
+    width,
+    height,
+    clipPath,
+    background: "linear-gradient(180deg,#ffe889 0%,#f3b72d 52%,#8d4b05 100%)",
+    transform: direction === "left" ? "rotate(180deg)" : undefined,
+  };
+  const innerStyle: CSSProperties = {
+    left: 3,
+    top: 3,
+    width: 12,
+    height: 16,
+    clipPath,
+    background: "linear-gradient(180deg,#d88911 0%,#7a3d02 100%)",
+  };
+
+  return (
+    <span className={["absolute drop-shadow-[0_0_4px_rgba(255,195,59,0.85)]", className].join(" ")} style={outerStyle}>
+      <span className="absolute" style={innerStyle} />
+    </span>
+  );
+}
+
+function GuideButtonTriangle({ className = "", direction = "right" }: { className?: string; direction?: "left" | "right" }) {
+  const shape =
+    direction === "right"
+      ? "border-y-[5px] border-l-[7px] border-y-transparent border-l-[#ffd76a]"
+      : "border-y-[5px] border-r-[7px] border-y-transparent border-r-[#ffd76a]";
+
+  return <span className={["absolute h-0 w-0 drop-shadow-[0_0_3px_rgba(255,207,83,0.8)]", shape, className].join(" ")} />;
 }
 
 function Gate({ x, y, text }: { x: number; y: number; text: string }) {
@@ -412,6 +511,12 @@ function LaneVehicleStack({
   return (
     <>
       {rows.map((vehicle, index) => {
+        const displayPlate = formatPlateDisplay(vehicle.plate) || vehicle.plate;
+        const compactPlateLength = displayPlate.replace(/\s/g, "").length;
+        const plateFontSize = Math.max(
+          11,
+          Math.min(fontSize, compactPlateLength >= 9 ? 13 : compactPlateLength >= 8 ? 14 : fontSize),
+        );
         const rowTop = laneTop + slot * index;
         const top = rowTop + Math.max(0, (slot - plateHeight) / 2);
         const centerX = x + 46;
@@ -419,20 +524,18 @@ function LaneVehicleStack({
           <div key={`${lane.id}-${vehicle.id}-${index}`}>
             <div
               className={[
-                "absolute flex items-center justify-center overflow-hidden border px-[3px] font-mono font-black leading-none shadow-[inset_0_0_8px_rgba(255,255,255,0.78),0_0_6px_rgba(0,0,0,0.45)]",
-                plateTone(vehicle.plate) === "green"
-                  ? "border-[#baffcf] bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a]"
-                  : "border-[#d9e8ff] bg-[linear-gradient(180deg,#79b1ff_0%,#2e79f0_36%,#0c4fc8_100%)] text-white",
+                "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none",
+                plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
               ].join(" ")}
               style={{
                 left: centerX - plateWidth / 2,
                 top,
                 width: plateWidth,
                 height: plateHeight,
-                fontSize,
+                fontSize: plateFontSize,
               }}
             >
-              <span className="max-w-full truncate tracking-[-0.02em]">{formatPlateDisplay(vehicle.plate) || vehicle.plate}</span>
+              <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
             </div>
           </div>
         );
@@ -479,7 +582,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const [pendingEvent, setPendingEvent] = useState<ScreenEvent | null>(null);
   const [handlingEventId, setHandlingEventId] = useState<string | null>(null);
   const events = board?.events ?? [];
-  const recentEntries = board?.recentEntryLogs ?? [];
+  const recentEntries = board?.recentDispatches ?? [];
   const guideEntries = board?.waitingAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = board?.laneVehicles ?? {};
@@ -506,7 +609,10 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      setBoard((current) => current ? { ...current, events: current.events.filter((event) => event.id !== eventId) } : current);
+      setBoard((current) => current ? {
+        ...current,
+        events: current.events.map((event) => event.id === eventId ? { ...event, handled: true, handledAt: new Date().toISOString() } : event),
+      } : current);
       setPendingEvent(null);
     } catch (handleError) {
       setSimulateMessage(`告警处理失败: ${handleError instanceof Error ? handleError.message : "请求失败"}`);
@@ -650,7 +756,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <Asset name="Group 48097128.png" className="absolute left-[1541px] top-[730px] h-[104px] w-[71px]" />
 
         <Panel title="进场信息" x={1610} y={215} size="large">
-          <EntryInfoRows logs={recentEntries} />
+          <EntryInfoRows tickets={recentEntries} />
         </Panel>
         <Panel title="引导牌" x={1610} y={663} size="large">
           <GuideRows tickets={guideEntries} />
@@ -715,7 +821,6 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
                 </p>
                 <p className="truncate">内容：{pendingEvent.message}</p>
                 <p>时间：{formatScreenTime(pendingEvent.occurredAt)}</p>
-                <p className="mt-1 text-[14px] text-[#a9c4d9]">确认后该告警将从大屏告警列表中移除。</p>
               </div>
               <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
                 <button
