@@ -2,12 +2,21 @@
 "use client";
 
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { formatPlateDisplay } from "@/lib/utils";
+import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 
 const DESIGN_WIDTH = 1920;
 const DESIGN_HEIGHT = 1080;
 const ASSET = "/screen-assets";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const LANE_LEFTS = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
+const LANE_WIDTH = 92;
+const LANE_PLATE_SIDE_GAP = 4;
+const LANE_PLATE_WIDTH = LANE_WIDTH - LANE_PLATE_SIDE_GAP * 2;
+const ENTRY_ROAD_WIDTH = 74;
+const ENTRY_ROAD_PLATE_SIDE_GAP = 4;
+const ENTRY_ROAD_PLATE_WIDTH = ENTRY_ROAD_WIDTH - ENTRY_ROAD_PLATE_SIDE_GAP * 2;
 const BLUE_PLATE_CLASS = "border-2 border-white bg-[#1f6fe5] text-white shadow-[0_0_7px_rgba(0,0,0,0.45)]";
 const GREEN_PLATE_CLASS =
   "border-2 border-white bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a] shadow-[inset_0_0_9px_rgba(255,255,255,0.72),0_0_7px_rgba(0,0,0,0.45)]";
@@ -73,6 +82,7 @@ interface ScreenBoardData {
   entryDispatchEnabled: boolean;
   exitDispatchEnabled: boolean;
   waitingAssignments: DispatchTicket[];
+  guideAssignments: DispatchTicket[];
   recentDispatches: DispatchTicket[];
   recentEntryLogs: EntryLog[];
   laneVehicles: Record<string, DispatchTicket[]>;
@@ -105,7 +115,16 @@ function useScreenScale(mode: "standalone" | "embedded") {
 
     updateViewport();
     window.addEventListener("resize", updateViewport);
-    return () => window.removeEventListener("resize", updateViewport);
+    if (mode !== "embedded" || !containerRef.current) {
+      return () => window.removeEventListener("resize", updateViewport);
+    }
+
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(containerRef.current);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateViewport);
+    };
   }, [mode]);
 
   return {
@@ -166,6 +185,21 @@ function formatScreenTime(value?: string | null) {
   });
 }
 
+function formatBeijingDateTime(value: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(value);
+  const mapped = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${mapped.year}-${mapped.month}-${mapped.day}  ${mapped.hour}:${mapped.minute}:${mapped.second}`;
+}
+
 function laneNumber(label?: string | null) {
   const matched = label?.match(/\d+/);
   return matched ? `${Number.parseInt(matched[0], 10)}车道` : "--车道";
@@ -213,6 +247,28 @@ function plateTone(plate?: string | null) {
   return "green";
 }
 
+function screenPlateText(plate: string) {
+  return formatPlateDisplay(plate) || plate;
+}
+
+function estimatePlateTextUnits(text: string) {
+  return Array.from(text).reduce((total, char) => {
+    if (/[\u4e00-\u9fff]/.test(char)) {
+      return total + 1;
+    }
+    if (/[·•・．。.\-\s]/.test(char)) {
+      return total + 0.35;
+    }
+    return total + 0.62;
+  }, 0);
+}
+
+function plateFontSize(text: string, plateWidth: number, maxFontSize: number, minFontSize: number) {
+  const usableWidth = plateWidth - 6;
+  const fittedFontSize = Math.floor(usableWidth / Math.max(estimatePlateTextUnits(text), 1));
+  return Math.max(minFontSize, Math.min(maxFontSize, fittedFontSize));
+}
+
 function screenScrollStyle(rowCount: number, rowHeight: number): CSSProperties {
   return {
     "--screen-scroll-distance": `${rowCount * rowHeight}px`,
@@ -254,7 +310,7 @@ function InlinePlate({
         tone === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
       ].join(" ")}
     >
-      {formatPlateDisplay(text) || text}
+      {screenPlateText(text)}
     </span>
   );
 }
@@ -505,26 +561,22 @@ function LaneVehicleStack({
     .map((ticket) => ({ id: ticket.id, plate: ticket.plate }));
   const slot = laneHeight / capacity;
   const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
-  const plateWidth = 98;
+  const plateWidth = LANE_PLATE_WIDTH;
   const fontSize = Math.max(13, Math.min(17, plateHeight * 0.56));
 
   return (
     <>
       {rows.map((vehicle, index) => {
-        const displayPlate = formatPlateDisplay(vehicle.plate) || vehicle.plate;
-        const compactPlateLength = displayPlate.replace(/\s/g, "").length;
-        const plateFontSize = Math.max(
-          11,
-          Math.min(fontSize, compactPlateLength >= 9 ? 13 : compactPlateLength >= 8 ? 14 : fontSize),
-        );
+        const displayPlate = screenPlateText(vehicle.plate);
+        const fittedFontSize = plateFontSize(displayPlate, plateWidth, fontSize, 11);
         const rowTop = laneTop + slot * index;
         const top = rowTop + Math.max(0, (slot - plateHeight) / 2);
-        const centerX = x + 46;
+        const centerX = x + LANE_WIDTH / 2;
         return (
           <div key={`${lane.id}-${vehicle.id}-${index}`}>
             <div
               className={[
-                "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none",
+                "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.02em]",
                 plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
               ].join(" ")}
               style={{
@@ -532,7 +584,7 @@ function LaneVehicleStack({
                 top,
                 width: plateWidth,
                 height: plateHeight,
-                fontSize: plateFontSize,
+                fontSize: fittedFontSize,
               }}
             >
               <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
@@ -551,12 +603,11 @@ function LaneOverlays({
   lanes: LaneSnapshot[];
   laneVehicles: Record<string, DispatchTicket[]>;
 }) {
-  const laneX = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
   const displayLanes = buildDisplayLanes(lanes);
 
   return (
     <>
-      {laneX.map((x, index) => (
+      {LANE_LEFTS.map((x, index) => (
         <div key={x}>
           <Signal x={x + 5} y={205} state={laneSignalState(displayLanes[index]?.exitSignal)} />
           <Signal x={x + 5} y={917} state={laneSignalState(displayLanes[index]?.entrySignal)} />
@@ -572,18 +623,77 @@ function LaneOverlays({
   );
 }
 
+function MovingGuidePlates({ tickets, lanes }: { tickets: DispatchTicket[]; lanes: LaneSnapshot[] }) {
+  const displayLanes = buildDisplayLanes(lanes);
+  const pendingTickets = tickets
+    .filter((ticket) => Boolean(ticket.assignedLaneId) && !ticket.laneEntryTime && !ticket.exitTime && !ticket.closedAt)
+    .slice(0, 8);
+
+  if (pendingTickets.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30">
+      {pendingTickets.map((ticket, index) => {
+        const laneIndex = displayLanes.findIndex((lane) => lane?.id === ticket.assignedLaneId);
+        if (laneIndex < 0) {
+          return null;
+        }
+
+        const laneLeft = LANE_LEFTS[laneIndex];
+        const routeOffset = index % 3;
+        const displayPlate = screenPlateText(ticket.plate);
+        const plateWidth = ENTRY_ROAD_PLATE_WIDTH;
+        const fittedFontSize = plateFontSize(displayPlate, plateWidth, 13, 9);
+        const entryRoadCenterX = 1560;
+        const targetLaneCenterX = laneLeft + LANE_WIDTH / 2;
+        const duration = Math.max(5.2, Math.min(8.5, 5.2 + (1548 - laneLeft) / 300));
+        const style = {
+          "--guide-start-x": `${entryRoadCenterX - plateWidth / 2}px`,
+          "--guide-start-y": `${418 + routeOffset * 22}px`,
+          "--guide-turn-y": `${980 + routeOffset * 13}px`,
+          "--guide-end-x": `${targetLaneCenterX - plateWidth / 2}px`,
+          "--guide-end-y": `${980 + routeOffset * 13}px`,
+          "--guide-duration": `${duration}s`,
+          "--guide-delay": `${index * -0.72}s`,
+        } as CSSProperties;
+        const plateClass = plateTone(ticket.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS;
+
+        return (
+          <div key={ticket.id} className="screen-guide-plate-motion absolute left-0 top-0" style={style}>
+            <div
+              className={[
+                "flex h-[28px] items-center justify-center overflow-hidden px-[2px] font-mono font-black leading-none tracking-[-0.04em]",
+                plateClass,
+              ].join(" ")}
+              style={{ width: plateWidth, fontSize: fittedFontSize }}
+            >
+              <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "embedded" }) {
   const { containerRef, scale } = useScreenScale(mode);
   const { board, error, setBoard } = useScreenBoard();
+  const [now, setNow] = useState(() => new Date());
   const [simulatePlate, setSimulatePlate] = useState("");
   const [simulateLanePlate, setSimulateLanePlate] = useState("");
   const [simulateLaneId, setSimulateLaneId] = useState("");
   const [simulateMessage, setSimulateMessage] = useState("");
   const [pendingEvent, setPendingEvent] = useState<ScreenEvent | null>(null);
   const [handlingEventId, setHandlingEventId] = useState<string | null>(null);
+  const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
+  const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
   const events = board?.events ?? [];
   const recentEntries = board?.recentDispatches ?? [];
-  const guideEntries = board?.waitingAssignments ?? [];
+  const pendingGuideEntries = board?.waitingAssignments ?? [];
+  const guideEntries = board?.guideAssignments ?? pendingGuideEntries;
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = board?.laneVehicles ?? {};
 
@@ -593,8 +703,28 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     }
   }, [lanes, simulateLaneId]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   function requestHandleEvent(event: ScreenEvent) {
     setPendingEvent(event);
+  }
+
+  async function readResponseError(response: Response) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      try {
+        const payload = (await response.json()) as { message?: string; error?: string };
+        return payload.message || payload.error || `HTTP ${response.status}`;
+      } catch {
+        return `HTTP ${response.status}`;
+      }
+    }
+
+    const message = (await response.text()).trim();
+    return message || `HTTP ${response.status}`;
   }
 
   async function confirmHandleEvent() {
@@ -636,7 +766,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       body: JSON.stringify({ plate }),
     });
     if (!response.ok) {
-      setSimulateMessage(`模拟失败: HTTP ${response.status}`);
+      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
       return;
     }
 
@@ -665,7 +795,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       body: JSON.stringify({ laneId, plate }),
     });
     if (!response.ok) {
-      setSimulateMessage(`模拟失败: HTTP ${response.status}`);
+      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
       return;
     }
 
@@ -689,8 +819,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       body: JSON.stringify({ laneId }),
     });
     if (!response.ok) {
-      const message = await response.text();
-      setSimulateMessage(`模拟失败: ${message || `HTTP ${response.status}`}`);
+      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
       return;
     }
 
@@ -718,13 +847,32 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         ) : null}
 
         <div className="absolute left-[29px] top-[17px] font-mono text-[22px] tracking-[0.12em] text-[#cbd5e1]">
-          2026-04-23&nbsp;&nbsp;09:22:12
+          {formatBeijingDateTime(now)}
         </div>
-        <div className="absolute right-[18px] top-[19px] flex items-center gap-3 text-[20px] font-semibold text-[#cbd5e1]">
-          <span className="text-[#ff9f1a]">☀</span>
-          <span>多云</span>
-          <span>23~34℃</span>
-        </div>
+        {mode === "embedded" ? (
+          <div className="absolute right-[18px] top-[14px] z-50 flex items-center gap-4">
+            <div className="flex items-center gap-3 text-[20px] font-semibold text-[#cbd5e1]">
+              <span className="text-[#ff9f1a]">☀</span>
+              <span>多云</span>
+              <span>23~34℃</span>
+            </div>
+            <button
+              type="button"
+              onClick={toggleOverviewExpanded}
+              aria-label={overviewExpanded ? "恢复原样" : "放大总览"}
+              title={overviewExpanded ? "恢复原样" : "放大总览"}
+              className="grid size-[34px] place-items-center text-[#d8f6ff] drop-shadow-[0_0_10px_rgba(83,228,255,0.32)] transition hover:scale-110 hover:text-white"
+            >
+              {overviewExpanded ? <Minimize2 className="size-4.5" /> : <Maximize2 className="size-4.5" />}
+            </button>
+          </div>
+        ) : (
+          <div className="absolute right-[18px] top-[19px] flex items-center gap-3 text-[20px] font-semibold text-[#cbd5e1]">
+            <span className="text-[#ff9f1a]">☀</span>
+            <span>多云</span>
+            <span>23~34℃</span>
+          </div>
+        )}
 
         <Asset name="道路.png" className="absolute left-[42px] top-[125px] h-[923px] w-[1839px]" />
         <Asset name="光斑 flare.png" className="absolute left-[532px] top-[68px] h-[72px] w-[849px] opacity-80" />
@@ -741,7 +889,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           <EventRows events={events} type="wrong_lane" onHandle={requestHandleEvent} />
         </Panel>
         <Panel title="未进车道" x={16} y={646}>
-          <EventRows events={events} type="not_entered" blue onHandle={requestHandleEvent} />
+          <EventRows events={events} type="not_entered" onHandle={requestHandleEvent} />
         </Panel>
         <Panel title="其他" x={16} y={860}>
           <EventRows events={events} type="other" onHandle={requestHandleEvent} />
@@ -751,6 +899,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           lanes={lanes}
           laneVehicles={laneVehicles}
         />
+        <MovingGuidePlates tickets={pendingGuideEntries} lanes={lanes} />
 
         <Asset name="Group 48097127.png" className="absolute left-[1541px] top-[398px] h-[104px] w-[71px]" />
         <Asset name="Group 48097128.png" className="absolute left-[1541px] top-[730px] h-[104px] w-[71px]" />

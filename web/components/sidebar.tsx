@@ -15,6 +15,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
+import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 import { canAccessBlacklist, canDispatch } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
@@ -49,11 +50,19 @@ export function Sidebar() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const clearSession = useAuthStore((state) => state.clearSession);
+  const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const displayName = normalizeProfileText(user?.displayName);
   const station = normalizeProfileText(user?.station);
+  const collapsed = pathname === "/" && overviewExpanded;
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--bg-panel-strong)] lg:flex">
+    <aside
+      className={cn(
+        "hidden shrink-0 overflow-hidden bg-[var(--bg-panel-strong)] transition-[width,opacity,border-color] duration-300 lg:flex lg:flex-col",
+        collapsed ? "w-0 border-r-0 opacity-0" : "w-64 border-r border-[var(--border-soft)] opacity-100",
+      )}
+      aria-hidden={collapsed}
+    >
       <div className="flex h-16 items-center border-b border-[var(--border-soft)] px-6">
         <Activity className="mr-3 size-6 text-blue-500" />
         <div>

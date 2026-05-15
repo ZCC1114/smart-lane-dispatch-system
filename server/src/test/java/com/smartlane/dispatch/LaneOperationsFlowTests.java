@@ -542,6 +542,83 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void expiredReservationShouldCloseProvisionalLogAndAllowLaterDirectEntry() throws Exception {
+		laneRepository.save(buildLane("L02", "L02", "2号车道"));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A92111", "2026-04-20T08:00:00+08:00");
+		postYardEntry(token, "沪A80000", "2026-04-20T08:06:00+08:00");
+		postVehicleEntry(token, "L02", "沪A92111", "2026-04-20T08:07:00+08:00");
+
+		List<DispatchTicket> tickets = dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc("沪A92111");
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "沪A92111".equals(ticket.getPlate()) && "EXPIRED".equals(ticket.getStatus())))
+			.hasSize(1);
+		assertThat(tickets)
+			.singleElement()
+			.extracting(DispatchTicket::getStatus, DispatchTicket::getActualLaneId)
+			.containsExactly("DIRECT_ENTERED", "L02");
+
+		List<EntryLog> logs = entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
+				.filter(log -> "沪A92111".equals(log.getPlate()))
+				.toList();
+		assertThat(logs).hasSize(2);
+		assertThat(logs).filteredOn(log -> log.getExitTime() != null).hasSize(1);
+		assertThat(logs).filteredOn(log -> log.getExitTime() == null)
+				.singleElement()
+				.extracting(EntryLog::getLaneId)
+				.isEqualTo("L02");
+	}
+
+	@Test
+	void screenBoardShouldKeepExpiredGuideAssignmentsInRecentGuideList() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A11111", "2026-04-20T08:00:00+08:00");
+		postYardEntry(token, "沪A22222", "2026-04-20T08:02:00+08:00");
+
+		mockMvc.perform(get("/api/screen/board")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.guideAssignments.length()").value(2))
+			.andExpect(jsonPath("$.guideAssignments[0].plate").value("沪A22222"))
+			.andExpect(jsonPath("$.guideAssignments[?(@.plate=='沪A11111' && @.status=='EXPIRED')]").exists());
+	}
+
+	@Test
+	void vehicleAlreadyEnteredAnotherLaneShouldReturnConflictOnDuplicateEntry() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A55555", "2026-04-20T08:00:00+08:00");
+
+		mockMvc.perform(post("/api/integration/vehicle-entries")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L02",
+					  "plate": "沪A55555",
+					  "vehicleType": "出租车",
+					  "source": "lane-camera",
+					  "entryTime": "2026-04-20T08:01:00+08:00"
+					}
+					"""))
+			.andExpect(status().isConflict());
+
+		assertThat(dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc("沪A55555"))
+				.singleElement()
+				.extracting(DispatchTicket::getActualLaneId, DispatchTicket::getStatus)
+				.containsExactly("L01", "DIRECT_ENTERED");
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L02"))
+				.extracting(EntryLog::getPlate)
+				.doesNotContain("沪A55555");
+	}
+
+	@Test
 	void laneCapacityUpdateShouldPersistToLaneSettings() throws Exception {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 		String token = loginAndGetToken();

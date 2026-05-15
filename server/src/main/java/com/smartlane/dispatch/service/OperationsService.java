@@ -263,9 +263,7 @@ public class OperationsService {
 	}
 
 	public List<DispatchTicket> getRecentGuideAssignments(int limit) {
-		OffsetDateTime currentCycleStart = currentDailyResetAt();
 		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
-				.filter(ticket -> currentCycleStart == null || !ticketTime(ticket).isBefore(currentCycleStart))
 				.filter(ticket -> !isBlank(ticket.getAssignedLaneId()) || !isBlank(ticket.getAssignedLaneName()))
 				.sorted(Comparator.comparing(
 						ticket -> firstNonNull(ticket.getAssignedAt(), ticket.getYardEntryTime()),
@@ -688,9 +686,25 @@ public class OperationsService {
 		String source = isBlank(payload.source()) ? "LANE_CAMERA" : payload.source().toUpperCase(Locale.ROOT);
 
 		expireStaleDispatchTickets(entryTime);
-		DispatchTicket ticket = findLatestOpenTicketByPlate(plate);
+		closeStaleActiveEntryLogsForPlate(plate, entryTime);
+		DispatchTicket activeTicket = findLatestEnteredTicketByPlate(plate);
 		EntryLog activeLogInLane = findActiveEntryLogInLane(lane.getId(), plate);
-		if (activeLogInLane != null && (ticket == null || ticket.getLaneEntryTime() != null)) {
+		if (activeTicket != null) {
+			if (lane.getId().equals(activeTicket.getActualLaneId()) && activeLogInLane != null) {
+				lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
+				lane.setLastSensorAt(entryTime);
+				lane.setLastEntryAt(entryTime);
+				lane.setLastEntryPlate(plate);
+				lane.setLastActionAt(entryTime);
+				persistLaneRuntime(lane.getId(), entryTime, "vehicle_entry_duplicate_ignored");
+				return activeLogInLane;
+			}
+			throw new ResponseStatusException(
+					HttpStatus.CONFLICT,
+					"车牌已在" + firstNonBlank(activeTicket.getActualLaneName(), activeTicket.getAssignedLaneName(), activeTicket.getActualLaneId(), "其他车道") + "未出场，不能重复入场");
+		}
+		DispatchTicket ticket = findLatestPendingTicketByPlate(plate);
+		if (activeLogInLane != null && ticket == null) {
 			lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
 			lane.setLastSensorAt(entryTime);
 			lane.setLastEntryAt(entryTime);
@@ -1257,6 +1271,7 @@ public class OperationsService {
 			ticket.setStatus("EXPIRED");
 			ticket.setClosedAt(referenceTime);
 			ticket.setNotes("总入口入场后 " + reserveMinutes + " 分钟内未被任何车道入口摄像头识别，生成未进车道告警并释放预分配");
+			closeProvisionalEntryLogForExpiredTicket(ticket, referenceTime);
 		}
 		if (!expiredTickets.isEmpty()) {
 			dispatchTicketRepository.saveAll(expiredTickets);
@@ -1593,6 +1608,70 @@ public class OperationsService {
 				.filter(ticket -> ticket.getExitTime() == null)
 				.findFirst()
 				.orElse(null);
+	}
+
+	private DispatchTicket findLatestPendingTicketByPlate(String plate) {
+		if (isBlank(plate)) {
+			return null;
+		}
+		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> ticket.getLaneEntryTime() == null)
+				.findFirst()
+				.orElse(null);
+	}
+
+	private DispatchTicket findLatestEnteredTicketByPlate(String plate) {
+		if (isBlank(plate)) {
+			return null;
+		}
+		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> ticket.getLaneEntryTime() != null)
+				.findFirst()
+				.orElse(null);
+	}
+
+	private void closeProvisionalEntryLogForExpiredTicket(DispatchTicket ticket, OffsetDateTime referenceTime) {
+		if (ticket == null || isBlank(ticket.getPlate()) || ticket.getYardEntryTime() == null || isBlank(ticket.getAssignedLaneId())) {
+			return;
+		}
+		entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(ticket.getPlate()).stream()
+				.filter(log -> ticket.getAssignedLaneId().equals(log.getLaneId()))
+				.filter(log -> ticket.getYardEntryTime().isEqual(log.getEntryTime()))
+				.findFirst()
+				.ifPresent(log -> log.setExitTime(referenceTime));
+	}
+
+	private void closeStaleActiveEntryLogsForPlate(String plate, OffsetDateTime referenceTime) {
+		if (isBlank(plate)) {
+			return;
+		}
+		List<EntryLog> activeLogs = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(plate);
+		if (activeLogs.isEmpty()) {
+			return;
+		}
+		List<DispatchTicket> openTickets = dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.toList();
+		List<EntryLog> staleLogs = activeLogs.stream()
+				.filter(log -> openTickets.stream().noneMatch(ticket -> matchesActiveEntryLog(ticket, log)))
+				.toList();
+		if (staleLogs.isEmpty()) {
+			return;
+		}
+		staleLogs.forEach(log -> log.setExitTime(referenceTime));
+		entryLogRepository.saveAll(staleLogs);
+	}
+
+	private boolean matchesActiveEntryLog(DispatchTicket ticket, EntryLog log) {
+		if (ticket == null || log == null || ticket.getYardEntryTime() == null) {
+			return false;
+		}
+		String expectedLaneId = firstNonBlank(ticket.getActualLaneId(), ticket.getAssignedLaneId());
+		return !isBlank(expectedLaneId)
+				&& expectedLaneId.equals(log.getLaneId())
+				&& ticket.getYardEntryTime().isEqual(log.getEntryTime());
 	}
 
 	private EntryLog findActiveEntryLogForTicket(DispatchTicket ticket, String plate) {

@@ -7,12 +7,14 @@ import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 import { canViewPath } from "@/lib/permissions";
 import { useAuthStore } from "@/stores/auth-store";
+import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const setOverviewExpanded = useDashboardLayoutStore((state) => state.setOverviewExpanded);
   const isOverviewPage = pathname === "/";
 
   useEffect(() => {
@@ -25,6 +27,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       router.replace("/");
     }
   }, [pathname, router, token, user?.role]);
+
+  useEffect(() => {
+    if (!isOverviewPage) {
+      setOverviewExpanded(false);
+    }
+  }, [isOverviewPage, setOverviewExpanded]);
 
   if (!token) {
     return (
@@ -41,7 +49,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <LiveUpdatesBridge />
       <div className="min-h-screen lg:flex">
         <Sidebar />
-        <div className="flex min-h-screen flex-1 flex-col">
+        <div className="flex min-h-screen min-w-0 flex-1 flex-col">
           {isOverviewPage ? null : <Topbar />}
           <main className={isOverviewPage ? "flex-1 overflow-hidden bg-[#06182d]" : "flex-1 bg-[var(--bg-canvas)] px-4 py-5 sm:px-6"}>{children}</main>
         </div>

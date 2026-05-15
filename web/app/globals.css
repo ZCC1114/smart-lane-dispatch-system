@@ -144,6 +144,12 @@ textarea {
   animation-play-state: paused;
 }
 
+.screen-guide-plate-motion {
+  animation: screen-guide-plate-move var(--guide-duration, 6s) linear infinite;
+  animation-delay: var(--guide-delay, 0s);
+  will-change: transform, opacity;
+}
+
 @keyframes lane-flow-scroll {
   from {
     transform: translateX(-34%);
@@ -161,6 +167,33 @@ textarea {
 
   to {
     transform: translateY(calc(-1 * var(--screen-scroll-distance, 0px)));
+  }
+}
+
+@keyframes screen-guide-plate-move {
+  0% {
+    opacity: 0;
+    transform: translate(var(--guide-start-x, 1550px), var(--guide-start-y, 418px));
+  }
+
+  8% {
+    opacity: 1;
+    transform: translate(var(--guide-start-x, 1550px), var(--guide-start-y, 418px));
+  }
+
+  43% {
+    opacity: 1;
+    transform: translate(var(--guide-start-x, 1550px), var(--guide-turn-y, 980px));
+  }
+
+  90% {
+    opacity: 1;
+    transform: translate(var(--guide-end-x, 400px), var(--guide-end-y, 980px));
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(var(--guide-end-x, 400px), var(--guide-end-y, 980px));
   }
 }
 

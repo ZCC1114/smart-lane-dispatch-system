@@ -13,4 +13,6 @@ public interface EntryLogRepository extends JpaRepository<EntryLog, String> {
     List<EntryLog> findByExitTimeIsNullOrderByEntryTimeAsc();
 
     List<EntryLog> findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(String laneId);
+
+    List<EntryLog> findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(String plate);
 }
