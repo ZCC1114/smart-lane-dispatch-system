@@ -263,10 +263,12 @@ public class OperationsService {
 	}
 
 	public List<DispatchTicket> getRecentGuideAssignments(int limit) {
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
 		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
 				.filter(ticket -> !isBlank(ticket.getAssignedLaneId()) || !isBlank(ticket.getAssignedLaneName()))
+				.filter(ticket -> currentCycleStart == null || !guideAssignmentTime(ticket).isBefore(currentCycleStart))
 				.sorted(Comparator.comparing(
-						ticket -> firstNonNull(ticket.getAssignedAt(), ticket.getYardEntryTime()),
+						this::guideAssignmentTime,
 						Comparator.nullsLast(Comparator.reverseOrder())))
 				.limit(Math.max(1, limit))
 				.toList();
@@ -1852,6 +1854,10 @@ public class OperationsService {
 
 	private OffsetDateTime ticketTime(DispatchTicket ticket) {
 		return firstNonNull(ticket.getLaneEntryTime(), ticket.getAssignedAt(), ticket.getYardEntryTime(), ticket.getClosedAt(), now());
+	}
+
+	private OffsetDateTime guideAssignmentTime(DispatchTicket ticket) {
+		return firstNonNull(ticket.getAssignedAt(), ticket.getYardEntryTime(), ticket.getClosedAt(), now());
 	}
 
 	@SafeVarargs

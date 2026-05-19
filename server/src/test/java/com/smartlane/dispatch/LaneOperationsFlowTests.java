@@ -503,6 +503,7 @@ class LaneOperationsFlowTests {
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.recentEntryLogs").isEmpty())
+			.andExpect(jsonPath("$.guideAssignments").isEmpty())
 			.andExpect(jsonPath("$.events").isEmpty());
 
 		mockMvc.perform(get("/api/logs")
