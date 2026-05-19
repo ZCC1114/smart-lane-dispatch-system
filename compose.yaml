@@ -122,3 +122,11 @@ volumes:
   redis-data:
   mqtt-data:
   mqtt-log:
+
+networks:
+  default:
+    name: smart-lane-dispatch-net
+    ipam:
+      config:
+        - subnet: ${COMPOSE_NETWORK_SUBNET:-10.88.0.0/16}
+          gateway: ${COMPOSE_NETWORK_GATEWAY:-10.88.0.1}

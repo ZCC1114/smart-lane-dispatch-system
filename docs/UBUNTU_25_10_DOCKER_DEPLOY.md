@@ -18,28 +18,57 @@
 ```text
 现场设备网段
   |
-  |-- Ubuntu 25.10 服务器，固定 IP: 192.168.124.3
+  |-- Ubuntu 25.10 服务器，固定 IP: 172.17.2.10
   |     |-- 3002/tcp: Web 前端 + API + WebSocket，给浏览器访问
   |     |-- 1883/tcp: MQTT Broker，给摄像头和 CX 设备连接
   |     |-- 9001/tcp: MQTT WebSocket，硬件调试页需要时开放
   |
   |-- 车牌/计数报警摄像头
-  |     |-- MQTT Broker Host: 192.168.124.3
+  |     |-- MQTT Broker Host: 172.17.2.10
   |     |-- MQTT Broker Port: 1883
   |
   |-- 入口 CX/DIDO 设备 DIDO-ENTRY-01
-  |     |-- MQTT Broker Host: 192.168.124.3
+  |     |-- MQTT Broker Host: 172.17.2.10
   |     |-- MQTT Broker Port: 1883
   |     |-- DO1-DO11: 1-11 号车道入口灯
   |
   |-- 出口 CX/DIDO 设备 DIDO-EXIT-01
-  |     |-- MQTT Broker Host: 192.168.124.3
+  |     |-- MQTT Broker Host: 172.17.2.10
   |     |-- MQTT Broker Port: 1883
   |     |-- DO1-DO11: 1-11 号车道出口灯
   |     |-- IN1-IN11: 1-11 号车道出口地感
 ```
 
-实际 IP 以现场为准。下面以 `192.168.124.3` 举例，部署时替换为生产服务器固定 IP。
+本文按已确认的现场生产网段 `172.17.2.0/24` 编写，服务器固定 IP 为 `172.17.2.10`。
+
+### 1.1 已确认现场网络
+
+```text
+网段: 172.17.2.0/24
+掩码: 255.255.255.0
+网关: 172.17.2.1
+服务器 IP: 172.17.2.10
+```
+
+| IP | 设备 | 本系统是否对接 | 当前结论 / 待补充 |
+| --- | --- | --- | --- |
+| `172.17.2.10` | Ubuntu 服务器 | 是 | Web/API: `3002`; MQTT Broker: `1883`; MQTT WebSocket: `9001` |
+| `172.17.2.20` | 硬盘录像机 | 否 | 只做视频系统内部使用，不接入本系统 |
+| `172.17.2.21-23` | 大华摄像机 | 否 | 只做视频系统内部使用，不接入本系统 |
+| `172.17.2.30` | 大华对讲终端 | 否 | 原始清单写作 `173.172.17.2.30`，按笔误处理；对讲不接入本系统 |
+| `172.17.2.31-33` | 大华对讲 | 否 | 对讲系统内部使用，不接入本系统 |
+| `172.17.2.40` | 车牌识别一体机 | 是 | 与 `172.17.2.90` 为一套总入口 MF 设备；现场端应为一体机；待现场获取 `SN/groupId/deviceNo` |
+| `172.17.2.51-61` | 1-11 号车道入口摄像机 | 是 | `.51=L01`、`.52=L02`，依次到 `.61=L11`; 系统配置仍需现场逐台获取 MQTT `devId` |
+| `172.17.2.70` | LED 显示屏 | 是 | 需要自动显示引导牌内容；先用 LED 测试接口调通，生产自动下发细节后续补 |
+| `172.17.2.80-81` | DIDO 模块 | 是 | 走 MQTT 连接服务器 `172.17.2.10:1883`; 测试页面已调通过；`.80/.81` 分别对应入口/出口待现场最终确认 |
+| `172.17.2.90` | 车牌识别终端 | 是 | 与 `172.17.2.40` 为一套总入口 MF 设备；待现场确认实际上报端和 MF 参数 |
+
+现场继续联调时，优先补齐:
+
+- 总入口 MF: `APP_DEVICE_PARKING_MF_YARD_ENTRY_SN`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO`
+- 车道入口摄像机: `APP_DEVICE_L01_CAMERA_DEV_ID` 到 `APP_DEVICE_L11_CAMERA_DEV_ID`
+- DIDO: 入口/出口真实设备 ID 和 Topic，如果不是 `DIDO-ENTRY-01` / `DIDO-EXIT-01`
+- LED: 控制卡代际、型号、端口、屏幕尺寸和自动显示格式
 
 ## 2. 服务器准备
 
@@ -84,10 +113,10 @@ network:
     enp3s0:
       dhcp4: false
       addresses:
-        - 192.168.124.3/24
+        - 172.17.2.10/24
       routes:
         - to: default
-          via: 192.168.124.1
+          via: 172.17.2.1
       nameservers:
         addresses:
           - 223.5.5.5
@@ -99,10 +128,42 @@ network:
 ```bash
 sudo netplan apply
 ip addr show enp3s0
-ping -c 3 192.168.124.1
+ping -c 3 172.17.2.1
 ```
 
 如果服务器只在内网运行、没有外网 DNS，`nameservers` 可改成现场 DNS。
+
+### 2.4 避免 Docker 网段冲突
+
+现场生产网段为 `172.17.2.0/24` 时，需要避开 Docker 默认的 `172.17.0.0/16`。否则 Linux 服务器上可能出现 `docker0` 路由覆盖现场设备 IP，导致容器或宿主机访问 `172.17.2.x` 设备异常。
+
+本项目的 `compose.yaml` 已固定 Compose 内部网络为 `10.88.0.0/16`。生产服务器还建议同步调整 Docker daemon 默认桥接网段:
+
+```bash
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
+{
+  "bip": "10.87.0.1/24",
+  "default-address-pools": [
+    {
+      "base": "10.89.0.0/16",
+      "size": 24
+    }
+  ]
+}
+JSON
+
+sudo systemctl restart docker
+ip route | grep -E 'docker|10\\.87|10\\.88|10\\.89|172\\.17' || true
+```
+
+如果服务器上已经启动过本项目，调整后重建 Compose 网络即可，保留业务数据不要加 `-v`:
+
+```bash
+docker compose down
+docker network rm smart-lane-dispatch-net 2>/dev/null || true
+docker compose up -d
+```
 
 ## 3. 安装 Docker Engine 和 Compose
 
@@ -202,8 +263,8 @@ nano .env
 
 ```dotenv
 APP_HTTP_PORT=3002
-APP_PUBLIC_HOST=192.168.124.3
-APP_CORS_ALLOWED_ORIGINS=http://192.168.124.3:3002
+APP_PUBLIC_HOST=172.17.2.10
+APP_CORS_ALLOWED_ORIGINS=http://172.17.2.10:3002
 APP_JWT_SECRET=replace-with-a-long-random-64-byte-secret
 APP_JWT_EXPIRE_HOURS=8
 
@@ -228,7 +289,7 @@ APP_DEVICE_GATEWAY=mqtt
 APP_DEVICE_MQTT_ENABLED=true
 
 # 后端容器连接 Compose 内部 mqtt 服务，保持 mqtt 即可。
-# 现场硬件设备配置里填写服务器局域网 IP，例如 192.168.124.3。
+# 现场硬件设备配置里填写服务器局域网 IP: 172.17.2.10。
 APP_DEVICE_MQTT_HOST=mqtt
 APP_DEVICE_MQTT_PORT=1883
 APP_DEVICE_MQTT_CLIENT_ID=smart-lane-dispatch-system
@@ -250,10 +311,10 @@ APP_DEVICE_DIDO_RELAY_MODE=ordinary
 APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT=false
 APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT=false
 APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-ENTRY-01
-APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.124.18
+APP_DEVICE_SHARED_ENTRY_DIDO_HOST=172.17.2.80
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080
 APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=DIDO-EXIT-01
-APP_DEVICE_SHARED_EXIT_DIDO_HOST=192.168.124.19
+APP_DEVICE_SHARED_EXIT_DIDO_HOST=172.17.2.81
 APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080
 
 APP_DISPATCH_ENTRY_LANE_ORDER=1-11
@@ -266,6 +327,7 @@ APP_DISPATCH_ASSIGNMENT_RESERVE_MINUTES=2
 
 - `APP_PUBLIC_HOST` 仅作为部署记录，设备配置时使用这个服务器 IP。
 - `APP_DEVICE_MQTT_HOST=mqtt` 是后端容器访问 Mosquitto 容器的地址，不要改成服务器 IP，除非使用外部 MQTT Broker。
+- 当前 DIDO 走 MQTT，`APP_DEVICE_SHARED_ENTRY_DIDO_HOST` / `APP_DEVICE_SHARED_EXIT_DIDO_HOST` 只是保留给 TCP DIDO 直连或调试场景；现场设备仍应配置连接 `172.17.2.10:1883`。
 - `APP_DEVICE_PARKING_MF_YARD_ENTRY_SN` 如果配置，表示这个 MF 摄像头作为总入口相机，收到 `plateResult` 后生成预分配记录和大屏引导数据。
 - `APP_DEVICE_SMART_CAMERA_ACTIVE_ENTRY_CAMERA_DEV_ID` 如果配置，表示这个相机作为“自动流程当前入口车道”的共享入口相机。
 - `APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID` 如果配置，表示这个相机作为总入口相机，负责生成预分配记录和引导牌数据。
@@ -312,7 +374,7 @@ curl -f http://127.0.0.1:3002/actuator/health
 浏览器访问:
 
 ```text
-http://192.168.124.3:3002
+http://172.17.2.10:3002
 ```
 
 默认初始化账号:
@@ -332,9 +394,9 @@ MySQL 容器首次创建 `mysql-data` volume 时会自动执行 `deploy/mysql/in
 
 ```bash
 sudo ufw allow 22/tcp
-sudo ufw allow from 192.168.124.0/24 to any port 3002 proto tcp
-sudo ufw allow from 192.168.124.0/24 to any port 1883 proto tcp
-sudo ufw allow from 192.168.124.0/24 to any port 9001 proto tcp
+sudo ufw allow from 172.17.2.0/24 to any port 3002 proto tcp
+sudo ufw allow from 172.17.2.0/24 to any port 1883 proto tcp
+sudo ufw allow from 172.17.2.0/24 to any port 9001 proto tcp
 sudo ufw enable
 sudo ufw status
 ```
@@ -356,7 +418,7 @@ sudo ufw status
 所有 MQTT 设备统一连接服务器上的 Mosquitto:
 
 ```text
-Broker Host: 192.168.124.3
+Broker Host: 172.17.2.10
 Broker Port: 1883
 Username: 留空，除非你启用了 Mosquitto 认证
 Password: 留空，除非你启用了 Mosquitto 认证
@@ -387,10 +449,12 @@ APP_DEVICE_MQTT_PASSWORD=<mqtt-password>
 出口下发 Topic: /device/DIDO-EXIT-01/get
 ```
 
+现场已确认 DIDO 模块 IP 范围为 `172.17.2.80-81`，且走 MQTT 连接服务器 `172.17.2.10:1883`。当前先按 `.80=入口 DIDO`、`.81=出口 DIDO` 记录；最终以现场配置工具里的设备 ID 和 Topic 为准。
+
 入口 CX/DIDO 在官方配置软件中填写:
 
 ```text
-服务器地址: 192.168.124.3
+服务器地址: 172.17.2.10
 服务器端口: 1883
 设备 ID: DIDO-ENTRY-01
 发布 Topic: /device/DIDO-ENTRY-01/update
@@ -401,7 +465,7 @@ APP_DEVICE_MQTT_PASSWORD=<mqtt-password>
 出口 CX/DIDO 在官方配置软件中填写:
 
 ```text
-服务器地址: 192.168.124.3
+服务器地址: 172.17.2.10
 服务器端口: 1883
 设备 ID: DIDO-EXIT-01
 发布 Topic: /device/DIDO-EXIT-01/update
@@ -526,13 +590,15 @@ plateNum 或 plateNumVDC 有车牌值
 摄像头 MQTT 参数:
 
 ```text
-服务器地址: 192.168.124.3
+服务器地址: 172.17.2.10
 服务器端口: 1883
 设备 devId: 使用摄像头真实 devId
 上报 Topic: /device/{devId}/update
 遗嘱 Topic: /device/{devId}/will
 下发 Topic: /device/{devId}/get
 ```
+
+现场已确认 `172.17.2.51-61` 为 1-11 号车道入口摄像机，IP 顺序为 `.51=L01`、`.52=L02`，依次到 `.61=L11`。本系统绑定仍使用 MQTT 报文里的 `devId`，不是 IP；到现场后逐台抓取 `devId` 再填写 `APP_DEVICE_L01_CAMERA_DEV_ID` 到 `APP_DEVICE_L11_CAMERA_DEV_ID`。
 
 生产有三种常见配置方式。
 
@@ -574,6 +640,8 @@ APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID=<总入口相机devId>
 
 现场只有总入口使用 `/{sn}/mf/up`、`/{sn}/mf/down` 协议的 MF 车牌识别设备。1-11 车道入口使用 Smart Camera，在 8.3 的 `APP_DEVICE_Lxx_CAMERA_DEV_ID` 中配置。
 
+已确认 `172.17.2.40` 车牌识别一体机和 `172.17.2.90` 车牌识别终端是一套设备，一个在机房、一个在现场；现场端应为车牌识别一体机。系统侧最终按 MF 报文里的 `SN/groupId/deviceNo` 匹配，不按 IP 直接匹配。
+
 总入口 MF 摄像头配置:
 
 ```dotenv
@@ -603,6 +671,18 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
 APP_DEVICE_PARKING_MF_UP_TOPIC_FILTER=/+/mf/up
 APP_DEVICE_PARKING_MF_DOWN_TOPIC_TEMPLATE=/{mfSn}/mf/down
 ```
+
+### 8.5 LED 显示屏配置
+
+现场 LED 显示屏 IP 已确认为 `172.17.2.70`。该屏需要自动显示当前大屏右侧“引导牌”的内容，即车牌号和推荐车道。
+
+当前代码已有 LED 测试接口和测试页面，生产自动下发还需要现场确认以下信息后再补配置和自动联动:
+
+- 控制卡代际: BX 五代或六代
+- 控制卡型号: 例如 Bx6E / Bx6M / Bx6Q
+- TCP 端口: 常见为 `5005`，以现场控制卡为准
+- 屏幕尺寸和分区格式
+- 最终显示文案格式，例如 `苏B12345 -> 2车道`
 
 ## 9. 设备联调验收
 
@@ -890,16 +970,16 @@ docker compose logs --tail=200 mqtt
 从同网段电脑测试:
 
 ```bash
-telnet 192.168.124.3 1883
+telnet 172.17.2.10 1883
 ```
 
 或:
 
 ```bash
-nc -vz 192.168.124.3 1883
+nc -vz 172.17.2.10 1883
 ```
 
-确认设备里填写的是服务器 IP `192.168.124.3`，不是容器内部主机名 `mqtt`。
+确认设备里填写的是服务器 IP `172.17.2.10`，不是容器内部主机名 `mqtt`。
 
 ### 13.4 车牌上报了但页面没有进车道
 
