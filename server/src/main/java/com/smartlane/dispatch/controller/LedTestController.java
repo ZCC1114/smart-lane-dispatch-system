@@ -32,7 +32,11 @@ public class LedTestController {
 			request.port(),
 			request.generation(),
 			request.model(),
-			request.segments()
+			request.segments(),
+			request.screenWidth(),
+			request.screenHeight(),
+			request.columns(),
+			request.rows()
 		);
 		return Map.of("result", result);
 	}
@@ -42,7 +46,11 @@ public class LedTestController {
 		int port,
 		String generation,
 		String model,
-		List<Segment> segments
+		List<Segment> segments,
+		int screenWidth,
+		int screenHeight,
+		int columns,
+		int rows
 	) {
 		public record Segment(String text, int fontSize, String color) {}
 	}

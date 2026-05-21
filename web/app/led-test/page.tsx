@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, Monitor, Plus, Send, Terminal, Trash2, ArrowUp, ArrowDown } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Monitor, Plus, RefreshCw, Send, Terminal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const SITE_LED_IP = "172.17.2.70";
+const SITE_SCREEN_WIDTH = 6 * 320;
+const SITE_SCREEN_HEIGHT = 6 * 160;
+const SITE_COLUMNS = 2;
+const SITE_ROWS = 6;
+const SITE_FONT_SIZE = 72;
 
 const COLORS = [
   { value: "RED", label: "红色", bg: "bg-red-500" },
@@ -26,17 +32,64 @@ interface Segment {
   color: string;
 }
 
+interface DispatchTicket {
+  id: string;
+  plate: string;
+  assignedLaneId: string | null;
+  assignedLaneName: string | null;
+}
+
+interface ScreenBoardResponse {
+  guideAssignments?: DispatchTicket[];
+  waitingAssignments?: DispatchTicket[];
+  recentDispatches?: DispatchTicket[];
+}
+
 let nextId = 1;
 
+function sampleSegments() {
+  return Array.from({ length: SITE_COLUMNS * SITE_ROWS }, (_, index) => ({
+    id: nextId++,
+    text: `苏B${String(index + 1).padStart(5, "0")}-${(index % 11) + 1}车道`,
+    fontSize: SITE_FONT_SIZE,
+    color: "RED",
+  }));
+}
+
+function laneText(ticket: DispatchTicket) {
+  const source = ticket.assignedLaneName || ticket.assignedLaneId || "";
+  const matched = source.match(/\d+/);
+  return matched ? `${Number.parseInt(matched[0], 10)}车道` : "待分配";
+}
+
+function guideText(ticket: DispatchTicket) {
+  return `${ticket.plate}-${laneText(ticket)}`;
+}
+
+function uniqueTickets(tickets: DispatchTicket[]) {
+  const seen = new Set<string>();
+  return tickets.filter((ticket) => {
+    const key = ticket.id || `${ticket.plate}-${ticket.assignedLaneId ?? ticket.assignedLaneName ?? ""}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return Boolean(ticket.plate && (ticket.assignedLaneId || ticket.assignedLaneName));
+  });
+}
+
 export default function LedTestPage() {
-  const [ip, setIp] = useState("192.168.0.31");
+  const [ip, setIp] = useState(SITE_LED_IP);
   const [port, setPort] = useState("5005");
   const [generation, setGeneration] = useState<"5" | "6">("6");
   const [model, setModel] = useState("Bx6E");
-  const [segments, setSegments] = useState<Segment[]>([
-    { id: nextId++, text: "测试文本", fontSize: 12, color: "RED" },
-  ]);
+  const [screenWidth, setScreenWidth] = useState(String(SITE_SCREEN_WIDTH));
+  const [screenHeight, setScreenHeight] = useState(String(SITE_SCREEN_HEIGHT));
+  const [columns, setColumns] = useState(String(SITE_COLUMNS));
+  const [rows, setRows] = useState(String(SITE_ROWS));
+  const [segments, setSegments] = useState<Segment[]>(sampleSegments);
   const [loading, setLoading] = useState(false);
+  const [loadingBoard, setLoadingBoard] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
 
@@ -45,6 +98,15 @@ export default function LedTestPage() {
       ...prev,
       { id: nextId++, text: "", fontSize: 12, color: "RED" },
     ]);
+  }
+
+  function applySitePreset() {
+    setIp(SITE_LED_IP);
+    setScreenWidth(String(SITE_SCREEN_WIDTH));
+    setScreenHeight(String(SITE_SCREEN_HEIGHT));
+    setColumns(String(SITE_COLUMNS));
+    setRows(String(SITE_ROWS));
+    setSegments(sampleSegments());
   }
 
   function removeSegment(id: number) {
@@ -67,6 +129,45 @@ export default function LedTestPage() {
     setSegments((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
+  async function loadGuideAssignments() {
+    setLoadingBoard(true);
+    setResult(null);
+    setStatus("idle");
+    try {
+      const response = await fetch(`${API_BASE_URL}/screen/board`);
+      if (!response.ok) {
+        throw new Error(`大屏数据读取失败：${response.status}`);
+      }
+      const payload = (await response.json()) as ScreenBoardResponse;
+      const capacity = Math.max(1, (Number.parseInt(columns, 10) || SITE_COLUMNS) * (Number.parseInt(rows, 10) || SITE_ROWS));
+      const tickets = uniqueTickets([
+        ...(payload.guideAssignments ?? []),
+        ...(payload.waitingAssignments ?? []),
+        ...(payload.recentDispatches ?? []),
+      ]).slice(0, capacity);
+      if (tickets.length === 0) {
+        setResult("当前没有可发送的大屏引导数据");
+        setStatus("error");
+        return;
+      }
+      setSegments(
+        tickets.map((ticket) => ({
+          id: nextId++,
+          text: guideText(ticket),
+          fontSize: SITE_FONT_SIZE,
+          color: "RED",
+        })),
+      );
+      setResult(`已读取 ${tickets.length} 条总入口引导数据`);
+      setStatus("success");
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : "大屏数据读取失败");
+      setStatus("error");
+    } finally {
+      setLoadingBoard(false);
+    }
+  }
+
   async function handleSend() {
     const validSegments = segments.filter((s) => s.text.trim());
     if (validSegments.length === 0) {
@@ -86,6 +187,10 @@ export default function LedTestPage() {
           port: Number.parseInt(port, 10) || 5005,
           generation,
           model,
+          screenWidth: Number.parseInt(screenWidth, 10) || SITE_SCREEN_WIDTH,
+          screenHeight: Number.parseInt(screenHeight, 10) || SITE_SCREEN_HEIGHT,
+          columns: Number.parseInt(columns, 10) || SITE_COLUMNS,
+          rows: Number.parseInt(rows, 10) || SITE_ROWS,
           segments: validSegments.map((s) => ({
             text: s.text.trim(),
             fontSize: s.fontSize,
@@ -103,6 +208,10 @@ export default function LedTestPage() {
       setLoading(false);
     }
   }
+
+  const previewColumns = Math.max(1, Number.parseInt(columns, 10) || SITE_COLUMNS);
+  const previewRows = Math.max(1, Number.parseInt(rows, 10) || SITE_ROWS);
+  const previewCapacity = previewColumns * previewRows;
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5 text-slate-900 sm:px-6">
@@ -183,6 +292,57 @@ export default function LedTestPage() {
               ) : (
                 <div />
               )}
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                屏幕宽度
+                <input
+                  value={screenWidth}
+                  onChange={(e) => setScreenWidth(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                屏幕高度
+                <input
+                  value={screenHeight}
+                  onChange={(e) => setScreenHeight(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                列数
+                <input
+                  value={columns}
+                  onChange={(e) => setColumns(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                行数
+                <input
+                  value={rows}
+                  onChange={(e) => setRows(e.target.value)}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={applySitePreset}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
+              >
+                <Monitor className="size-3.5" />
+                现场大屏 1920x960
+              </button>
+              <button
+                type="button"
+                onClick={loadGuideAssignments}
+                disabled={loadingBoard}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <RefreshCw className={cn("size-3.5", loadingBoard && "animate-spin")} />
+                {loadingBoard ? "读取中..." : "读取总入口数据"}
+              </button>
             </div>
           </div>
 
@@ -192,6 +352,24 @@ export default function LedTestPage() {
               发送内容
             </h2>
             <div className="grid gap-3">
+              <div className="rounded-md border border-slate-200 bg-slate-950 p-3">
+                <div
+                  className="grid gap-px overflow-hidden rounded border border-slate-700 bg-slate-800"
+                  style={{
+                    gridTemplateColumns: `repeat(${previewColumns}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {Array.from({ length: previewCapacity }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="flex min-h-10 items-center justify-center bg-black px-2 py-2 text-center font-mono text-base font-black text-red-500"
+                    >
+                      {segments[index]?.text || ""}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {segments.map((segment, index) => (
                 <div
                   key={segment.id}
@@ -243,7 +421,7 @@ export default function LedTestPage() {
                         <input
                           type="range"
                           min={8}
-                          max={64}
+                          max={120}
                           value={segment.fontSize}
                           onChange={(e) =>
                             updateSegment(segment.id, { fontSize: Number.parseInt(e.target.value, 10) })
@@ -317,10 +495,11 @@ export default function LedTestPage() {
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-2 text-sm font-bold text-slate-700">使用说明</h2>
             <ul className="list-inside list-disc space-y-1 text-xs text-slate-600">
-              <li>默认端口为 5005，已自动填入。如果连接失败，请确认控制卡实际端口。</li>
-              <li>每段文本可独立设置字号和颜色，多段文本会在显示屏上依次显示。</li>
+              <li>现场大屏按 6x6 块 320x160 模组计算，发送尺寸为 1920x960。</li>
+              <li>现场格式为 2 列 6 行，每条内容按“车牌-车道”展示，例如“苏B12345-1车道”。</li>
+              <li>点击“读取总入口数据”会从大屏接口读取总入口抓拍后的推荐车道数据。</li>
               <li>点击色块切换颜色，当前选中的颜色会带有绿色边框。</li>
-              <li>确保本机 IP 与显示屏 192.168.0.31 处于同一网段，且没有防火墙拦截。</li>
+              <li>确保本机 IP 与显示屏 172.17.2.70 处于同一网段，且没有防火墙拦截。</li>
             </ul>
           </div>
         </section>

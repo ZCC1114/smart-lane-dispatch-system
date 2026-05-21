@@ -99,9 +99,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			addDidoBinding(binding.getEntryDidoDeviceId(), binding);
 			addDidoBinding(binding.getExitDidoDeviceId(), binding);
 			addDidoBinding(binding.getDidoDeviceId(), binding);
-			if (!isBlank(binding.getCameraDevId())) {
-				bindingsByCameraDevId.put(binding.getCameraDevId(), binding);
-			}
+			addCameraBinding(binding.getCameraDevId(), binding);
 		}
 		log.info("MQTT device gateway indexed {} lane bindings", bindingsByLaneId.size());
 	}
@@ -417,7 +415,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return;
 		}
 
-		DeviceGatewayProperties.LaneBinding binding = bindingsByCameraDevId.get(devId);
+		DeviceGatewayProperties.LaneBinding binding = cameraBinding(devId);
 		if (binding == null) {
 			log.debug("Smart camera message cannot be mapped to lane, devId={}, cmd={}", devId, cmd);
 			return;
@@ -471,7 +469,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private void handleSmartCameraWillMessage(String topic, JsonNode message) {
 		String devId = firstNonBlank(text(message.path("devId")), extractDeviceIdFromTopic(topic));
-		DeviceGatewayProperties.LaneBinding binding = bindingsByCameraDevId.get(devId);
+		DeviceGatewayProperties.LaneBinding binding = cameraBinding(devId);
 		if (binding != null) {
 			updateLaneDeviceStatus(binding.getLaneId(), "OFFLINE", now(), "智能相机离线");
 		}
@@ -1099,6 +1097,24 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 	}
 
+	private void addCameraBinding(String cameraDevId, DeviceGatewayProperties.LaneBinding binding) {
+		if (!isBlank(cameraDevId)) {
+			bindingsByCameraDevId.put(cameraDevIdKey(cameraDevId), binding);
+		}
+	}
+
+	private DeviceGatewayProperties.LaneBinding cameraBinding(String cameraDevId) {
+		return bindingsByCameraDevId.get(cameraDevIdKey(cameraDevId));
+	}
+
+	private boolean cameraDevIdMatches(String actual, String expected) {
+		return !isBlank(actual) && !isBlank(expected) && cameraDevIdKey(actual).equals(cameraDevIdKey(expected));
+	}
+
+	private String cameraDevIdKey(String cameraDevId) {
+		return isBlank(cameraDevId) ? "" : cameraDevId.trim().toUpperCase(Locale.ROOT);
+	}
+
 	private void addDidoLane(Map<String, List<Lane>> target, String didoDeviceId, Lane lane) {
 		if (isBlank(didoDeviceId)) {
 			return;
@@ -1126,9 +1142,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	}
 
 	private boolean isYardEntryCamera(String devId) {
-		return !isBlank(devId)
-				&& !isBlank(properties.getSmartCamera().getYardEntryCameraDevId())
-				&& devId.equals(properties.getSmartCamera().getYardEntryCameraDevId());
+		return cameraDevIdMatches(devId, properties.getSmartCamera().getYardEntryCameraDevId());
 	}
 
 	private boolean isYardEntryParkingMf(String sn, String groupId, String deviceNo) {
@@ -1147,9 +1161,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	}
 
 	private boolean isActiveEntrySmartCamera(String devId) {
-		return !isBlank(devId)
-				&& !isBlank(properties.getSmartCamera().getActiveEntryCameraDevId())
-				&& devId.equals(properties.getSmartCamera().getActiveEntryCameraDevId());
+		return cameraDevIdMatches(devId, properties.getSmartCamera().getActiveEntryCameraDevId());
 	}
 
 	private void updateLaneDeviceStatus(String laneId, String sensorStatus, OffsetDateTime observedAt, String ledMessage) {

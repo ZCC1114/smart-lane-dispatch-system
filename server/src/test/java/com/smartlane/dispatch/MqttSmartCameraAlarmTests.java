@@ -83,6 +83,18 @@ class MqttSmartCameraAlarmTests {
 	}
 
 	@Test
+	void smartCameraDevIdMatchingShouldIgnoreCase() {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+
+		ingestSmartCameraAlarm("18030023526B", "1", "苏BFE6666", "in", "2026-05-06 16:59:53");
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏BFE6666");
+	}
+
+	@Test
 	void smartCameraDevAlarmType49409ShouldRegisterLaneOneEntry() {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 
@@ -125,11 +137,15 @@ class MqttSmartCameraAlarmTests {
 	}
 
 	private void ingestSmartCameraAlarm(String alarmType, String plate, String inOut, String alarmTime) {
+		ingestSmartCameraAlarm("18030023526b", alarmType, plate, inOut, alarmTime);
+	}
+
+	private void ingestSmartCameraAlarm(String devId, String alarmType, String plate, String inOut, String alarmTime) {
 		String payload = """
 				{
 				  "cmd": "devAlarm",
 				  "msgId": "smart-camera-test",
-				  "devId": "18030023526b",
+				  "devId": "%s",
 				  "utcTs": 1778057934,
 				  "content": {
 				    "alarmType": %s,
@@ -138,11 +154,11 @@ class MqttSmartCameraAlarmTests {
 				    "inOut": "%s"
 				  }
 				}
-				""".formatted(alarmType, plate, alarmTime, inOut);
+				""".formatted(devId, alarmType, plate, alarmTime, inOut);
 		ReflectionTestUtils.invokeMethod(
 				mqttDeviceGateway,
 				"handleRawMqttMessage",
-				"/device/18030023526b/update",
+				"/device/%s/update".formatted(devId),
 				payload.getBytes(StandardCharsets.UTF_8));
 	}
 

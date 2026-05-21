@@ -88,7 +88,7 @@ const DEFAULT_DEVICES: TestDevice[] = [
     mfSn: "MF001",
     mfGroupId: "1",
     mfDeviceNo: "CAM01",
-    cameraDevId: "18030023526b",
+    cameraDevId: "18030023535D",
     didoDeviceId: "DIDO-01",
   },
   {
@@ -98,7 +98,7 @@ const DEFAULT_DEVICES: TestDevice[] = [
     mfSn: "MF002",
     mfGroupId: "2",
     mfDeviceNo: "CAM02",
-    cameraDevId: "SMART-CAM-02",
+    cameraDevId: "1803002352FD",
     didoDeviceId: "DIDO-02",
   },
 ];
@@ -1152,5 +1152,4 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
     </div>
   );
 }
-
 

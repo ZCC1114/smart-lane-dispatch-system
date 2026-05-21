@@ -41,7 +41,7 @@ public class ScreenController {
 				operationsService.getDispatchBoard(),
 				operationsService.getRecentEntryLogs(10),
 				operationsService.getRecentYardEntries(10),
-				operationsService.getRecentGuideAssignments(10),
+				operationsService.getRecentGuideAssignments(12),
 				operationsService.getScreenLaneVehicles(),
 				operationsService.getScreenBoardEvents(10),
 				operationsService.getLanes());

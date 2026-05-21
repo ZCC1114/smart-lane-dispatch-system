@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -90,6 +91,7 @@ public class OperationsService {
 	private final BlacklistRecordRepository blacklistRecordRepository;
 	private final DispatchTicketRepository dispatchTicketRepository;
 	private final BroadcastService broadcastService;
+	private final ApplicationEventPublisher eventPublisher;
 	private final DashboardCacheService dashboardCacheService;
 	private final LaneDeviceGateway laneDeviceGateway;
 	private final LaneRuntimeStateService laneRuntimeStateService;
@@ -106,6 +108,7 @@ public class OperationsService {
 			BlacklistRecordRepository blacklistRecordRepository,
 			DispatchTicketRepository dispatchTicketRepository,
 			BroadcastService broadcastService,
+			ApplicationEventPublisher eventPublisher,
 			DashboardCacheService dashboardCacheService,
 			LaneDeviceGateway laneDeviceGateway,
 			LaneRuntimeStateService laneRuntimeStateService,
@@ -120,6 +123,7 @@ public class OperationsService {
 		this.blacklistRecordRepository = blacklistRecordRepository;
 		this.dispatchTicketRepository = dispatchTicketRepository;
 		this.broadcastService = broadcastService;
+		this.eventPublisher = eventPublisher;
 		this.dashboardCacheService = dashboardCacheService;
 		this.laneDeviceGateway = laneDeviceGateway;
 		this.laneRuntimeStateService = laneRuntimeStateService;
@@ -1828,6 +1832,7 @@ public class OperationsService {
 	private void invalidateRuntimeViews(String action) {
 		dashboardCacheService.evictDashboard();
 		broadcastService.operationsChanged(action);
+		eventPublisher.publishEvent(new OperationsChangedEvent(action));
 	}
 
 	private String defaultSensorStatus(String currentSensorStatus) {
