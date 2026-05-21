@@ -1269,6 +1269,210 @@ docker volume ls | grep smart-lane
 
 ## 12. 升级发布
 
+### 12.1 Electerm SFTP 上传离线升级包
+
+当前这次现场升级包在本机项目目录下:
+
+```text
+deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/
+```
+
+本次需要上传的文件:
+
+```text
+deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/images/smart-lane-business-images-amd64-c297364.tar
+deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/project/smart-lane-dispatch-system-c297364.tar.gz
+deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/env/onsite.env
+deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/SHA256SUMS
+```
+
+说明:
+
+- `smart-lane-business-images-amd64-c297364.tar`: 新的 `server` 和 `web` 镜像，已按 `linux/amd64` 构建。
+- `smart-lane-dispatch-system-c297364.tar.gz`: 新的项目配置、部署文件、前后端源码，不包含 `.env`，不会直接覆盖服务器现场 `.env`。
+- `onsite.env`: 现场参数参考文件，已把 `APP_PUBLIC_HOST` 调整为 `172.17.2.10`，总入口摄像头、1-11 号入口摄像头、LED、DIDO 参数也已填好。
+- `SHA256SUMS`: 上传后校验文件完整性。
+
+用 Electerm SFTP 上传:
+
+1. 连接 `supervisor@172.17.2.10`。
+2. 在服务器侧进入 `/home/supervisor`。
+3. 新建目录:
+
+```text
+/home/supervisor/smart-lane-upgrade-c297364
+```
+
+4. 把本机 `deploy-artifacts/smart-lane-onsite-upgrade-c297364-20260522/` 里的 `images/`、`project/`、`env/` 三个目录和 `SHA256SUMS` 文件上传到:
+
+```text
+/home/supervisor/smart-lane-upgrade-c297364/
+```
+
+上传后服务器上应类似:
+
+```text
+/home/supervisor/smart-lane-upgrade-c297364/
+  SHA256SUMS
+  images/smart-lane-business-images-amd64-c297364.tar
+  project/smart-lane-dispatch-system-c297364.tar.gz
+  env/onsite.env
+```
+
+### 12.2 服务器上执行升级
+
+以下命令在 Electerm SSH 终端执行。
+
+进入上传目录并校验:
+
+```bash
+cd /home/supervisor/smart-lane-upgrade-c297364
+sha256sum -c SHA256SUMS
+```
+
+全部显示 `OK` 后继续。先加载新的前后端镜像:
+
+```bash
+sudo docker load -i images/smart-lane-business-images-amd64-c297364.tar
+sudo docker image ls | grep smart-lane-dispatch-system
+```
+
+进入项目目录:
+
+```bash
+APP_DIR=/opt/smart-lane/smart-lane-dispatch-system
+cd "$APP_DIR"
+```
+
+升级前建议备份数据库:
+
+```bash
+set -a
+source .env
+set +a
+mkdir -p backups
+sudo docker compose -p smart-lane-dispatch-system exec -T mysql \
+  mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" smart_lane_dispatch \
+  > backups/pre_upgrade_$(date +%F_%H%M%S).sql
+```
+
+备份服务器现有 `.env`:
+
+```bash
+sudo cp .env backups/.env.$(date +%F_%H%M%S)
+```
+
+覆盖项目文件。这个包不包含 `.env`，所以不会覆盖现场 `.env`:
+
+```bash
+sudo tar -xzf /home/supervisor/smart-lane-upgrade-c297364/project/smart-lane-dispatch-system-c297364.tar.gz -C "$APP_DIR"
+```
+
+把这次现场关键参数合并进服务器 `.env`。这一步保留服务器原来的数据库密码、JWT 等配置，只更新本次设备联调需要的项:
+
+```bash
+sudo bash -c '
+set -e
+cd /opt/smart-lane/smart-lane-dispatch-system
+ENV_FILE=.env
+
+set_env() {
+  key="$1"
+  val="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+  else
+    printf "\n%s=%s\n" "$key" "$val" >> "$ENV_FILE"
+  fi
+}
+
+set_env APP_PUBLIC_HOST 172.17.2.10
+set_env APP_CORS_ALLOWED_ORIGINS http://172.17.2.10:3002
+
+set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_SN 00E02721A3A7
+set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID 9QHZNII
+set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO 22K5000202407828
+
+set_env APP_DEVICE_DIDO_PAYLOAD_MODE json
+set_env APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID DIDO-ENTRY-01
+set_env APP_DEVICE_SHARED_ENTRY_DIDO_HOST 172.17.2.80
+set_env APP_DEVICE_SHARED_ENTRY_DIDO_PORT 8080
+set_env APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID DIDO-EXIT-01
+set_env APP_DEVICE_SHARED_EXIT_DIDO_HOST 172.17.2.81
+set_env APP_DEVICE_SHARED_EXIT_DIDO_PORT 8080
+
+set_env APP_LED_GUIDE_ENABLED true
+set_env APP_LED_GUIDE_IP 172.17.2.70
+set_env APP_LED_GUIDE_PORT 5005
+set_env APP_LED_GUIDE_GENERATION 6
+set_env APP_LED_GUIDE_MODEL Bx6E
+set_env APP_LED_GUIDE_SCREEN_WIDTH 1920
+set_env APP_LED_GUIDE_SCREEN_HEIGHT 960
+set_env APP_LED_GUIDE_COLUMNS 2
+set_env APP_LED_GUIDE_ROWS 6
+set_env APP_LED_GUIDE_FONT_SIZE 72
+set_env APP_LED_GUIDE_COLOR RED
+
+set_env APP_DISPATCH_ENTRY_LANE_ORDER 1-11
+set_env APP_DISPATCH_ENTRY_ENABLED_DEFAULT true
+set_env APP_DISPATCH_EXIT_ENABLED_DEFAULT false
+set_env APP_DISPATCH_ASSIGNMENT_RESERVE_MINUTES 2
+'
+```
+
+确认 Compose 配置能解析:
+
+```bash
+sudo docker compose -p smart-lane-dispatch-system config >/tmp/smart-lane-compose-check.yaml
+```
+
+重新创建需要更新的服务。不要执行 `docker compose down -v`:
+
+```bash
+sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate --no-deps mqtt
+sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate --no-deps server
+sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate --no-deps web
+sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate --no-deps nginx
+```
+
+查看运行状态:
+
+```bash
+sudo docker compose -p smart-lane-dispatch-system ps
+curl -f http://127.0.0.1:3002/actuator/health
+curl -I http://127.0.0.1:3002/
+```
+
+查看日志:
+
+```bash
+sudo docker compose -p smart-lane-dispatch-system logs --tail=100 server
+sudo docker compose -p smart-lane-dispatch-system logs --tail=100 web
+sudo docker compose -p smart-lane-dispatch-system logs --tail=100 mqtt
+sudo docker compose -p smart-lane-dispatch-system logs --tail=100 nginx
+```
+
+浏览器验证:
+
+```text
+http://172.17.2.10:3002
+http://172.17.2.10:3002/camera-test
+http://172.17.2.10:3002/led-test
+```
+
+总入口摄像头 MQTT 验证:
+
+```bash
+sudo docker compose -p smart-lane-dispatch-system exec mqtt \
+  mosquitto_sub -h 127.0.0.1 -p 1883 \
+  -u jcadmin -P 'jcadmin@12345' \
+  -t '/+/mf/up' -v
+```
+
+看到 `/00E02721A3A7/mf/up` 的 `plateResult` 后，后台应生成推荐车道，LED 会自动刷新。
+
+### 12.3 Git 在线升级方式
+
 拉取新代码:
 
 ```bash
