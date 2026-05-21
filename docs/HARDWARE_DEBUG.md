@@ -59,10 +59,10 @@ docker run -d -p 1883:1883 -p 9001:9001 eclipse-mosquitto
 
 ```bash
 # 订阅测试主题
-mosquitto_sub -h 127.0.0.1 -p 1883 -t "test/hello"
+mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "test/hello"
 
 # 另开终端，发布消息
-mosquitto_pub -h 127.0.0.1 -p 1883 -t "test/hello" -m "broker ok"
+mosquitto_pub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "test/hello" -m "broker ok"
 
 # 如果订阅端收到 "broker ok"，Broker 正常
 ```
@@ -90,8 +90,8 @@ app.device.mqtt.enabled=true
 app.device.mqtt.host=192.168.1.100      # 你的 MQTT Broker IP
 app.device.mqtt.port=1883
 app.device.mqtt.client-id=smart-lane-dispatch-system
-app.device.mqtt.username=               # 如果有认证则填
-app.device.mqtt.password=
+app.device.mqtt.username=jcadmin
+app.device.mqtt.password=jcadmin@12345
 
 # 总入口 MF 摄像头，只负责蓄车池入口预分配
 app.device.parking-mf.yard-entry-sn=<总入口MF设备SN>
@@ -153,7 +153,7 @@ MQTT device gateway indexed 11 lane bindings
 **Step 2：在 MQTT 客户端监听下发消息**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/get"
+mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-ENTRY-01/get"
 ```
 
 **预期结果**（收到 JSON）：
@@ -168,7 +168,7 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/get"
 **Step 3：模拟 DIDO 继电器状态反馈**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/update" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-ENTRY-01/update" -m '{
   "A01": 110000
 }'
 ```
@@ -205,7 +205,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/DIDO-ENTRY-01/update" -m '{
 **Step 1：模拟心跳（验证设备在线）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "heartbeat",
   "sn": "00E02721A3A7",
   "timestamp": 1713936000000,
@@ -222,7 +222,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
 **Step 2：模拟车牌识别（车辆进入蓄车池总入口）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "plateResult",
   "sn": "00E02721A3A7",
   "msgId": "test-001",
@@ -246,7 +246,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
 **Step 3：验证抓拍确认下发**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/down"
+mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/down"
 ```
 
 **预期收到**：
@@ -287,7 +287,7 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/down"
 **Step 1：模拟心跳**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "heartbeat",
   "devId": "SMART-CAM-01",
   "utcTs": 1713936000000
@@ -299,7 +299,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
 假设当前车道 1 有 3 辆车，现在出去了 1 辆：
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "passCount",
   "devId": "SMART-CAM-01",
   "msgId": "pc-001",
@@ -318,7 +318,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
 **再次发送**（再出去 2 辆，清空车道）：
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "passCount",
   "devId": "SMART-CAM-01",
   "msgId": "pc-002",
@@ -337,7 +337,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
 **Step 3：模拟地感在位检测**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "getHaveCarRsp",
   "devId": "SMART-CAM-01",
   "content": {
@@ -380,7 +380,7 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo>
 **Step 2：模拟或监听总入口 MQTT 抓拍**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "plateResult",
   "sn": "00E02721A3A7",
   "msgId": "yard-mf-001",
@@ -540,22 +540,24 @@ Step 1: 总入口再抓拍一辆车
 #!/bin/bash
 BROKER="192.168.1.100"
 PORT="1883"
+USERNAME="jcadmin"
+PASSWORD="jcadmin@12345"
 
 # ---------- DIDO ----------
 pub_dido() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/device/DIDO-EXIT-01/update" -m "$1"
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/device/DIDO-EXIT-01/update" -m "$1"
 }
 
 # ---------- 总入口 MF 摄像头 ----------
 pub_mf_heartbeat() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/00E02721A3A7/mf/up" -m '{
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/00E02721A3A7/mf/up" -m '{
     "cmd":"heartbeat","sn":"00E02721A3A7","timestamp":'$(date +%s000)',
     "data":{"deviceStatus":[{"deviceNo":"22K5000202407828","network":"online"}]}
   }'
 }
 
 pub_mf_plate() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/00E02721A3A7/mf/up" -m '{
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/00E02721A3A7/mf/up" -m '{
     "cmd":"plateResult","sn":"00E02721A3A7","msgId":"test-'$(date +%s)'",
     "data":{"groupId":"9QHZNII","deviceNo":"22K5000202407828","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
   }'
@@ -563,20 +565,20 @@ pub_mf_plate() {
 
 # ---------- 智能相机 ----------
 pub_cam_heartbeat() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/device/SMART-CAM-01/update" -m '{
     "cmd":"heartbeat","devId":"SMART-CAM-01","utcTs":'$(date +%s000)'
   }'
 }
 
 pub_cam_pass() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/device/SMART-CAM-01/update" -m '{
     "cmd":"passCount","devId":"SMART-CAM-01","msgId":"pc-'$(date +%s)'",
     "inCount":3,"outCount":'$1'
   }'
 }
 
 pub_cam_havecar() {
-  mosquitto_pub -h $BROKER -p $PORT -t "/device/SMART-CAM-01/update" -m '{
+  mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/device/SMART-CAM-01/update" -m '{
     "cmd":"getHaveCarRsp","devId":"SMART-CAM-01",
     "content":{"haveCar":'$1'},"utcTs":'$(date +%s000)'
   }'

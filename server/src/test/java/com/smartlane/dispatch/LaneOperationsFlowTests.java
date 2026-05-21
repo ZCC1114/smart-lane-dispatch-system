@@ -543,7 +543,7 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void expiredReservationShouldCloseProvisionalLogAndAllowLaterDirectEntry() throws Exception {
+	void expiredReservationShouldBeRecoveredByLaterLaneEntryWithoutDuplicateGuide() throws Exception {
 		laneRepository.save(buildLane("L02", "L02", "2号车道"));
 		String token = loginAndGetToken();
 
@@ -554,11 +554,14 @@ class LaneOperationsFlowTests {
 		List<DispatchTicket> tickets = dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc("沪A92111");
 		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
 				.filter(ticket -> "沪A92111".equals(ticket.getPlate()) && "EXPIRED".equals(ticket.getStatus())))
-			.hasSize(1);
+			.isEmpty();
 		assertThat(tickets)
 			.singleElement()
 			.extracting(DispatchTicket::getStatus, DispatchTicket::getActualLaneId)
-			.containsExactly("DIRECT_ENTERED", "L02");
+			.containsExactly("ENTERED", "L02");
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "沪A92111".equals(ticket.getPlate())))
+			.hasSize(1);
 
 		List<EntryLog> logs = entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
 				.filter(log -> "沪A92111".equals(log.getPlate()))
@@ -569,6 +572,18 @@ class LaneOperationsFlowTests {
 				.singleElement()
 				.extracting(EntryLog::getLaneId)
 				.isEqualTo("L02");
+
+		mockMvc.perform(get("/api/screen/board")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.recentDispatches[?(@.plate=='沪A92111')]").exists())
+			.andExpect(jsonPath("$.guideAssignments[?(@.plate=='沪A92111')]").exists());
+		assertThat(operationsService.getRecentYardEntries(10).stream()
+				.filter(ticket -> "沪A92111".equals(ticket.getPlate())))
+			.hasSize(1);
+		assertThat(operationsService.getRecentGuideAssignments(10).stream()
+				.filter(ticket -> "沪A92111".equals(ticket.getPlate())))
+			.hasSize(1);
 	}
 
 	@Test

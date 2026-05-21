@@ -1,4 +1,6 @@
-FROM maven:3.9.9-eclipse-temurin-21 AS build
+ARG DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+
+FROM ${DOCKER_IMAGE_REGISTRY}/maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /app
 
 COPY pom.xml ./
@@ -9,7 +11,7 @@ COPY src src
 
 RUN --mount=type=cache,target=/root/.m2 chmod +x mvnw && ./mvnw -DskipTests package
 
-FROM eclipse-temurin:21-jre-jammy
+FROM ${DOCKER_IMAGE_REGISTRY}/eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
 RUN apt-get update \

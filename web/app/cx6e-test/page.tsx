@@ -19,6 +19,7 @@ import {
   Terminal,
   Wifi,
 } from "lucide-react";
+import { MQTT_PASSWORD, MQTT_USERNAME, mqttAuthOptions } from "@/lib/mqtt-config";
 import { cn } from "@/lib/utils";
 
 type MqttMode = "json" | "hex-a1" | "hex-a3";
@@ -166,6 +167,7 @@ export default function Cx6eTestPage() {
       clean: true,
       connectTimeout: 5000,
       reconnectPeriod: 0,
+      ...mqttAuthOptions(),
     });
 
     nextClient.on("connect", () => {
@@ -230,7 +232,8 @@ export default function Cx6eTestPage() {
     ["设备 ID", deviceId],
     ["下发 Topic", downTopic],
     ["上报 Topic", upTopic],
-    ["用户名/密码", "留空"],
+    ["用户名", MQTT_USERNAME || "无（匿名）"],
+    ["密码", MQTT_USERNAME ? MQTT_PASSWORD : "无"],
   ];
 
   return (

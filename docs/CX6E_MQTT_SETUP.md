@@ -106,19 +106,19 @@ APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT=true
 监听设备上报:
 
 ```bash
-mosquitto_sub -h 192.168.1.45 -p 1883 -t "/device/DIDO-01/update" -v
+mosquitto_sub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/update" -v
 ```
 
 JSON 模式手动吸合 A01:
 
 ```bash
-mosquitto_pub -h 192.168.1.45 -p 1883 -t "/device/DIDO-01/get" -m '{"A01":110000,"res":"manual-on"}'
+mosquitto_pub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/get" -m '{"A01":110000,"res":"manual-on"}'
 ```
 
 JSON 模式手动断开 A01:
 
 ```bash
-mosquitto_pub -h 192.168.1.45 -p 1883 -t "/device/DIDO-01/get" -m '{"A01":100000,"res":"manual-off"}'
+mosquitto_pub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/get" -m '{"A01":100000,"res":"manual-off"}'
 ```
 
 也可以打开系统的硬件调试页，使用 MQTT DIDO 控制模式测试 JSON、HEX A1、HEX A3 三种下发方式。

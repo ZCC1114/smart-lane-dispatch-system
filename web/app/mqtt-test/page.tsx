@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Hash,
 } from "lucide-react";
+import { MQTT_PASSWORD, MQTT_USERNAME, mqttAuthOptions } from "@/lib/mqtt-config";
 import { cn } from "@/lib/utils";
 
 type LogDirection = "tx" | "rx" | "system";
@@ -94,6 +95,7 @@ export default function MqttTestPage() {
       clean: true,
       connectTimeout: 5000,
       reconnectPeriod: 0,
+      ...mqttAuthOptions(),
     });
 
     nextClient.on("connect", () => {
@@ -162,8 +164,8 @@ export default function MqttTestPage() {
       { label: "Broker 地址", value: BROKER_HOST, copyable: true },
       { label: "TCP 端口", value: "1883", copyable: true },
       { label: "WebSocket 端口", value: "9001", copyable: true },
-      { label: "用户名", value: "无（匿名）", copyable: false },
-      { label: "密码", value: "无", copyable: false },
+      { label: "用户名", value: MQTT_USERNAME || "无（匿名）", copyable: Boolean(MQTT_USERNAME) },
+      { label: "密码", value: MQTT_USERNAME ? MQTT_PASSWORD : "无", copyable: Boolean(MQTT_USERNAME) },
       { label: "协议版本", value: "MQTT 3.1.1", copyable: false },
     ],
     []

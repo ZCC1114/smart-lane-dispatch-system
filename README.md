@@ -92,6 +92,14 @@ cp .env.example .env
 ./scripts/start-stack.sh
 ```
 
+`.env` 默认配置了 Docker Hub 国内镜像代理:
+
+```dotenv
+DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+```
+
+如果该代理不可用，可改成其他 Docker Hub 镜像代理的 `/library` 路径，或改回 `docker.io/library`。
+
 统一访问入口默认是：`http://localhost:3002`
 
 - 前端：`http://localhost:3002`
@@ -135,6 +143,8 @@ APP_PUBLIC_HOST=<服务器局域网IP，例如192.168.124.3>
 APP_CORS_ALLOWED_ORIGINS=http://<服务器局域网IP>:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
 APP_JWT_SECRET=<生产环境随机长密钥，不要用示例值>
 
+DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+
 MYSQL_ROOT_PASSWORD=<MySQL root密码>
 MYSQL_USER=smartlane
 MYSQL_PASSWORD=<业务数据库密码>
@@ -147,8 +157,8 @@ APP_DEVICE_GATEWAY=mqtt
 APP_DEVICE_MQTT_ENABLED=true
 APP_DEVICE_MQTT_HOST=mqtt
 APP_DEVICE_MQTT_PORT=1883
-APP_DEVICE_MQTT_USERNAME=
-APP_DEVICE_MQTT_PASSWORD=
+APP_DEVICE_MQTT_USERNAME=jcadmin
+APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
 ```
 
 如果改用外部 MQTT Broker，再把 `APP_DEVICE_MQTT_HOST` 改成外部 Broker 的 IP。
@@ -287,7 +297,7 @@ docker compose up -d --build
 
 ```bash
 docker compose logs -f server
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '#' -v
 ```
 
 ## 说明

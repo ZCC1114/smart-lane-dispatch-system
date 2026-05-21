@@ -1,6 +1,6 @@
 services:
   mysql:
-    image: mysql:8.4
+    image: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}/mysql:8.4
     container_name: smart-lane-mysql
     restart: unless-stopped
     environment:
@@ -20,7 +20,7 @@ services:
       retries: 12
 
   redis:
-    image: redis:7.4-alpine
+    image: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}/redis:7.4-alpine
     container_name: smart-lane-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
@@ -30,7 +30,7 @@ services:
       - redis-data:/data
 
   mqtt:
-    image: eclipse-mosquitto:2
+    image: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}/eclipse-mosquitto:2
     container_name: smart-lane-mqtt
     restart: unless-stopped
     ports:
@@ -38,12 +38,15 @@ services:
       - "${MQTT_WS_PORT:-9001}:9001"
     volumes:
       - ./deploy/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./deploy/mosquitto/password_file:/mosquitto/config/password_file:ro
       - mqtt-data:/mosquitto/data
       - mqtt-log:/mosquitto/log
 
   server:
     build:
       context: ./server
+      args:
+        DOCKER_IMAGE_REGISTRY: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}
     container_name: smart-lane-server
     restart: unless-stopped
     env_file:
@@ -70,8 +73,8 @@ services:
       APP_DEVICE_MQTT_HOST: ${APP_DEVICE_MQTT_HOST:-mqtt}
       APP_DEVICE_MQTT_PORT: ${APP_DEVICE_MQTT_PORT:-1883}
       APP_DEVICE_MQTT_CLIENT_ID: ${APP_DEVICE_MQTT_CLIENT_ID:-smart-lane-dispatch-system}
-      APP_DEVICE_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-}
-      APP_DEVICE_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-}
+      APP_DEVICE_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-jcadmin}
+      APP_DEVICE_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-jcadmin@12345}
       APP_DEVICE_DIDO_PAYLOAD_MODE: ${APP_DEVICE_DIDO_PAYLOAD_MODE:-hex-a1}
       APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT:-false}
       APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT:-false}
@@ -93,8 +96,13 @@ services:
     build:
       context: ./web
       args:
+        DOCKER_IMAGE_REGISTRY: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}
         NEXT_PUBLIC_API_BASE_URL: /api
         NEXT_PUBLIC_WS_ENDPOINT: /ws
+        NEXT_PUBLIC_DEVICE_MQTT_HOST: ${APP_PUBLIC_HOST:-127.0.0.1}
+        NEXT_PUBLIC_MQTT_WS_HOST: ${APP_PUBLIC_HOST:-127.0.0.1}
+        NEXT_PUBLIC_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-jcadmin}
+        NEXT_PUBLIC_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-jcadmin@12345}
     container_name: smart-lane-web
     restart: unless-stopped
     depends_on:
@@ -104,7 +112,7 @@ services:
       - "3000"
 
   nginx:
-    image: nginx:1.27-alpine
+    image: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}/nginx:1.27-alpine
     container_name: smart-lane-nginx
     restart: unless-stopped
     depends_on:

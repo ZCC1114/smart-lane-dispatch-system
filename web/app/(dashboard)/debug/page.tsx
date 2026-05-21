@@ -22,6 +22,7 @@ import {
   Trash2,
   Wifi,
 } from "lucide-react";
+import { mqttAuthOptions } from "@/lib/mqtt-config";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -328,6 +329,7 @@ export default function DebugPage() {
       clientId: `debug-client-${genId()}`,
       reconnectPeriod: 0,
       connectTimeout: 5000,
+      ...mqttAuthOptions(),
     });
     let opened = false;
     let lastError = "";
@@ -1150,6 +1152,5 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
     </div>
   );
 }
-
 
 

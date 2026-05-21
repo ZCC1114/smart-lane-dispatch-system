@@ -706,6 +706,9 @@ public class OperationsService {
 					"车牌已在" + firstNonBlank(activeTicket.getActualLaneName(), activeTicket.getAssignedLaneName(), activeTicket.getActualLaneId(), "其他车道") + "未出场，不能重复入场");
 		}
 		DispatchTicket ticket = findLatestPendingTicketByPlate(plate);
+		if (ticket == null) {
+			ticket = findLatestRecoverableExpiredTicketByPlate(plate, entryTime);
+		}
 		if (activeLogInLane != null && ticket == null) {
 			lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
 			lane.setLastSensorAt(entryTime);
@@ -1300,10 +1303,15 @@ public class OperationsService {
 		ticket.setActualLaneId(lane.getId());
 		ticket.setActualLaneName(lane.getName());
 		ticket.setLaneEntryTime(entryTime);
+		ticket.setClosedAt(null);
+		ticket.setExitTime(null);
 		ticket.setSource(source);
+		boolean wasExpired = "EXPIRED".equals(ticket.getStatus());
 		ticket.setStatus(lane.getId().equals(ticket.getAssignedLaneId()) ? "ENTERED" : "ENTERED_MISMATCH");
 		if (!lane.getId().equals(ticket.getAssignedLaneId())) {
 			ticket.setNotes("司机未按屏显进入推荐车道");
+		} else if (wasExpired) {
+			ticket.setNotes("未进车道告警后已确认进入推荐车道");
 		}
 		dispatchTicketRepository.save(ticket);
 	}
@@ -1619,6 +1627,22 @@ public class OperationsService {
 		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
 				.filter(ticket -> ticket.getExitTime() == null)
 				.filter(ticket -> ticket.getLaneEntryTime() == null)
+				.findFirst()
+				.orElse(null);
+	}
+
+	private DispatchTicket findLatestRecoverableExpiredTicketByPlate(String plate, OffsetDateTime referenceTime) {
+		if (isBlank(plate)) {
+			return null;
+		}
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> normalizePlate(plate).equals(normalizePlate(ticket.getPlate())))
+				.filter(ticket -> "EXPIRED".equals(ticket.getStatus()))
+				.filter(ticket -> ticket.getLaneEntryTime() == null)
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> currentCycleStart == null || ticketTime(ticket).isAfter(currentCycleStart) || ticketTime(ticket).isEqual(currentCycleStart))
+				.filter(ticket -> ticket.getYardEntryTime() == null || !ticket.getYardEntryTime().isAfter(referenceTime))
 				.findFirst()
 				.orElse(null);
 	}

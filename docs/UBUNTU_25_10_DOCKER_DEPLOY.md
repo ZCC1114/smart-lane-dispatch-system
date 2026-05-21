@@ -167,6 +167,8 @@ docker compose up -d
 
 ## 3. 安装 Docker Engine 和 Compose
 
+### 3.1 服务器可联网时安装
+
 如果服务器已有旧 Docker 包，先清理冲突包:
 
 ```bash
@@ -219,6 +221,297 @@ newgrp docker
 ```
 
 生产服务器如果多人运维，建议保留 `sudo docker ...`，不要随意把普通用户加入 `docker` 组。
+
+### 3.2 完全离线部署包准备
+
+如果生产服务器完全不能联网，且运维电脑也不能直连现场内网，需要先在一台可以联网、可以运行 Docker 的电脑上准备离线包，再通过 U 盘拷贝到服务器。
+
+推荐 U 盘目录结构:
+
+```text
+smart-lane-offline/
+  docker-debs/
+    containerd.io_2.2.3-1~ubuntu.25.10~questing_amd64.deb
+    docker-buildx-plugin_0.33.0-1~ubuntu.25.10~questing_amd64.deb
+    docker-ce-cli_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+    docker-ce_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+    docker-compose-plugin_5.1.3-1~ubuntu.25.10~questing_amd64.deb
+  images/
+    smart-lane-offline-images-amd64.tar
+  project/
+    smart-lane-dispatch-system.tar.gz
+  checksums.txt
+```
+
+上面 Docker 安装包为 2026-05-20 核验的 Ubuntu 25.10 `questing` / `amd64` 版本。服务器如果是 ARM64，先在服务器执行 `dpkg --print-architecture` 确认架构，再从同目录的 `arm64` 路径下载对应 `_arm64.deb` 文件。
+
+Docker 官方下载目录:
+
+```text
+Docker Ubuntu 安装文档:
+https://docs.docker.com/engine/install/ubuntu/
+
+Ubuntu 25.10 amd64 包目录:
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/
+
+Ubuntu 25.10 arm64 包目录:
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/arm64/
+```
+
+AMD64 服务器需要下载的 5 个 `.deb` 直链:
+
+```text
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/containerd.io_2.2.3-1~ubuntu.25.10~questing_amd64.deb
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-buildx-plugin_0.33.0-1~ubuntu.25.10~questing_amd64.deb
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-ce-cli_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-ce_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-compose-plugin_5.1.3-1~ubuntu.25.10~questing_amd64.deb
+```
+
+有网电脑如果是 macOS / Linux，可以用命令下载:
+
+```bash
+mkdir -p smart-lane-offline/docker-debs
+cd smart-lane-offline/docker-debs
+
+curl -fL -O https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/containerd.io_2.2.3-1~ubuntu.25.10~questing_amd64.deb
+curl -fL -O https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-buildx-plugin_0.33.0-1~ubuntu.25.10~questing_amd64.deb
+curl -fL -O https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-ce-cli_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+curl -fL -O https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-ce_29.4.2-2~ubuntu.25.10~questing_amd64.deb
+curl -fL -O https://download.docker.com/linux/ubuntu/dists/questing/pool/stable/amd64/docker-compose-plugin_5.1.3-1~ubuntu.25.10~questing_amd64.deb
+cd -
+```
+
+本项目运行时需要导出的 Docker 镜像:
+
+```text
+docker.m.daocloud.io/library/mysql:8.4
+docker.m.daocloud.io/library/redis:7.4-alpine
+docker.m.daocloud.io/library/eclipse-mosquitto:2
+docker.m.daocloud.io/library/nginx:1.27-alpine
+smart-lane-dispatch-system-server:latest
+smart-lane-dispatch-system-web:latest
+```
+
+这些镜像的拉取地址就是上面的 Docker registry 地址，可手工拉取:
+
+```bash
+docker pull docker.m.daocloud.io/library/mysql:8.4
+docker pull docker.m.daocloud.io/library/redis:7.4-alpine
+docker pull docker.m.daocloud.io/library/eclipse-mosquitto:2
+docker pull docker.m.daocloud.io/library/nginx:1.27-alpine
+```
+
+构建 `server`、`web` 时还会在有网电脑上临时拉取下面 3 个基础镜像。它们只用于构建，不需要导出到内网服务器，除非计划在内网服务器上执行 `docker compose build`:
+
+```text
+docker.m.daocloud.io/library/maven:3.9.9-eclipse-temurin-21
+docker.m.daocloud.io/library/eclipse-temurin:21-jre-jammy
+docker.m.daocloud.io/library/node:23-alpine
+```
+
+如果有网电脑访问 DaoCloud 镜像代理不稳定，也可以把 `docker.m.daocloud.io/library` 替换成 `docker.io/library` 拉取官方 Docker Hub 镜像。导出的镜像名必须和生产 `.env` 里的 `DOCKER_IMAGE_REGISTRY` 一致；如果按下面命令使用 DaoCloud，生产 `.env` 保持 `DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library`。
+
+在有网电脑上进入项目根目录，先准备 `.env`。`APP_PUBLIC_HOST` 要写生产服务器 IP，否则前端构建出的 MQTT WebSocket 地址会不对:
+
+```bash
+cp .env.example .env
+sed -i.bak 's/^APP_PUBLIC_HOST=.*/APP_PUBLIC_HOST=172.17.2.10/' .env
+sed -i.bak 's/^APP_CORS_ALLOWED_ORIGINS=.*/APP_CORS_ALLOWED_ORIGINS=http:\/\/172.17.2.10:3002/' .env
+sed -i.bak 's/^DOCKER_IMAGE_REGISTRY=.*/DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io\/library/' .env
+```
+
+如果有网电脑是 Apple Silicon Mac，而生产服务器是常见 x86_64 / amd64，必须指定 `linux/amd64`，否则会导出 ARM 镜像，服务器无法运行:
+
+```bash
+export DOCKER_DEFAULT_PLATFORM=linux/amd64
+```
+
+拉取运行时镜像，并构建本项目 `server`、`web` 镜像:
+
+```bash
+docker compose -p smart-lane-dispatch-system pull mysql redis mqtt nginx
+docker compose -p smart-lane-dispatch-system build server web
+```
+
+确认镜像架构。AMD64 服务器应显示 `amd64`:
+
+```bash
+docker image inspect docker.m.daocloud.io/library/mysql:8.4 --format '{{.Architecture}}'
+docker image inspect smart-lane-dispatch-system-server:latest --format '{{.Architecture}}'
+docker image inspect smart-lane-dispatch-system-web:latest --format '{{.Architecture}}'
+```
+
+导出全部运行时镜像:
+
+```bash
+mkdir -p smart-lane-offline/images
+
+docker save -o smart-lane-offline/images/smart-lane-offline-images-amd64.tar \
+  docker.m.daocloud.io/library/mysql:8.4 \
+  docker.m.daocloud.io/library/redis:7.4-alpine \
+  docker.m.daocloud.io/library/eclipse-mosquitto:2 \
+  docker.m.daocloud.io/library/nginx:1.27-alpine \
+  smart-lane-dispatch-system-server:latest \
+  smart-lane-dispatch-system-web:latest
+```
+
+打包项目文件。离线服务器上不重新构建镜像，但仍需要 `compose.yaml`、`.env.example`、`deploy/`、`docs/` 等配置文件:
+
+```bash
+mkdir -p smart-lane-offline/project
+
+tar \
+  --exclude='.git' \
+  --exclude='server/target' \
+  --exclude='web/node_modules' \
+  --exclude='web/.next' \
+  --exclude='smart-lane-offline' \
+  -czf smart-lane-offline/project/smart-lane-dispatch-system.tar.gz \
+  .
+```
+
+生成校验文件，拷贝到 U 盘前后都可以核对:
+
+```bash
+cd smart-lane-offline
+
+# macOS
+find docker-debs images project -type f | sort | xargs shasum -a 256 > checksums.txt
+
+# Linux 如果没有 shasum，使用:
+# find docker-debs images project -type f | sort | xargs sha256sum > checksums.txt
+cd -
+```
+
+注意事项:
+
+- U 盘建议使用 exFAT、NTFS 或 ext4。`smart-lane-offline-images-amd64.tar` 可能超过 4 GB，FAT32 放不下。
+- 内网服务器上不要执行 `docker compose up --build`，也不要执行 `docker compose pull`。离线启动必须使用 `--no-build`。
+- 如果需要完全覆盖极简 Ubuntu 缺失依赖的情况，最好临时准备一台同版本 Ubuntu 25.10 / amd64 虚拟机，按 Docker 官方 apt 源执行 `sudo apt-get --download-only install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`，再把 `/var/cache/apt/archives/*.deb` 一并放入 `docker-debs/`。
+
+### 3.3 内网服务器离线安装 Docker
+
+把 U 盘里的 `smart-lane-offline` 拷贝到服务器本地磁盘，例如:
+
+```bash
+mkdir -p ~/smart-lane-offline
+cp -a /media/$USER/<U盘名>/smart-lane-offline/. ~/smart-lane-offline/
+cd ~/smart-lane-offline
+sha256sum -c checksums.txt
+```
+
+如果服务器已有旧 Docker 包，先清理冲突包:
+
+```bash
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+  sudo apt-get remove -y "$pkg" || true
+done
+```
+
+安装离线 `.deb` 包:
+
+```bash
+cd ~/smart-lane-offline
+sudo apt install -y ./docker-debs/*.deb
+```
+
+如果 `apt install` 提示缺少依赖，说明服务器系统是极简安装，基础依赖没有随系统带上。按报错包名到 Ubuntu 25.10 官方软件源下载对应 `.deb`，放进 `docker-debs/` 后重新执行:
+
+```bash
+sudo apt install -y ./docker-debs/*.deb
+```
+
+启动 Docker:
+
+```bash
+sudo systemctl enable --now docker
+sudo systemctl status docker --no-pager
+docker --version
+docker compose version
+```
+
+如果当前用户没有 Docker 权限，后续命令统一加 `sudo`，或按需加入 `docker` 组:
+
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+### 3.4 内网服务器离线启动本系统
+
+先按第 2.4 节写入 Docker daemon 网段配置，避免 Docker 默认 `172.17.0.0/16` 与现场 `172.17.2.0/24` 冲突。然后加载离线镜像:
+
+```bash
+cd ~/smart-lane-offline
+docker load -i images/smart-lane-offline-images-amd64.tar
+docker image ls
+```
+
+解压项目到生产目录:
+
+```bash
+sudo mkdir -p /opt/smart-lane/smart-lane-dispatch-system
+sudo chown -R "$USER":"$USER" /opt/smart-lane
+
+tar -xzf ~/smart-lane-offline/project/smart-lane-dispatch-system.tar.gz -C /opt/smart-lane/smart-lane-dispatch-system
+cd /opt/smart-lane/smart-lane-dispatch-system
+```
+
+配置 `.env`:
+
+```bash
+test -f .env || cp .env.example .env
+nano .env
+```
+
+至少确认这些值:
+
+```dotenv
+APP_HTTP_PORT=3002
+APP_PUBLIC_HOST=172.17.2.10
+APP_CORS_ALLOWED_ORIGINS=http://172.17.2.10:3002
+DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+
+APP_DEVICE_MQTT_HOST=mqtt
+APP_DEVICE_MQTT_PORT=1883
+APP_DEVICE_MQTT_USERNAME=jcadmin
+APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
+```
+
+离线启动时固定 Compose 项目名，确保使用 U 盘里导入的 `smart-lane-dispatch-system-server:latest` 和 `smart-lane-dispatch-system-web:latest`:
+
+```bash
+docker compose -p smart-lane-dispatch-system config
+docker compose -p smart-lane-dispatch-system up -d --no-build
+docker compose -p smart-lane-dispatch-system ps
+```
+
+检查服务:
+
+```bash
+curl -f http://127.0.0.1:3002/actuator/health
+curl -I http://127.0.0.1:3002/
+```
+
+浏览器访问:
+
+```text
+http://172.17.2.10:3002
+```
+
+后续离线升级流程:
+
+```text
+1. 在有网电脑重新构建 server/web 镜像并 docker save。
+2. 重新打包项目 tar.gz。
+3. 用 U 盘拷到服务器。
+4. 服务器执行 docker load -i images/smart-lane-offline-images-amd64.tar。
+5. 覆盖 /opt/smart-lane/smart-lane-dispatch-system 中的项目文件，保留 .env。
+6. 执行 docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate。
+```
+
+MySQL、Redis、Mosquitto 数据保存在 Docker volumes 中，执行上面的升级流程不会删除业务数据。不要执行 `docker compose down -v`，除非明确要清空数据库和 MQTT/Redis 数据。
 
 ## 4. 获取项目代码
 
@@ -279,6 +572,10 @@ REDIS_PORT=6379
 MQTT_PORT=1883
 MQTT_WS_PORT=9001
 
+# Docker Hub 镜像前缀。国内环境默认走 DaoCloud 镜像代理；
+# 如果代理不可用，可改为 docker.io/library 或其他 Docker Hub 镜像代理的 /library 路径。
+DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+
 APP_BOOTSTRAP_ADMIN_ENABLED=false
 APP_BOOTSTRAP_ADMIN_USERNAME=
 APP_BOOTSTRAP_ADMIN_PASSWORD=
@@ -293,8 +590,8 @@ APP_DEVICE_MQTT_ENABLED=true
 APP_DEVICE_MQTT_HOST=mqtt
 APP_DEVICE_MQTT_PORT=1883
 APP_DEVICE_MQTT_CLIENT_ID=smart-lane-dispatch-system
-APP_DEVICE_MQTT_USERNAME=
-APP_DEVICE_MQTT_PASSWORD=
+APP_DEVICE_MQTT_USERNAME=jcadmin
+APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
 
 # 总入口 MF 车牌识别摄像头，Topic 为 /{sn}/mf/up。
 # 至少填写 SN；如果同一 SN 下有多路相机，再填写 groupId/deviceNo。
@@ -346,6 +643,13 @@ openssl rand -base64 48
 ```bash
 docker compose config
 docker compose up -d --build
+```
+
+如果构建时仍卡在拉取基础镜像，先确认 `.env` 中 `DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library` 已生效。可以单独测试:
+
+```bash
+docker compose pull mysql redis mqtt nginx
+docker compose build web server
 ```
 
 查看容器状态:
@@ -420,20 +724,20 @@ sudo ufw status
 ```text
 Broker Host: 172.17.2.10
 Broker Port: 1883
-Username: 留空，除非你启用了 Mosquitto 认证
-Password: 留空，除非你启用了 Mosquitto 认证
+Username: jcadmin
+Password: jcadmin@12345
 QoS: 0 或设备默认
 Keep Alive: 30 秒左右
 ```
 
-当前 `deploy/mosquitto/mosquitto.conf` 默认 `allow_anonymous true`，适合封闭内网联调。若生产网络不完全可信，应启用 Mosquitto 用户名密码，并同步修改:
+当前 `deploy/mosquitto/mosquitto.conf` 已启用 Mosquitto 用户名密码认证，并通过 `deploy/mosquitto/password_file` 保存 Broker 密码文件。后端同步使用:
 
 ```dotenv
-APP_DEVICE_MQTT_USERNAME=<mqtt-user>
-APP_DEVICE_MQTT_PASSWORD=<mqtt-password>
+APP_DEVICE_MQTT_USERNAME=jcadmin
+APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
 ```
 
-启用 MQTT 认证需要同步调整 `deploy/mosquitto/mosquitto.conf` 和密码文件，改完后重启 `mqtt` 与 `server` 容器。
+如需更换 MQTT 账号密码，需要重新生成 `deploy/mosquitto/password_file`，同步修改 `.env` 后重启 `mqtt` 与 `server` 容器。
 
 ### 8.2 CX 继电器设备配置
 
@@ -691,7 +995,7 @@ APP_DEVICE_PARKING_MF_DOWN_TOPIC_TEMPLATE=/{mfSn}/mf/down
 在服务器上监听所有设备消息:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '#' -v
 ```
 
 看到摄像头或 CX 设备周期性上报，即 Broker 网络正常。
@@ -704,6 +1008,8 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '#' -v
 docker compose exec mqtt mosquitto_pub \
   -h 127.0.0.1 \
   -p 1883 \
+  -u jcadmin \
+  -P 'jcadmin@12345' \
   -t '/device/DIDO-ENTRY-01/get' \
   -m '{"A01":110000,"res":"manual-on"}'
 ```
@@ -714,6 +1020,8 @@ docker compose exec mqtt mosquitto_pub \
 docker compose exec mqtt mosquitto_pub \
   -h 127.0.0.1 \
   -p 1883 \
+  -u jcadmin \
+  -P 'jcadmin@12345' \
   -t '/device/DIDO-ENTRY-01/get' \
   -m '{"A01":100000,"res":"manual-off"}'
 ```
@@ -725,7 +1033,7 @@ docker compose exec mqtt mosquitto_pub \
 监听 MF 上报:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/+/mf/up' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '/+/mf/up' -v
 ```
 
 让总入口摄像头抓拍一辆车，应看到类似:
@@ -763,7 +1071,7 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=
 让摄像头抓拍一辆车，监听:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/update' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '/device/+/update' -v
 ```
 
 应看到类似:
@@ -802,7 +1110,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/update
 
 ```bash
 docker compose logs -f server
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-EXIT-01/update' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '/device/DIDO-EXIT-01/update' -v
 ```
 
 重点确认上报 JSON 中是否有 `B08`，以及设备 ID 是否与 `.env` 中 `APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID` 一致。
@@ -853,6 +1161,8 @@ docker compose up -d --force-recreate server
 ```bash
 docker compose up -d --build
 ```
+
+国内网络构建失败时，优先检查 `.env` 中 `DOCKER_IMAGE_REGISTRY` 是否仍指向可用镜像代理。
 
 ## 11. 数据备份与恢复
 
@@ -1012,7 +1322,7 @@ docker compose logs -f server
 监听下发:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/get' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '/device/+/get' -v
 ```
 
 点击页面信号灯控制，应该能看到后端下发消息。
@@ -1029,7 +1339,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/+/get' -
 监听:
 
 ```bash
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -t '/device/DIDO-EXIT-01/update' -v
+docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '/device/DIDO-EXIT-01/update' -v
 ```
 
 ## 14. 交付检查清单
