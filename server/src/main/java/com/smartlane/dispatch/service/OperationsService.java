@@ -13,10 +13,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -57,6 +61,9 @@ import jakarta.annotation.PostConstruct;
 @Service
 @Transactional(readOnly = true)
 public class OperationsService {
+
+	private static final Logger log = LoggerFactory.getLogger(OperationsService.class);
+	private static final long SCREEN_BOARD_DIAGNOSTIC_LOG_INTERVAL_MS = 30000L;
 
 	private static final Pattern FIRST_NUMBER = Pattern.compile("\\d+");
 	private static final Pattern NUMERIC_RANGE = Pattern.compile("(\\d+)\\s*-\\s*(\\d+)");
@@ -100,6 +107,7 @@ public class OperationsService {
 	private final boolean defaultEntryDispatchEnabled;
 	private final boolean defaultExitDispatchEnabled;
 	private final long assignmentReserveMinutes;
+	private final AtomicLong lastScreenBoardDiagnosticLogAt = new AtomicLong(0L);
 
 	public OperationsService(
 			LaneRepository laneRepository,
@@ -636,19 +644,42 @@ public class OperationsService {
 
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
+		String normalizedSource = isBlank(payload.source()) ? "YARD_CAMERA" : payload.source().toUpperCase(Locale.ROOT);
+		boolean entryDispatchBefore = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
+		String activeEntryLaneBefore = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
+		log.info(
+				"Yard entry capture received plate={} source={} capturedAt={} entryDispatchBefore={} activeEntryLaneBefore={} lanes={} laneOrder={}",
+				normalizePlate(payload.plate()),
+				normalizedSource,
+				capturedAt,
+				entryDispatchBefore,
+				activeEntryLaneBefore,
+				lanes.size(),
+				laneOrder);
+		ensureEntryDispatchRunningForYardCapture(normalizedSource, capturedAt, lanes, laneOrder);
 		Map<String, Long> pendingCounts = pendingAssignmentCounts(capturedAt);
 		boolean entryDispatchEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
 		String activeAutoEntryLaneId = entryDispatchEnabled
 				? resolveAndPersistActiveEntryLaneId(lanes, laneOrder, pendingCounts, capturedAt)
 				: null;
 		Lane targetLane = laneById(lanes, activeAutoEntryLaneId);
+		log.info(
+				"Yard entry assignment decision plate={} source={} entryDispatchEnabled={} activeEntryLane={} targetLane={} pendingForTarget={} vehicleCount={} capacity={}",
+				normalizePlate(payload.plate()),
+				normalizedSource,
+				entryDispatchEnabled,
+				activeAutoEntryLaneId,
+				targetLane == null ? null : targetLane.getId(),
+				targetLane == null ? null : pendingCounts.getOrDefault(targetLane.getId(), 0L),
+				targetLane == null ? null : targetLane.getVehicleCount(),
+				targetLane == null ? null : targetLane.getCapacity());
 
 		DispatchTicket ticket = DispatchTicket.builder()
 				.id("DSP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
 				.plate(normalizePlate(payload.plate()))
 				.yardEntryTime(capturedAt)
 				.vehicleType(isBlank(payload.vehicleType()) ? "出租车" : payload.vehicleType())
-				.source(isBlank(payload.source()) ? "YARD_CAMERA" : payload.source().toUpperCase(Locale.ROOT))
+				.source(normalizedSource)
 				.operator("总入口抓拍")
 				.build();
 
@@ -667,6 +698,13 @@ public class OperationsService {
 					ticket.getSource(),
 					ticket.getOperator(),
 					capturedAt));
+			log.info(
+					"Yard entry assigned plate={} ticketId={} laneId={} laneName={} capturedAt={} entryLogCreated=true",
+					ticket.getPlate(),
+					ticket.getId(),
+					targetLane.getId(),
+					targetLane.getName(),
+					capturedAt);
 
 			pendingCounts.merge(targetLane.getId(), 1L, Long::sum);
 			if (!canReserveEntrySlot(targetLane, pendingCounts.getOrDefault(targetLane.getId(), 0L))) {
@@ -676,6 +714,16 @@ public class OperationsService {
 			ticket.setStatus("NO_LANE_AVAILABLE");
 			ticket.setNotes("当前没有可分配车道，请人工干预");
 			dispatchTicketRepository.save(ticket);
+			log.warn(
+					"Yard entry could not assign lane plate={} ticketId={} source={} capturedAt={} entryDispatchEnabled={} activeEntryLane={} lanes={} pendingCounts={}",
+					ticket.getPlate(),
+					ticket.getId(),
+					ticket.getSource(),
+					capturedAt,
+					entryDispatchEnabled,
+					activeAutoEntryLaneId,
+					lanes.size(),
+					pendingCounts);
 		}
 
 		refreshLaneRuntime(capturedAt);
@@ -963,9 +1011,13 @@ public class OperationsService {
 	}
 
 	private DispatchBoardView buildDispatchBoard(OffsetDateTime referenceTime, List<Lane> lanes) {
+		recoverActiveYardAssignmentsFromEntryLogs(referenceTime);
 		List<DispatchTicket> activeTickets = dispatchTicketRepository.findByClosedAtIsNullOrderByYardEntryTimeAsc();
 		List<DispatchTicket> waitingAssignments = activeTickets.stream()
 				.filter(ticket -> "ASSIGNED".equals(ticket.getStatus()) && ticket.getLaneEntryTime() == null)
+				.sorted(Comparator.comparing(
+						DispatchTicket::getYardEntryTime,
+						Comparator.nullsLast(Comparator.reverseOrder())))
 				.limit(8)
 				.toList();
 		OffsetDateTime currentCycleStart = currentDailyResetAt();
@@ -973,6 +1025,7 @@ public class OperationsService {
 				.filter(ticket -> currentCycleStart == null || !ticketTime(ticket).isBefore(currentCycleStart))
 				.limit(12)
 				.toList();
+		logScreenBoardDiagnosticIfNeeded(waitingAssignments, recentDispatches, currentCycleStart);
 		String activeEntryLaneId = resolveOpenEntryLaneId(lanes, referenceTime);
 		String activeExitLaneId = resolveOpenExitLaneId(lanes, referenceTime, activeEntryLaneId);
 		return new DispatchBoardView(
@@ -985,6 +1038,105 @@ public class OperationsService {
 				currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled),
 				waitingAssignments,
 				recentDispatches);
+	}
+
+	private void logScreenBoardDiagnosticIfNeeded(
+			List<DispatchTicket> waitingAssignments,
+			List<DispatchTicket> recentDispatches,
+			OffsetDateTime currentCycleStart) {
+		if (!waitingAssignments.isEmpty() || !recentDispatches.isEmpty()) {
+			return;
+		}
+		long nowMs = System.currentTimeMillis();
+		long previousLogAt = lastScreenBoardDiagnosticLogAt.get();
+		if (nowMs - previousLogAt < SCREEN_BOARD_DIAGNOSTIC_LOG_INTERVAL_MS
+				|| !lastScreenBoardDiagnosticLogAt.compareAndSet(previousLogAt, nowMs)) {
+			return;
+		}
+		List<EntryLog> activeLogs = entryLogRepository.findByExitTimeIsNullOrderByEntryTimeAsc();
+		if (activeLogs.isEmpty()) {
+			return;
+		}
+		EntryLog latestLog = activeLogs.getLast();
+		log.warn(
+				"Screen board has active entry logs but no dispatch guide data. activeLogs={} latestPlate={} latestLane={} latestSource={} latestEntryTime={} entryDispatchEnabled={} activeEntryLane={} currentCycleStart={} openTickets={} totalTickets={}. This usually means total entrance plateResult was routed as lane entry instead of ALPR_YARD, or dispatch_tickets were not created.",
+				activeLogs.size(),
+				latestLog.getPlate(),
+				latestLog.getLaneId(),
+				latestLog.getSource(),
+				latestLog.getEntryTime(),
+				currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled),
+				currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null),
+				currentCycleStart,
+				dispatchTicketRepository.findByClosedAtIsNullOrderByYardEntryTimeAsc().size(),
+				dispatchTicketRepository.count());
+	}
+
+	private void recoverActiveYardAssignmentsFromEntryLogs(OffsetDateTime referenceTime) {
+		List<EntryLog> activeYardLogs = entryLogRepository.findByExitTimeIsNullOrderByEntryTimeAsc().stream()
+				.filter(log -> "ALPR_YARD".equalsIgnoreCase(log.getSource()))
+				.sorted(Comparator.comparing(EntryLog::getEntryTime, Comparator.nullsLast(Comparator.reverseOrder())))
+				.limit(12)
+				.toList();
+		if (activeYardLogs.isEmpty()) {
+			return;
+		}
+		List<DispatchTicket> changedTickets = new ArrayList<>();
+		for (EntryLog log : activeYardLogs) {
+			if (hasOpenGuideTicketForEntryLog(log)) {
+				continue;
+			}
+			DispatchTicket ticket = findRecoverableTicketForEntryLog(log);
+			if (ticket == null) {
+				ticket = DispatchTicket.builder()
+						.id("DSP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
+						.plate(normalizePlate(log.getPlate()))
+						.yardEntryTime(log.getEntryTime())
+						.vehicleType(log.getVehicleType())
+						.source("ALPR_YARD")
+						.operator("总入口抓拍")
+						.build();
+			}
+			ticket.setAssignedLaneId(log.getLaneId());
+			ticket.setAssignedLaneName(log.getLaneName());
+			ticket.setAssignedAt(log.getEntryTime());
+			ticket.setActualLaneId(null);
+			ticket.setActualLaneName(null);
+			ticket.setLaneEntryTime(null);
+			ticket.setExitTime(null);
+			ticket.setClosedAt(null);
+			ticket.setStatus("ASSIGNED");
+			ticket.setSource("ALPR_YARD");
+			ticket.setOperator("总入口抓拍");
+			ticket.setNotes("根据总入口在场流水自动恢复大屏引导");
+			changedTickets.add(ticket);
+		}
+		if (!changedTickets.isEmpty()) {
+			dispatchTicketRepository.saveAll(changedTickets);
+			log.warn(
+					"Recovered active yard guide assignments from entry logs count={} plates={} referenceTime={}",
+					changedTickets.size(),
+					changedTickets.stream().map(DispatchTicket::getPlate).toList(),
+					referenceTime);
+		}
+	}
+
+	private boolean hasOpenGuideTicketForEntryLog(EntryLog log) {
+		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(log.getPlate()).stream()
+				.anyMatch(ticket -> ticket.getExitTime() == null
+						&& "ASSIGNED".equals(ticket.getStatus())
+						&& ticket.getLaneEntryTime() == null
+						&& entryLogTimeMatchesTicket(ticket, log));
+	}
+
+	private DispatchTicket findRecoverableTicketForEntryLog(EntryLog log) {
+		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> normalizePlate(log.getPlate()).equals(normalizePlate(ticket.getPlate())))
+				.filter(ticket -> entryLogTimeMatchesTicket(ticket, log))
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> ticket.getLaneEntryTime() == null)
+				.findFirst()
+				.orElse(null);
 	}
 
 	private List<ThroughputPoint> buildThroughput(List<EntryLog> logs) {
@@ -1008,8 +1160,6 @@ public class OperationsService {
 	}
 
 	private List<Lane> refreshLaneRuntime(OffsetDateTime referenceTime) {
-		expireStaleDispatchTickets(referenceTime);
-
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		Map<String, EntryLog> headLogs = new HashMap<>();
 		for (EntryLog log : entryLogRepository.findByExitTimeIsNullOrderByEntryTimeAsc()) {
@@ -1256,7 +1406,6 @@ public class OperationsService {
 	}
 
 	private Map<String, Long> pendingAssignmentCounts(OffsetDateTime referenceTime) {
-		expireStaleDispatchTickets(referenceTime);
 		Map<String, Long> counts = new HashMap<>();
 		for (DispatchTicket ticket : dispatchTicketRepository.findByClosedAtIsNullOrderByYardEntryTimeAsc()) {
 			if ("ASSIGNED".equals(ticket.getStatus())
@@ -1280,11 +1429,46 @@ public class OperationsService {
 			ticket.setStatus("EXPIRED");
 			ticket.setClosedAt(referenceTime);
 			ticket.setNotes("总入口入场后 " + reserveMinutes + " 分钟内未被任何车道入口摄像头识别，生成未进车道告警并释放预分配");
-			closeProvisionalEntryLogForExpiredTicket(ticket, referenceTime);
+			log.warn(
+					"Yard entry assignment expired plate={} ticketId={} assignedLane={} yardEntryTime={} referenceTime={} reserveMinutes={}",
+					ticket.getPlate(),
+					ticket.getId(),
+					ticket.getAssignedLaneId(),
+					ticket.getYardEntryTime(),
+					referenceTime,
+					reserveMinutes);
 		}
 		if (!expiredTickets.isEmpty()) {
 			dispatchTicketRepository.saveAll(expiredTickets);
 		}
+	}
+
+	private void ensureEntryDispatchRunningForYardCapture(
+			String source,
+			OffsetDateTime referenceTime,
+			List<Lane> lanes,
+			List<String> laneOrder) {
+		if (!shouldAutoStartEntryDispatch(source)) {
+			return;
+		}
+		if (!currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled)) {
+			log.warn("Auto enabling entry dispatch for yard capture source={} referenceTime={}", source, referenceTime);
+			saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
+		}
+		if (isBlank(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))) {
+			String firstLaneId = firstOrderedLaneId(lanes, laneOrder);
+			if (isBlank(firstLaneId)) {
+				log.warn("Cannot select active entry lane for yard capture source={} referenceTime={} lanes={} laneOrder={}", source, referenceTime, lanes.size(), laneOrder);
+			}
+			saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, firstLaneId, referenceTime);
+		}
+	}
+
+	private boolean shouldAutoStartEntryDispatch(String source) {
+		String normalizedSource = source == null ? "" : source.toUpperCase(Locale.ROOT);
+		return normalizedSource.contains("YARD")
+				|| normalizedSource.contains("SCREEN_SIMULATION")
+				|| normalizedSource.contains("SMART_CAMERA");
 	}
 
 	private void upsertDispatchTicketForLaneEntry(
@@ -1608,10 +1792,30 @@ public class OperationsService {
 			return null;
 		}
 		try {
-			return OffsetDateTime.parse(value.trim());
+			OffsetDateTime resetAt = OffsetDateTime.parse(value.trim());
+			if (resetAt.isAfter(now().plusMinutes(1))) {
+				return null;
+			}
+			OffsetDateTime latestActiveEntryTime = latestActiveEntryLogTime();
+			if (latestActiveEntryTime != null && resetAt.isAfter(latestActiveEntryTime.plusMinutes(1))) {
+				log.warn(
+						"Ignoring daily reset marker because it is after latest active entry log. resetAt={} latestActiveEntryTime={}. This usually means server clock/timezone is ahead of device timestamps.",
+						resetAt,
+						latestActiveEntryTime);
+				return null;
+			}
+			return resetAt;
 		} catch (RuntimeException ignored) {
 			return null;
 		}
+	}
+
+	private OffsetDateTime latestActiveEntryLogTime() {
+		List<EntryLog> activeLogs = entryLogRepository.findByExitTimeIsNullOrderByEntryTimeAsc();
+		if (activeLogs.isEmpty()) {
+			return null;
+		}
+		return activeLogs.getLast().getEntryTime();
 	}
 
 	private DispatchTicket findLatestOpenTicketByPlate(String plate) {
@@ -1684,8 +1888,14 @@ public class OperationsService {
 		List<DispatchTicket> openTickets = dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
 				.filter(ticket -> ticket.getExitTime() == null)
 				.toList();
+		DispatchTicket recoverableExpiredTicket = findLatestRecoverableExpiredTicketByPlate(plate, referenceTime);
+		List<DispatchTicket> candidateTickets = openTickets;
+		if (recoverableExpiredTicket != null) {
+			candidateTickets = Stream.concat(openTickets.stream(), Stream.of(recoverableExpiredTicket)).toList();
+		}
+		List<DispatchTicket> activeTickets = candidateTickets;
 		List<EntryLog> staleLogs = activeLogs.stream()
-				.filter(log -> openTickets.stream().noneMatch(ticket -> matchesActiveEntryLog(ticket, log)))
+				.filter(log -> activeTickets.stream().noneMatch(ticket -> matchesActiveEntryLog(ticket, log)))
 				.toList();
 		if (staleLogs.isEmpty()) {
 			return;
@@ -1695,13 +1905,18 @@ public class OperationsService {
 	}
 
 	private boolean matchesActiveEntryLog(DispatchTicket ticket, EntryLog log) {
-		if (ticket == null || log == null || ticket.getYardEntryTime() == null) {
+		if (ticket == null || log == null) {
 			return false;
 		}
 		String expectedLaneId = firstNonBlank(ticket.getActualLaneId(), ticket.getAssignedLaneId());
 		return !isBlank(expectedLaneId)
 				&& expectedLaneId.equals(log.getLaneId())
-				&& ticket.getYardEntryTime().isEqual(log.getEntryTime());
+				&& entryLogTimeMatchesTicket(ticket, log);
+	}
+
+	private boolean entryLogTimeMatchesTicket(DispatchTicket ticket, EntryLog log) {
+		return (ticket.getLaneEntryTime() != null && ticket.getLaneEntryTime().isEqual(log.getEntryTime()))
+				|| (ticket.getYardEntryTime() != null && ticket.getYardEntryTime().isEqual(log.getEntryTime()));
 	}
 
 	private EntryLog findActiveEntryLogForTicket(DispatchTicket ticket, String plate) {

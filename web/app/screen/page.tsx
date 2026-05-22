@@ -51,6 +51,13 @@ interface EntryLog {
   operator: string;
 }
 
+interface EntryInfoItem {
+  id: string;
+  plate: string;
+  occurredAt: string;
+  laneName: string | null;
+}
+
 interface LaneSnapshot {
   id: string;
   code: string;
@@ -437,8 +444,8 @@ function EventRows({
   );
 }
 
-function EntryInfoRows({ tickets }: { tickets: DispatchTicket[] }) {
-  const rows = tickets.slice(0, 10);
+function EntryInfoRows({ entries }: { entries: EntryInfoItem[] }) {
+  const rows = entries.slice(0, 10);
   const visibleRows = 6;
   const rowHeight = 52;
   const displayRows = rows.length > visibleRows ? [...rows, ...rows] : rows;
@@ -446,11 +453,12 @@ function EntryInfoRows({ tickets }: { tickets: DispatchTicket[] }) {
   return (
     <div className="screen-scroll-viewport" style={{ height: visibleRows * rowHeight }}>
       <div className={rows.length > visibleRows ? "screen-scroll-track" : undefined} style={rows.length > visibleRows ? screenScrollStyle(rows.length, rowHeight) : undefined}>
-        {displayRows.map((ticket, index) => (
-          <div key={`${ticket.id}-${index}`} className="mb-[7px] grid h-[45px] grid-cols-[124px_1fr] items-center gap-[7px] border-b border-[#4d7593]/80">
-            <InlinePlate text={ticket.plate} tone={plateTone(ticket.plate)} scale="entry" />
+        {displayRows.map((entry, index) => (
+          <div key={`${entry.id}-${index}`} className="mb-[7px] grid h-[45px] grid-cols-[124px_1fr] items-center gap-[7px] border-b border-[#4d7593]/80">
+            <InlinePlate text={entry.plate} tone={plateTone(entry.plate)} scale="entry" />
             <div className="min-w-0 text-[11px] leading-[16px] text-white">
-              <p className="whitespace-nowrap">时间:{formatScreenTime(ticket.yardEntryTime)}</p>
+              <p className="whitespace-nowrap">时间:{formatScreenTime(entry.occurredAt)}</p>
+              {entry.laneName ? <p className="truncate text-[#9cecff]">{entry.laneName}</p> : null}
             </div>
           </div>
         ))}
@@ -458,6 +466,28 @@ function EntryInfoRows({ tickets }: { tickets: DispatchTicket[] }) {
       </div>
     </div>
   );
+}
+
+function buildEntryInfoItems(board: ScreenBoardData | null): EntryInfoItem[] {
+  if (!board) {
+    return [];
+  }
+
+  if (board.recentDispatches?.length) {
+    return board.recentDispatches.map((ticket) => ({
+      id: ticket.id,
+      plate: ticket.plate,
+      occurredAt: ticket.yardEntryTime,
+      laneName: ticket.assignedLaneName ?? ticket.actualLaneName ?? null,
+    }));
+  }
+
+  return (board.recentEntryLogs ?? []).map((entry) => ({
+    id: entry.id,
+    plate: entry.plate,
+    occurredAt: entry.entryTime,
+    laneName: entry.laneName ?? null,
+  }));
 }
 
 function GuideRows({ tickets }: { tickets: DispatchTicket[] }) {
@@ -691,9 +721,9 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
   const events = board?.events ?? [];
-  const recentEntries = board?.recentDispatches ?? [];
+  const recentEntries = useMemo(() => buildEntryInfoItems(board), [board]);
   const pendingGuideEntries = board?.waitingAssignments ?? [];
-  const guideEntries = board?.guideAssignments ?? pendingGuideEntries;
+  const guideEntries = pendingGuideEntries.length ? pendingGuideEntries : board?.guideAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = board?.laneVehicles ?? {};
 
@@ -905,7 +935,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <Asset name="Group 48097128.png" className="absolute left-[1541px] top-[730px] h-[104px] w-[71px]" />
 
         <Panel title="进场信息" x={1610} y={215} size="large">
-          <EntryInfoRows tickets={recentEntries} />
+          <EntryInfoRows entries={recentEntries} />
         </Panel>
         <Panel title="引导牌" x={1610} y={663} size="large">
           <GuideRows tickets={guideEntries} />

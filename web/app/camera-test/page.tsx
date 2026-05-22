@@ -32,13 +32,20 @@ interface LogEntry {
   payload: string;
 }
 
-const DEFAULT_BROKER_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "192.168.55.10";
-const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? "127.0.0.1";
+const DEFAULT_BROKER_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "127.0.0.1";
+const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? DEFAULT_BROKER_HOST;
 const DEFAULT_CAMERA_ID = "18030023535D";
 const DEFAULT_MF_SN = "00E02721A3A7";
 const DEFAULT_MF_GROUP_ID = "9QHZNII";
-const DEFAULT_MF_DEVICE_NO = "22K5000202407828";
+const DEFAULT_MF_DEVICE_NO = "09K2900202441623";
 const DEFAULT_PLATE = "苏B3R89T";
+
+function currentBrowserHost(fallback: string) {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  return window.location.hostname || fallback;
+}
 
 function nowText() {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -136,9 +143,9 @@ function buildParkingMfHeartbeat(sn: string, groupId: string, deviceNo: string) 
 }
 
 export default function CameraTestPage() {
-  const [brokerHost, setBrokerHost] = useState(DEFAULT_BROKER_HOST);
+  const [brokerHost, setBrokerHost] = useState(() => currentBrowserHost(DEFAULT_BROKER_HOST));
   const [mqttPort] = useState("1883");
-  const [wsHost, setWsHost] = useState(DEFAULT_WS_HOST);
+  const [wsHost, setWsHost] = useState(() => currentBrowserHost(DEFAULT_WS_HOST));
   const [wsPort, setWsPort] = useState("9001");
   const [cameraId, setCameraId] = useState(DEFAULT_CAMERA_ID);
   const [mfSn, setMfSn] = useState(DEFAULT_MF_SN);

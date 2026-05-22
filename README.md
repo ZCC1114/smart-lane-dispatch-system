@@ -178,7 +178,7 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<报文data.deviceNo>
 ```dotenv
 APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
 APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
-APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=09K2900202441623
 ```
 
 ### 3. 1-11 车道 Smart Camera
@@ -231,6 +231,12 @@ APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080
 - 入口 DIDO 的 `A01-A11`：1-11 号车道入口绿灯继电器
 - 出口 DIDO 的 `A01-A11`：1-11 号车道出口绿灯继电器
 - 出口 DIDO 的 `B01-B11`：1-11 号车道出口地感输入
+
+出口地感自动出场默认关闭，避免现场输入极性未确认时把刚入场车辆自动写出场时间。确认 `B01-B11` 上报为稳定的未触发->触发边沿后，再开启：
+
+```dotenv
+APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED=true
+```
 
 当前按单继电器灯控：继电器吸合表示绿灯，继电器关闭表示红灯。如果现场红灯、绿灯是两个独立继电器，再额外填写 `APP_DEVICE_Lxx_ENTRY_RED_RELAY` 或 `APP_DEVICE_Lxx_EXIT_RED_RELAY`。
 

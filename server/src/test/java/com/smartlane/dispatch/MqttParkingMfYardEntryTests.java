@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.smartlane.dispatch.device.DeviceGatewayProperties;
 import com.smartlane.dispatch.device.MqttDeviceGateway;
 import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.entity.Lane;
@@ -27,7 +28,7 @@ import com.smartlane.dispatch.service.LaneRuntimeStateService;
 		"app.device.mqtt.enabled=false",
 		"app.device.parking-mf.enabled=true",
 		"app.device.parking-mf.yard-entry-sn=00E02721A3A7",
-		"app.device.parking-mf.yard-entry-device-no=22K5000202407828",
+		"app.device.parking-mf.yard-entry-device-no=09K2900202441623",
 		"app.device.smart-camera.enabled=false",
 		"app.device.dido.enabled=false",
 		"app.dispatch.entry-enabled-default=true",
@@ -52,6 +53,9 @@ class MqttParkingMfYardEntryTests {
 	private LaneRuntimeStateService laneRuntimeStateService;
 
 	@Autowired
+	private DeviceGatewayProperties deviceGatewayProperties;
+
+	@Autowired
 	private MqttDeviceGateway mqttDeviceGateway;
 
 	@BeforeEach
@@ -62,6 +66,9 @@ class MqttParkingMfYardEntryTests {
 		laneRepository.deleteAll();
 		laneRuntimeStateService.clearAll();
 		mqttDeviceGateway.clearSyncState();
+		deviceGatewayProperties.getParkingMf().setYardEntrySn("00E02721A3A7");
+		deviceGatewayProperties.getParkingMf().setYardEntryGroupId(null);
+		deviceGatewayProperties.getParkingMf().setYardEntryDeviceNo("09K2900202441623");
 	}
 
 	@Test
@@ -76,9 +83,9 @@ class MqttParkingMfYardEntryTests {
 				{
 				  "cmd": "plateResult",
 				  "data": {
-				    "carImg": "https://img.bolinkpay.com/picture/00E02721A3A7/22K5000202407828/20260512/14/20260512_145336_000.jpg",
+				    "carImg": "https://img.bolinkpay.com/picture/00E02721A3A7/09K2900202441623/20260512/14/20260512_145336_000.jpg",
 				    "confidence": 27,
-				    "deviceNo": "22K5000202407828",
+				    "deviceNo": "09K2900202441623",
 				    "groupId": "9QHZNII",
 				    "parkingTime": "2026-05-12 14:53:36",
 				    "plateColor": "BLUE",
@@ -104,6 +111,49 @@ class MqttParkingMfYardEntryTests {
 		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
 		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
+				.singleElement()
+				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
+				.containsExactly("苏B3R89T", "L01", null);
+	}
+
+	@Test
+	void parkingMfPlateResultShouldStillUseYardEntryWhenSnMatchesButDeviceNoIsStale() {
+		deviceGatewayProperties.getParkingMf().setYardEntryGroupId("9QHZNII");
+		deviceGatewayProperties.getParkingMf().setYardEntryDeviceNo("22K5000202407828");
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+
+		String payload = """
+				{
+				  "cmd": "plateResult",
+				  "data": {
+				    "confidence": 27,
+				    "deviceNo": "09K2900202441623",
+				    "groupId": "9QHZNII",
+				    "parkingTime": "2026-05-22 18:56:41",
+				    "plateColor": "BLUE",
+				    "plateNo": "苏B5T008",
+				    "realTime": true,
+				    "uploadTime": 1779447401000
+				  },
+				  "msgId": "C_6a0fdemo",
+				  "sn": "00E02721A3A7",
+				  "timestamp": 1779447401000,
+				  "timezone": "Asia/Shanghai"
+				}
+				""";
+
+		ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"handleRawMqttMessage",
+				"/00E02721A3A7/mf/up",
+				payload.getBytes(StandardCharsets.UTF_8));
+
+		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
+		assertThat(ticket.getPlate()).isEqualTo("苏B5T008");
+		assertThat(ticket.getSource()).isEqualTo("ALPR_YARD");
+		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
 	}
 
 	private Lane buildLane(String id, String code, String name) {

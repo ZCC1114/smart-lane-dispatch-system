@@ -21,7 +21,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smartlane.dispatch.dto.YardEntryPayload;
 import com.smartlane.dispatch.entity.BlacklistRecord;
+import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
@@ -121,6 +123,35 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].status").value("FULL"))
 			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("RED"))
 			.andExpect(jsonPath("$[?(@.id=='L02')].entrySignal").value("GREEN"));
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
+				.singleElement()
+				.extracting(EntryLog::getPlate, EntryLog::getLaneId, EntryLog::getExitTime)
+				.containsExactly("沪A12345", "L01", null);
+	}
+
+	@Test
+	void yardCameraEntryShouldAutoStartEntryDispatchAndCreateGuideAssignment() {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(2);
+		laneRepository.save(firstLane);
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey("entry_dispatch_enabled")
+				.configValue("false")
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
+
+		DispatchTicket ticket = operationsService.registerYardEntry(new YardEntryPayload("苏B2T119", "出租车", "ALPR_YARD", now()));
+
+		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().waitingAssignments())
+				.extracting(DispatchTicket::getPlate)
+				.contains("苏B2T119");
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
+				.singleElement()
+				.extracting(EntryLog::getPlate, EntryLog::getLaneId, EntryLog::getExitTime)
+				.containsExactly("苏B2T119", "L01", null);
 	}
 
 	@Test
@@ -147,6 +178,27 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(1))
 			.andExpect(jsonPath("$[?(@.id=='L01')].reservedCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"));
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A12345");
+	}
+
+	@Test
+	void duplicateLaneEntryAfterYardAssignmentShouldKeepActiveLogOpen() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A12345", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A12345", "2026-04-20T08:01:00+08:00");
+		postVehicleEntry(token, "L01", "沪A12345", "2026-04-20T08:01:05+08:00");
+
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A12345");
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
+				.filter(log -> "沪A12345".equals(log.getPlate())))
+			.hasSize(1)
+			.allMatch(log -> log.getExitTime() == null);
 	}
 
 	@Test
@@ -566,8 +618,7 @@ class LaneOperationsFlowTests {
 		List<EntryLog> logs = entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
 				.filter(log -> "沪A92111".equals(log.getPlate()))
 				.toList();
-		assertThat(logs).hasSize(2);
-		assertThat(logs).filteredOn(log -> log.getExitTime() != null).hasSize(1);
+		assertThat(logs).hasSize(1);
 		assertThat(logs).filteredOn(log -> log.getExitTime() == null)
 				.singleElement()
 				.extracting(EntryLog::getLaneId)
@@ -591,7 +642,7 @@ class LaneOperationsFlowTests {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 		String token = loginAndGetToken();
 
-		postYardEntry(token, "沪A11111", "2026-04-20T08:00:00+08:00");
+		postYardEntry(token, "沪A11111", "2026-04-20T07:50:00+08:00");
 		postYardEntry(token, "沪A22222", "2026-04-20T08:02:00+08:00");
 
 		mockMvc.perform(get("/api/screen/board")
@@ -669,6 +720,22 @@ class LaneOperationsFlowTests {
 		assertThat(applied.getEntrySignal()).isEqualTo("GREEN");
 		assertThat(applied.getExitSignal()).isEqualTo("RED");
 		assertThat(applied.getLedStatus()).isEqualTo("PENDING");
+	}
+
+	@Test
+	void recentScreenEntriesShouldIgnoreFutureDailyResetConfig() {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		operationsService.registerVehicleEntryFromDevice("L01", "苏B9T107", now().minusMinutes(1), "出租车", "SMART_CAMERA");
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey("last_daily_reset_at")
+				.configValue(now().plusDays(1).toString())
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
+
+		assertThat(operationsService.getRecentEntryLogs(10))
+				.extracting(EntryLog::getPlate)
+				.contains("苏B9T107");
 	}
 
 	private void postYardEntry(String token, String plate, String capturedAt) throws Exception {

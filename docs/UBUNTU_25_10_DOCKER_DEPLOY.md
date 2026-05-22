@@ -57,7 +57,7 @@
 | `172.17.2.21-23` | 大华摄像机 | 否 | 只做视频系统内部使用，不接入本系统 |
 | `172.17.2.30` | 大华对讲终端 | 否 | 原始清单写作 `173.172.17.2.30`，按笔误处理；对讲不接入本系统 |
 | `172.17.2.31-33` | 大华对讲 | 否 | 对讲系统内部使用，不接入本系统 |
-| `172.17.2.40` | 车牌识别一体机 | 是 | 与 `172.17.2.90` 为一套总入口 MF 设备；现场端应为一体机；已确认 `SN=00E02721A3A7`、`groupId=9QHZNII`、`deviceNo=22K5000202407828` |
+| `172.17.2.40` | 车牌识别一体机 | 是 | 与 `172.17.2.90` 为一套总入口 MF 设备；现场端应为一体机；已确认 `SN=00E02721A3A7`、`groupId=9QHZNII`、`deviceNo=09K2900202441623` |
 | `172.17.2.51-61` | 1-11 号车道入口摄像机 | 是 | `.51=L01`、`.52=L02`，依次到 `.61=L11`; MQTT `devId` 已按现场 UID/MAC 配置 |
 | `172.17.2.70` | LED 显示屏 | 是 | 需要自动显示引导牌内容；已按 Bx6E、1920x960、2列x6行配置 |
 | `172.17.2.80-81` | DIDO 模块 | 是 | 走 MQTT 连接服务器 `172.17.2.10:1883`; 测试页面已调通过；`.80/.81` 分别对应入口/出口待现场最终确认 |
@@ -597,7 +597,7 @@ APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
 # 至少填写 SN；如果同一 SN 下有多路相机，再填写 groupId/deviceNo。
 APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
 APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
-APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=09K2900202441623
 
 # 计数报警协议相机 devId；使用 MF 协议时保持为空。
 APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID=
@@ -620,6 +620,7 @@ APP_DEVICE_DIDO_PAYLOAD_MODE=json
 APP_DEVICE_DIDO_RELAY_MODE=ordinary
 APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT=false
 APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT=false
+APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED=false
 APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-ENTRY-01
 APP_DEVICE_SHARED_ENTRY_DIDO_HOST=172.17.2.80
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080
@@ -889,7 +890,11 @@ IN10 -> L10 10号车道出口地感
 IN11 -> L11 11号车道出口地感
 ```
 
-系统默认把 `B01-B11` 作为出口地感输入键。DIDO 上报从未触发变为触发时，系统认为对应车道有 1 辆车驶出。
+系统默认把 `B01-B11` 作为出口地感输入键，但自动出场开关默认关闭，避免现场输入极性未确认时把刚入场车辆自动写出场时间。确认上报为稳定的未触发->触发边沿后，再在 `.env` 中开启:
+
+```dotenv
+APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED=true
+```
 
 如果现场 CX 设备 ID 不是示例值，修改 `.env`:
 
@@ -990,7 +995,7 @@ APP_DEVICE_SMART_CAMERA_YARD_ENTRY_CAMERA_DEV_ID=<总入口相机devId>
 ```dotenv
 APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=<总入口MF设备SN，例如00E02721A3A7>
 APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=<总入口MF报文data.groupId，可为空>
-APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo，例如22K5000202407828>
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo，例如09K2900202441623>
 ```
 
 当前已按测试通过的上报数据配置:
@@ -998,7 +1003,7 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo，例
 ```dotenv
 APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
 APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
-APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=09K2900202441623
 ```
 
 对应 Topic:
@@ -1108,7 +1113,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadm
   "cmd": "plateResult",
   "sn": "00E02721A3A7",
   "data": {
-    "deviceNo": "22K5000202407828",
+    "deviceNo": "09K2900202441623",
     "groupId": "9QHZNII",
     "plateNo": "苏B3R89T",
     "parkingTime": "2026-05-12 14:53:36"
@@ -1128,7 +1133,7 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadm
 ```dotenv
 APP_DEVICE_PARKING_MF_YARD_ENTRY_SN=00E02721A3A7
 APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID=9QHZNII
-APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=22K5000202407828
+APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=09K2900202441623
 APP_DISPATCH_ENTRY_ENABLED_DEFAULT=true
 ```
 
@@ -1368,6 +1373,12 @@ sudo cp .env backups/.env.$(date +%F_%H%M%S)
 sudo tar -xzf /home/supervisor/smart-lane-upgrade-c297364/project/smart-lane-dispatch-system-c297364.tar.gz -C "$APP_DIR"
 ```
 
+修正 Mosquitto 密码文件权限，避免容器内 `mosquitto` 用户读不到密码文件导致 1883/9001 端口无法正常服务:
+
+```bash
+sudo chmod 644 deploy/mosquitto/password_file
+```
+
 把这次现场关键参数合并进服务器 `.env`。这一步保留服务器原来的数据库密码、JWT 等配置，只更新本次设备联调需要的项:
 
 ```bash
@@ -1391,9 +1402,10 @@ set_env APP_CORS_ALLOWED_ORIGINS http://172.17.2.10:3002
 
 set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_SN 00E02721A3A7
 set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID 9QHZNII
-set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO 22K5000202407828
+set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO 09K2900202441623
 
 set_env APP_DEVICE_DIDO_PAYLOAD_MODE json
+set_env APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED false
 set_env APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID DIDO-ENTRY-01
 set_env APP_DEVICE_SHARED_ENTRY_DIDO_HOST 172.17.2.80
 set_env APP_DEVICE_SHARED_ENTRY_DIDO_PORT 8080

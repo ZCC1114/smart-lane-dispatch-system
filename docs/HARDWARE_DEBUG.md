@@ -92,6 +92,7 @@ app.device.mqtt.port=1883
 app.device.mqtt.client-id=smart-lane-dispatch-system
 app.device.mqtt.username=jcadmin
 app.device.mqtt.password=jcadmin@12345
+app.device.dido.exit-trigger-enabled=false
 
 # 总入口 MF 摄像头，只负责蓄车池入口预分配
 app.device.parking-mf.yard-entry-sn=<总入口MF设备SN>
@@ -117,6 +118,8 @@ app.device.lanes[1].entry-green-relay=A02
 app.device.lanes[1].exit-green-relay=A02
 app.device.lanes[1].exit-trigger-input-key=B02
 ```
+
+`app.device.dido.exit-trigger-enabled` 默认保持 `false`。只有确认出口 DIDO 输入极性和边沿稳定后，才改为 `true`，否则会把刚入场车辆误写出场时间。
 
 **重启后端**，观察日志：
 
@@ -211,7 +214,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
   "timestamp": 1713936000000,
   "data": {
     "deviceStatus": [
-      {"deviceNo": "22K5000202407828", "network": "online"}
+      {"deviceNo": "09K2900202441623", "network": "online"}
     ]
   }
 }'
@@ -230,7 +233,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
   "timezone": "Asia/Shanghai",
   "data": {
     "groupId": "9QHZNII",
-    "deviceNo": "22K5000202407828",
+    "deviceNo": "09K2900202441623",
     "plateNo": "苏B3R89T",
     "parkingTime": "2026-05-12 14:53:36"
   }
@@ -252,7 +255,7 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
 **预期收到**：
 
 ```json
-{"cmd":"plateResultResp","msgId":"...","timestamp":...,"sn":"00E02721A3A7","data":{"groupId":"9QHZNII","deviceNo":"22K5000202407828","success":true}}
+{"cmd":"plateResultResp","msgId":"...","timestamp":...,"sn":"00E02721A3A7","data":{"groupId":"9QHZNII","deviceNo":"09K2900202441623","success":true}}
 ```
 
 ### 4.4 常见问题
@@ -387,7 +390,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
   "timestamp": 1778568817063,
   "timezone": "Asia/Shanghai",
   "data": {
-    "deviceNo": "22K5000202407828",
+    "deviceNo": "09K2900202441623",
     "groupId": "9QHZNII",
     "plateNo": "苏B88888",
     "parkingTime": "2026-05-12 14:53:36"
@@ -552,14 +555,14 @@ pub_dido() {
 pub_mf_heartbeat() {
   mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/00E02721A3A7/mf/up" -m '{
     "cmd":"heartbeat","sn":"00E02721A3A7","timestamp":'$(date +%s000)',
-    "data":{"deviceStatus":[{"deviceNo":"22K5000202407828","network":"online"}]}
+    "data":{"deviceStatus":[{"deviceNo":"09K2900202441623","network":"online"}]}
   }'
 }
 
 pub_mf_plate() {
   mosquitto_pub -h $BROKER -p $PORT -u "$USERNAME" -P "$PASSWORD" -t "/00E02721A3A7/mf/up" -m '{
     "cmd":"plateResult","sn":"00E02721A3A7","msgId":"test-'$(date +%s)'",
-    "data":{"groupId":"9QHZNII","deviceNo":"22K5000202407828","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
+    "data":{"groupId":"9QHZNII","deviceNo":"09K2900202441623","plateNo":"'$1'","parkingTime":"'$(date "+%Y-%m-%d %H:%M:%S")'"}
   }'
 }
 

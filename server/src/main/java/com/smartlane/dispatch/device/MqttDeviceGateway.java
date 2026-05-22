@@ -34,6 +34,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartlane.dispatch.dto.YardEntryPayload;
+import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.service.LaneRuntimeStateService;
 import com.smartlane.dispatch.service.OperationsService;
@@ -380,7 +381,20 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		String deviceNo = text(data.path("deviceNo"));
 		String plate = text(data.path("plateNo"));
 		OffsetDateTime capturedAt = parseDeviceTime(firstNonBlank(text(data.path("parkingTime")), text(data.path("uploadTime")), text(message.path("timestamp"))));
-		if (isYardEntryParkingMf(sn, groupId, deviceNo)) {
+		boolean yardEntry = isYardEntryParkingMf(sn, groupId, deviceNo);
+		log.info(
+				"Parking MF plateResult received sn={} groupId={} deviceNo={} plate={} capturedAt={} yardEntryMatch={} configuredYardSn={} configuredYardGroupId={} configuredYardDeviceNo={}",
+				sn,
+				groupId,
+				deviceNo,
+				plate,
+				capturedAt,
+				yardEntry,
+				nullToEmpty(properties.getParkingMf().getYardEntrySn()),
+				nullToEmpty(properties.getParkingMf().getYardEntryGroupId()),
+				nullToEmpty(properties.getParkingMf().getYardEntryDeviceNo()));
+		if (yardEntry) {
+			logParkingMfYardConfigMismatch(sn, groupId, deviceNo);
 			if (!isBlank(plate)) {
 				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD");
 			}
@@ -390,11 +404,27 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 		DeviceGatewayProperties.LaneBinding binding = firstBinding(findMfBindings(sn, groupId, deviceNo));
 		if (binding == null) {
-			log.warn("Parking plate result cannot be mapped to lane, sn={}, groupId={}, deviceNo={}", sn, groupId, deviceNo);
+			log.warn(
+					"Parking MF plateResult cannot be mapped to yard entry or lane, sn={} groupId={} deviceNo={} plate={} configuredYardSn={} configuredYardGroupId={} configuredYardDeviceNo={}",
+					sn,
+					groupId,
+					deviceNo,
+					plate,
+					nullToEmpty(properties.getParkingMf().getYardEntrySn()),
+					nullToEmpty(properties.getParkingMf().getYardEntryGroupId()),
+					nullToEmpty(properties.getParkingMf().getYardEntryDeviceNo()));
 			return;
 		}
 
 		if (!isBlank(plate)) {
+			log.warn(
+					"Parking MF plateResult routed as lane entry, not yard entry. plate={} laneId={} sn={} groupId={} deviceNo={} capturedAt={}",
+					plate,
+					binding.getLaneId(),
+					sn,
+					groupId,
+					deviceNo,
+					capturedAt);
 			registerVehicleEntryFromDevice(
 					binding.getLaneId(),
 					plate,
@@ -589,7 +619,10 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 						observedAt,
 						"DIDO 继电器状态已反馈");
 			}
-			if (exitDevice && !isBlank(binding.getExitTriggerInputKey()) && message.has(binding.getExitTriggerInputKey())) {
+			if (properties.getDido().isExitTriggerEnabled()
+					&& exitDevice
+					&& !isBlank(binding.getExitTriggerInputKey())
+					&& message.has(binding.getExitTriggerInputKey())) {
 				handleLaneExitTriggerInput(didoDeviceId, binding, message.path(binding.getExitTriggerInputKey()), observedAt);
 			}
 			if (exitDevice && !isBlank(binding.getPresenceInputKey()) && message.has(binding.getPresenceInputKey())) {
@@ -1147,17 +1180,36 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private boolean isYardEntryParkingMf(String sn, String groupId, String deviceNo) {
 		DeviceGatewayProperties.ParkingMfProperties parkingMf = properties.getParkingMf();
-		boolean configured = !isBlank(parkingMf.getYardEntrySn())
-				|| !isBlank(parkingMf.getYardEntryGroupId())
-				|| !isBlank(parkingMf.getYardEntryDeviceNo());
-		return configured
-				&& matchesConfigured(parkingMf.getYardEntrySn(), sn)
-				&& matchesConfigured(parkingMf.getYardEntryGroupId(), groupId)
+		boolean snConfigured = !isBlank(parkingMf.getYardEntrySn());
+		boolean groupConfigured = !isBlank(parkingMf.getYardEntryGroupId());
+		boolean deviceConfigured = !isBlank(parkingMf.getYardEntryDeviceNo());
+		if (!snConfigured && !groupConfigured && !deviceConfigured) {
+			return false;
+		}
+		if (snConfigured) {
+			return matchesConfigured(parkingMf.getYardEntrySn(), sn);
+		}
+		return matchesConfigured(parkingMf.getYardEntryGroupId(), groupId)
 				&& matchesConfigured(parkingMf.getYardEntryDeviceNo(), deviceNo);
 	}
 
 	private boolean matchesConfigured(String expected, String actual) {
 		return isBlank(expected) || expected.equals(actual);
+	}
+
+	private void logParkingMfYardConfigMismatch(String sn, String groupId, String deviceNo) {
+		DeviceGatewayProperties.ParkingMfProperties parkingMf = properties.getParkingMf();
+		boolean groupMismatch = !isBlank(parkingMf.getYardEntryGroupId()) && !Objects.equals(parkingMf.getYardEntryGroupId(), groupId);
+		boolean deviceMismatch = !isBlank(parkingMf.getYardEntryDeviceNo()) && !Objects.equals(parkingMf.getYardEntryDeviceNo(), deviceNo);
+		if (groupMismatch || deviceMismatch) {
+			log.warn(
+					"Parking MF plateResult is treated as yard entry because SN matched, but configured group/device does not match payload. sn={} groupId={} configuredGroupId={} deviceNo={} configuredDeviceNo={}. Fix .env or leave APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO blank.",
+					sn,
+					groupId,
+					nullToEmpty(parkingMf.getYardEntryGroupId()),
+					deviceNo,
+					nullToEmpty(parkingMf.getYardEntryDeviceNo()));
+		}
 	}
 
 	private boolean isActiveEntrySmartCamera(String devId) {
@@ -1182,14 +1234,27 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private void registerVehicleEntryFromDevice(String laneId, String plate, OffsetDateTime entryTime, String vehicleType, String source) {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
+			log.info("Lane entry registration from MQTT laneId={} plate={} source={} entryTime={}", laneId, plate, source, entryTime);
 			operationsService.registerVehicleEntryFromDevice(laneId, plate, entryTime, vehicleType, source);
+		} else {
+			log.warn("Cannot register lane entry because OperationsService is unavailable laneId={} plate={} source={}", laneId, plate, source);
 		}
 	}
 
 	private void registerYardEntryFromDevice(String plate, OffsetDateTime capturedAt, String source) {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
-			operationsService.registerYardEntry(new YardEntryPayload(plate, "出租车", source, capturedAt));
+			DispatchTicket ticket = operationsService.registerYardEntry(new YardEntryPayload(plate, "出租车", source, capturedAt));
+			log.info(
+					"Yard entry registration from MQTT completed plate={} source={} capturedAt={} ticketId={} status={} assignedLane={}",
+					plate,
+					source,
+					capturedAt,
+					ticket.getId(),
+					ticket.getStatus(),
+					ticket.getAssignedLaneId());
+		} else {
+			log.warn("Cannot register yard entry because OperationsService is unavailable plate={} source={} capturedAt={}", plate, source, capturedAt);
 		}
 	}
 

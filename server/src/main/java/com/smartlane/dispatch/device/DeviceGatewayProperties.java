@@ -66,6 +66,7 @@ public class DeviceGatewayProperties {
 		private int pulseMilliseconds = 500;
 		private boolean enableRemoteConfigOnConnect = false;
 		private boolean enableRelayUploadOnConnect = false;
+		private boolean exitTriggerEnabled = false;
 	}
 
 	@Data
