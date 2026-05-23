@@ -8,6 +8,11 @@
 - `docs/`: 接口与部署文档
 - `scripts/`: 一键启动/停止脚本
 
+常用部署文档：
+
+- [前后端 Docker 镜像打包与服务器部署流程](docs/DOCKER_IMAGE_BUILD_AND_DEPLOY.md)
+- [Ubuntu 现场 Docker 部署与联调手册](docs/UBUNTU_25_10_DOCKER_DEPLOY.md)
+
 ## 功能覆盖
 
 - 登录与基础角色权限控制
