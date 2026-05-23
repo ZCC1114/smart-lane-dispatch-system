@@ -23,6 +23,7 @@ import { cn, formatPlateDisplay } from "@/lib/utils";
 
 type LogDirection = "tx" | "rx" | "system";
 type CameraCommand = "getVerInfo" | "getHaveCar" | "getVideo" | "clearCount";
+type MonitorMode = "single" | "all";
 
 interface LogEntry {
   id: string;
@@ -30,6 +31,7 @@ interface LogEntry {
   direction: LogDirection;
   topic: string;
   payload: string;
+  laneLabel?: string;
 }
 
 const DEFAULT_BROKER_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "127.0.0.1";
@@ -39,6 +41,19 @@ const DEFAULT_MF_SN = "00E02721A3A7";
 const DEFAULT_MF_GROUP_ID = "9QHZNII";
 const DEFAULT_MF_DEVICE_NO = "09K2900202441623";
 const DEFAULT_PLATE = "苏B3R89T";
+const LANE_CAMERA_IDS = [
+  { laneId: "L01", label: "1号车道", devId: "18030023535D" },
+  { laneId: "L02", label: "2号车道", devId: "1803002352FD" },
+  { laneId: "L03", label: "3号车道", devId: "180300235361" },
+  { laneId: "L04", label: "4号车道", devId: "18030023526B" },
+  { laneId: "L05", label: "5号车道", devId: "180300235302" },
+  { laneId: "L06", label: "6号车道", devId: "180300235265" },
+  { laneId: "L07", label: "7号车道", devId: "1803002353CD" },
+  { laneId: "L08", label: "8号车道", devId: "180300235396" },
+  { laneId: "L09", label: "9号车道", devId: "18030023525B" },
+  { laneId: "L10", label: "10号车道", devId: "18030023526C" },
+  { laneId: "L11", label: "11号车道", devId: "1803002353D4" },
+];
 
 function currentBrowserHost(fallback: string) {
   if (typeof window === "undefined") {
@@ -78,6 +93,16 @@ function displayPayload(payload: Buffer | Uint8Array | string) {
   }
   const text = Buffer.from(payload).toString("utf8").trim();
   return text || Buffer.from(payload).toString("hex").toUpperCase();
+}
+
+function deviceIdFromTopic(topic: string) {
+  const match = /^\/device\/([^/]+)\/(?:get|update|will)$/.exec(topic);
+  return match?.[1] ?? "";
+}
+
+function laneLabelForDeviceId(deviceId: string) {
+  const lane = LANE_CAMERA_IDS.find((item) => item.devId.toUpperCase() === deviceId.toUpperCase());
+  return lane ? `${lane.label} ${lane.laneId}` : "";
 }
 
 function buildCameraCommand(cameraId: string, cmd: CameraCommand, content: Record<string, unknown> = {}) {
@@ -147,6 +172,7 @@ export default function CameraTestPage() {
   const [mqttPort] = useState("1883");
   const [wsHost, setWsHost] = useState(() => currentBrowserHost(DEFAULT_WS_HOST));
   const [wsPort, setWsPort] = useState("9001");
+  const [monitorMode, setMonitorMode] = useState<MonitorMode>("single");
   const [cameraId, setCameraId] = useState(DEFAULT_CAMERA_ID);
   const [mfSn, setMfSn] = useState(DEFAULT_MF_SN);
   const [mfGroupId, setMfGroupId] = useState(DEFAULT_MF_GROUP_ID);
@@ -169,8 +195,11 @@ export default function CameraTestPage() {
   const mfUpTopic = `/${normalizedMfSn}/mf/up`;
   const mfDownTopic = `/${normalizedMfSn}/mf/down`;
   const topicFilters = useMemo(
-    () => [downTopic, upTopic, willTopic, mfUpTopic, mfDownTopic],
-    [downTopic, mfDownTopic, mfUpTopic, upTopic, willTopic],
+    () =>
+      monitorMode === "all"
+        ? ["/device/+/update", "/device/+/will", mfUpTopic, mfDownTopic]
+        : [downTopic, upTopic, willTopic, mfUpTopic, mfDownTopic],
+    [downTopic, mfDownTopic, mfUpTopic, monitorMode, upTopic, willTopic],
   );
 
   const addLog = useCallback((entry: Omit<LogEntry, "id" | "time">) => {
@@ -207,7 +236,17 @@ export default function CameraTestPage() {
     });
 
     nextClient.on("message", (topic, payload) => {
-      addLog({ direction: topic === downTopic || topic === mfDownTopic ? "tx" : "rx", topic, payload: displayPayload(payload) });
+      const topicDeviceId = deviceIdFromTopic(topic);
+      const laneLabel = topicDeviceId ? laneLabelForDeviceId(topicDeviceId) : "";
+      if (monitorMode === "all" && topicDeviceId && !laneLabel) {
+        return;
+      }
+      addLog({
+        direction: topic === downTopic || topic === mfDownTopic ? "tx" : "rx",
+        topic,
+        payload: displayPayload(payload),
+        laneLabel: laneLabel || (topicDeviceId ? `未映射 ${topicDeviceId}` : undefined),
+      });
     });
 
     nextClient.on("error", (error) => {
@@ -222,7 +261,7 @@ export default function CameraTestPage() {
       setClient((current) => (current === nextClient ? null : current));
       setConnState((current) => (current === "connected" ? "idle" : current));
     });
-  }, [addLog, client?.connected, downTopic, mfDownTopic, topicFilters, wsHost, wsPort]);
+  }, [addLog, client?.connected, downTopic, mfDownTopic, monitorMode, topicFilters, wsHost, wsPort]);
 
   const disconnect = useCallback(() => {
     client?.end(true);
@@ -230,6 +269,20 @@ export default function CameraTestPage() {
     setConnState("idle");
     setMessage("MQTT WebSocket 已断开");
   }, [client]);
+
+  const switchMonitorMode = useCallback(
+    (mode: MonitorMode) => {
+      if (mode === monitorMode) {
+        return;
+      }
+      client?.end(true);
+      setClient(null);
+      setConnState("idle");
+      setMonitorMode(mode);
+      setMessage("监听模式已切换，请重新连接 MQTT Broker");
+    },
+    [client, monitorMode],
+  );
 
   const publishJsonToTopic = useCallback(
     (topic: string, payload: string, direction: LogDirection, label?: string) => {
@@ -303,10 +356,11 @@ export default function CameraTestPage() {
     ["MQTT 端口", mqttPort],
     ["用户名", MQTT_USERNAME || "无（匿名）"],
     ["密码", MQTT_USERNAME ? MQTT_PASSWORD : "无"],
-    ["相机 devId", normalizedCameraId],
+    ["监听模式", monitorMode === "all" ? "1-11号入口相机" : "单台相机"],
+    ["相机 devId", monitorMode === "all" ? "全部车道入口" : normalizedCameraId],
     ["下发 Topic", downTopic],
-    ["上报 Topic", upTopic],
-    ["遗嘱 Topic", willTopic],
+    ["上报 Topic", monitorMode === "all" ? "/device/+/update" : upTopic],
+    ["遗嘱 Topic", monitorMode === "all" ? "/device/+/will" : willTopic],
     ["总入口 SN", normalizedMfSn],
     ["总入口上报", mfUpTopic],
     ["总入口确认", mfDownTopic],
@@ -383,6 +437,35 @@ export default function CameraTestPage() {
                 连接设置
               </h2>
               <div className="grid gap-3">
+                <div className="grid gap-1 text-xs font-semibold text-slate-600">
+                  监听模式
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => switchMonitorMode("single")}
+                      className={cn(
+                        "rounded-md border px-3 py-2 text-sm font-bold",
+                        monitorMode === "single"
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                      )}
+                    >
+                      单台相机
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchMonitorMode("all")}
+                      className={cn(
+                        "rounded-md border px-3 py-2 text-sm font-bold",
+                        monitorMode === "all"
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                      )}
+                    >
+                      1-11号入口
+                    </button>
+                  </div>
+                </div>
                 <label className="grid gap-1 text-xs font-semibold text-slate-600">
                   设备侧 Broker 地址
                   <input
@@ -417,6 +500,16 @@ export default function CameraTestPage() {
                     />
                   </label>
                 </div>
+                {monitorMode === "all" ? (
+                  <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-50 p-2 text-[11px] sm:grid-cols-3">
+                    {LANE_CAMERA_IDS.map((lane) => (
+                      <div key={lane.laneId} className="min-w-0 rounded border border-slate-200 bg-white px-2 py-1">
+                        <div className="font-bold text-slate-700">{lane.label}</div>
+                        <div className="truncate font-mono text-slate-500">{lane.devId}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -624,18 +717,12 @@ export default function CameraTestPage() {
                   Topic
                 </h2>
                 <div className="grid gap-2 text-xs">
-                  <div className="grid grid-cols-[78px_1fr] gap-2">
-                    <span className="text-slate-500">下发</span>
-                    <span className="truncate font-mono font-semibold">{downTopic}</span>
-                  </div>
-                  <div className="grid grid-cols-[78px_1fr] gap-2">
-                    <span className="text-slate-500">上报</span>
-                    <span className="truncate font-mono font-semibold">{upTopic}</span>
-                  </div>
-                  <div className="grid grid-cols-[78px_1fr] gap-2">
-                    <span className="text-slate-500">遗嘱</span>
-                    <span className="truncate font-mono font-semibold">{willTopic}</span>
-                  </div>
+                  {topicFilters.map((topic, index) => (
+                    <div key={topic} className="grid grid-cols-[78px_1fr] gap-2">
+                      <span className="text-slate-500">订阅{index + 1}</span>
+                      <span className="truncate font-mono font-semibold">{topic}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -682,7 +769,12 @@ export default function CameraTestPage() {
                           {log.direction.toUpperCase()}
                         </span>
                         <div className="min-w-0">
-                          <div className="truncate font-mono font-semibold text-slate-800">{log.topic}</div>
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            {log.laneLabel ? (
+                              <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-bold text-cyan-700">{log.laneLabel}</span>
+                            ) : null}
+                            <span className="truncate font-mono font-semibold text-slate-800">{log.topic}</span>
+                          </div>
                           <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-slate-600">{log.payload}</pre>
                         </div>
                       </div>
