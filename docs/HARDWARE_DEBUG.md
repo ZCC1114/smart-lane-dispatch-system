@@ -92,7 +92,7 @@ app.device.mqtt.port=1883
 app.device.mqtt.client-id=smart-lane-dispatch-system
 app.device.mqtt.username=jcadmin
 app.device.mqtt.password=jcadmin@12345
-app.device.dido.exit-trigger-enabled=false
+app.device.dido.exit-trigger-enabled=true
 
 # 总入口 MF 摄像头，只负责蓄车池入口预分配
 app.device.parking-mf.yard-entry-sn=<总入口MF设备SN>
@@ -119,7 +119,7 @@ app.device.lanes[1].exit-green-relay=A02
 app.device.lanes[1].exit-trigger-input-key=B02
 ```
 
-`app.device.dido.exit-trigger-enabled` 默认保持 `false`。只有确认出口 DIDO 输入极性和边沿稳定后，才改为 `true`，否则会把刚入场车辆误写出场时间。
+`app.device.dido.exit-trigger-enabled` 默认保持 `true`。如果排查出口 DIDO 输入极性或发现误触发，可以临时改为 `false`，避免把刚入场车辆误写出场时间。
 
 **重启后端**，观察日志：
 

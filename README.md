@@ -232,10 +232,10 @@ APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080
 - 出口 DIDO 的 `A01-A11`：1-11 号车道出口绿灯继电器
 - 出口 DIDO 的 `B01-B11`：1-11 号车道出口地感输入
 
-出口地感自动出场默认关闭，避免现场输入极性未确认时把刚入场车辆自动写出场时间。确认 `B01-B11` 上报为稳定的未触发->触发边沿后，再开启：
+出口地感自动出场默认开启，`B01-B11` 上报稳定的未触发->触发边沿后会写入对应车道最早在场车辆的出场时间。排查输入极性或误触发时可临时关闭：
 
 ```dotenv
-APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED=true
+APP_DEVICE_DIDO_EXIT_TRIGGER_ENABLED=false
 ```
 
 当前按单继电器灯控：继电器吸合表示绿灯，继电器关闭表示红灯。如果现场红灯、绿灯是两个独立继电器，再额外填写 `APP_DEVICE_Lxx_ENTRY_RED_RELAY` 或 `APP_DEVICE_Lxx_EXIT_RED_RELAY`。
