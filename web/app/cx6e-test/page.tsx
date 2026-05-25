@@ -24,6 +24,21 @@ import { cn } from "@/lib/utils";
 
 type MqttMode = "json" | "hex-a1" | "hex-a3";
 type LogDirection = "tx" | "rx" | "system";
+type DidoDeviceRole = "entry" | "exit" | "unknown";
+type ParsedItemKind = "light" | "sensor";
+type ParsedItemTone = "green" | "red" | "amber" | "slate";
+
+interface ParsedMqttItem {
+  key: string;
+  laneNumber: number;
+  laneLabel: string;
+  kind: ParsedItemKind;
+  targetLabel: string;
+  stateLabel: string;
+  rawValue: string;
+  tone: ParsedItemTone;
+  active: boolean;
+}
 
 interface LogEntry {
   id: string;
@@ -31,12 +46,23 @@ interface LogEntry {
   direction: LogDirection;
   topic: string;
   payload: string;
+  summary?: string;
+  parsedItems?: ParsedMqttItem[];
 }
 
 const DEFAULT_DEVICE_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "192.168.1.45";
 const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? "127.0.0.1";
+const DEFAULT_DIDO_DEVICE_ID = "DIDO-EXIT-01";
+const LANE_COUNT = 11;
 const REMOTE_CONFIG_HEX = "4D9301010101A1000000";
 const RELAY_UPLOAD_HEX = "4D930101010AA1000000";
+
+function currentBrowserHost(fallback: string) {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  return window.location.hostname || fallback;
+}
 
 function nowText() {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -49,6 +75,30 @@ function genId() {
 function relayIndex(relay: string) {
   const value = Number(relay.replace(/\D/g, ""));
   return Number.isFinite(value) ? Math.max(1, Math.min(value, 16)) : 1;
+}
+
+function laneLabel(laneNumber: number) {
+  return `${laneNumber}号车道`;
+}
+
+function didoKey(prefix: "A" | "B", laneNumber: number) {
+  return `${prefix}${String(laneNumber).padStart(2, "0")}`;
+}
+
+function deviceIdFromTopic(topic: string) {
+  const match = /^\/device\/([^/]+)\/(?:get|update)$/.exec(topic);
+  return match?.[1] ?? "";
+}
+
+function didoDeviceRole(deviceId: string): DidoDeviceRole {
+  const normalized = deviceId.toUpperCase();
+  if (normalized.includes("ENTRY")) {
+    return "entry";
+  }
+  if (normalized.includes("EXIT")) {
+    return "exit";
+  }
+  return "unknown";
 }
 
 function byteHex(value: number) {
@@ -126,12 +176,143 @@ function displayPayload(payload: Buffer | Uint8Array | string) {
   return buffer.toString("hex").toUpperCase();
 }
 
+function parseJsonObject(payload: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rawValueText(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value == null) {
+    return "";
+  }
+  return JSON.stringify(value);
+}
+
+function relayFeedbackOn(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0 && value !== 100000;
+  }
+  if (typeof value === "string") {
+    return ["1", "TRUE", "ON", "OPEN", "GREEN", "110000"].includes(value.trim().toUpperCase());
+  }
+  return false;
+}
+
+function inputTriggered(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value === 1;
+  }
+  if (typeof value === "string") {
+    return ["1", "TRUE", "ON", "OPEN", "TRIGGERED"].includes(value.trim().toUpperCase());
+  }
+  return false;
+}
+
+function parseDidoItems(topic: string, payload: string) {
+  const message = parseJsonObject(payload);
+  if (!message) {
+    return [] satisfies ParsedMqttItem[];
+  }
+
+  const deviceId = deviceIdFromTopic(topic) || rawValueText(message.ID);
+  const role = didoDeviceRole(deviceId);
+  const items: ParsedMqttItem[] = [];
+
+  for (let laneNumber = 1; laneNumber <= LANE_COUNT; laneNumber += 1) {
+    const relayKey = didoKey("A", laneNumber);
+    if (Object.prototype.hasOwnProperty.call(message, relayKey)) {
+      const active = relayFeedbackOn(message[relayKey]);
+      items.push({
+        key: relayKey,
+        laneNumber,
+        laneLabel: laneLabel(laneNumber),
+        kind: "light",
+        targetLabel: role === "entry" ? "入口红绿灯" : role === "exit" ? "出口红绿灯" : "红绿灯",
+        stateLabel: active ? "绿灯" : "红灯",
+        rawValue: rawValueText(message[relayKey]),
+        tone: active ? "green" : "red",
+        active,
+      });
+    }
+
+    const inputKey = didoKey("B", laneNumber);
+    if (Object.prototype.hasOwnProperty.call(message, inputKey)) {
+      const active = inputTriggered(message[inputKey]);
+      items.push({
+        key: inputKey,
+        laneNumber,
+        laneLabel: laneLabel(laneNumber),
+        kind: "sensor",
+        targetLabel: role === "exit" ? "出口地感" : "地感输入",
+        stateLabel: active ? "触发" : "未触发",
+        rawValue: rawValueText(message[inputKey]),
+        tone: active ? "amber" : "slate",
+        active,
+      });
+    }
+  }
+
+  return items;
+}
+
+function summarizeDidoItems(items: ParsedMqttItem[]) {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  const activeItems = items.filter((item) => item.active);
+  if (activeItems.length > 0) {
+    const labels = activeItems
+      .slice(0, 5)
+      .map((item) => `${item.laneLabel}${item.targetLabel}${item.stateLabel}`)
+      .join("、");
+    return activeItems.length > 5 ? `${labels} 等 ${activeItems.length} 路有效状态` : labels;
+  }
+
+  const lightCount = items.filter((item) => item.kind === "light").length;
+  const sensorCount = items.filter((item) => item.kind === "sensor").length;
+  const parts = [
+    lightCount ? `${lightCount} 路红绿灯` : "",
+    sensorCount ? `${sensorCount} 路地感` : "",
+  ].filter(Boolean);
+  return `已解析 ${parts.join("、")}，当前未见绿灯或地感触发`;
+}
+
+function parsedItemClassName(tone: ParsedItemTone) {
+  return cn(
+    "flex min-w-[150px] flex-wrap items-center gap-1 rounded-md border px-2 py-1 text-[11px] leading-5",
+    tone === "green"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : tone === "red"
+        ? "border-rose-200 bg-rose-50 text-rose-800"
+        : tone === "amber"
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : "border-slate-200 bg-slate-50 text-slate-700",
+  );
+}
+
 export default function Cx6eTestPage() {
-  const [deviceHost, setDeviceHost] = useState(DEFAULT_DEVICE_HOST);
+  const [deviceHost, setDeviceHost] = useState(() => currentBrowserHost(DEFAULT_DEVICE_HOST));
   const [mqttPort, setMqttPort] = useState("1883");
-  const [wsHost, setWsHost] = useState(DEFAULT_WS_HOST);
+  const [wsHost, setWsHost] = useState(() => currentBrowserHost(DEFAULT_WS_HOST));
   const [wsPort, setWsPort] = useState("9001");
-  const [deviceId, setDeviceId] = useState("DIDO-01");
+  const [deviceId, setDeviceId] = useState(DEFAULT_DIDO_DEVICE_ID);
   const [relay, setRelay] = useState("A01");
   const [mode, setMode] = useState<MqttMode>("json");
   const [client, setClient] = useState<MqttClient | null>(null);
@@ -179,7 +360,15 @@ export default function Cx6eTestPage() {
     });
 
     nextClient.on("message", (topic, payload) => {
-      addLog({ direction: topic === downTopic ? "tx" : "rx", topic, payload: displayPayload(payload) });
+      const payloadText = displayPayload(payload);
+      const parsedItems = parseDidoItems(topic, payloadText);
+      addLog({
+        direction: topic === downTopic ? "tx" : "rx",
+        topic,
+        payload: payloadText,
+        summary: summarizeDidoItems(parsedItems),
+        parsedItems,
+      });
     });
 
     nextClient.on("error", (error) => {
@@ -212,10 +401,13 @@ export default function Cx6eTestPage() {
       try {
         const data = options?.binaryHex ? hexToBuffer(payload) : payload;
         client.publish(downTopic, data);
+        const parsedItems = parseDidoItems(downTopic, payload);
         addLog({
           direction: "tx",
           topic: downTopic,
           payload: options?.label ? `${options.label}: ${payload}` : payload,
+          summary: options?.binaryHex ? undefined : summarizeDidoItems(parsedItems),
+          parsedItems: options?.binaryHex ? [] : parsedItems,
         });
         setMessage(`已发送到 ${downTopic}`);
       } catch (error) {
@@ -497,6 +689,10 @@ export default function Cx6eTestPage() {
                     <span className="text-slate-500">页面订阅</span>
                     <span className="truncate font-mono font-semibold">{topicFilters.join(", ")}</span>
                   </div>
+                  <div className="grid grid-cols-[78px_1fr] gap-2">
+                    <span className="text-slate-500">日志解析</span>
+                    <span className="text-slate-700">A01-A11=1-11号车道红绿灯，B01-B11=1-11号车道地感</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -531,6 +727,40 @@ export default function Cx6eTestPage() {
                         </span>
                         <div className="min-w-0">
                           <div className="truncate font-mono font-semibold text-slate-800">{log.topic}</div>
+                          {log.summary ? (
+                            <div className="mt-1 rounded-md bg-cyan-50 px-2 py-1 font-semibold text-cyan-800">
+                              解析：{log.summary}
+                            </div>
+                          ) : null}
+                          {log.parsedItems?.length ? (
+                            <div className="mt-2 grid gap-2">
+                              {(["light", "sensor"] as ParsedItemKind[]).map((kind) => {
+                                const items = log.parsedItems?.filter((item) => item.kind === kind) ?? [];
+                                if (items.length === 0) {
+                                  return null;
+                                }
+                                return (
+                                  <div key={kind} className="grid gap-1">
+                                    <div className="text-[11px] font-bold text-slate-500">
+                                      {kind === "light" ? "红绿灯状态" : "地感状态"}
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {items.map((item) => (
+                                        <span key={item.key} className={parsedItemClassName(item.tone)}>
+                                          <span className="font-bold">{item.laneLabel}</span>
+                                          <span>{item.targetLabel}</span>
+                                          <span className="font-black">{item.stateLabel}</span>
+                                          <span className="font-mono text-[10px] opacity-75">
+                                            {item.key}={item.rawValue}
+                                          </span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-slate-600">{log.payload}</pre>
                         </div>
                       </div>

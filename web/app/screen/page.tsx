@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { formatPlateDisplay } from "@/lib/utils";
 import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
@@ -210,10 +210,6 @@ function formatBeijingDateTime(value: Date) {
 function laneNumber(label?: string | null) {
   const matched = label?.match(/\d+/);
   return matched ? `${Number.parseInt(matched[0], 10)}车道` : "--车道";
-}
-
-function laneLabel(lanes: LaneSnapshot[], laneId: string) {
-  return lanes.find((lane) => lane.id === laneId)?.name ?? laneId;
 }
 
 function extractLaneOrder(lane: LaneSnapshot) {
@@ -712,10 +708,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const { containerRef, scale } = useScreenScale(mode);
   const { board, error, setBoard } = useScreenBoard();
   const [now, setNow] = useState(() => new Date());
-  const [simulatePlate, setSimulatePlate] = useState("");
-  const [simulateLanePlate, setSimulateLanePlate] = useState("");
-  const [simulateLaneId, setSimulateLaneId] = useState("");
-  const [simulateMessage, setSimulateMessage] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
   const [pendingEvent, setPendingEvent] = useState<ScreenEvent | null>(null);
   const [handlingEventId, setHandlingEventId] = useState<string | null>(null);
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
@@ -728,33 +721,13 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const laneVehicles = board?.laneVehicles ?? {};
 
   useEffect(() => {
-    if (!simulateLaneId && lanes[0]?.id) {
-      setSimulateLaneId(lanes[0].id);
-    }
-  }, [lanes, simulateLaneId]);
-
-  useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
   function requestHandleEvent(event: ScreenEvent) {
+    setActionMessage("");
     setPendingEvent(event);
-  }
-
-  async function readResponseError(response: Response) {
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      try {
-        const payload = (await response.json()) as { message?: string; error?: string };
-        return payload.message || payload.error || `HTTP ${response.status}`;
-      } catch {
-        return `HTTP ${response.status}`;
-      }
-    }
-
-    const message = (await response.text()).trim();
-    return message || `HTTP ${response.status}`;
   }
 
   async function confirmHandleEvent() {
@@ -774,88 +747,12 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         events: current.events.map((event) => event.id === eventId ? { ...event, handled: true, handledAt: new Date().toISOString() } : event),
       } : current);
       setPendingEvent(null);
+      setActionMessage("");
     } catch (handleError) {
-      setSimulateMessage(`告警处理失败: ${handleError instanceof Error ? handleError.message : "请求失败"}`);
+      setActionMessage(`告警处理失败: ${handleError instanceof Error ? handleError.message : "请求失败"}`);
     } finally {
       setHandlingEventId(null);
     }
-  }
-
-  async function simulateYardEntry(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const plate = simulatePlate.trim();
-    if (!plate) {
-      setSimulateMessage("请输入车牌号");
-      return;
-    }
-
-    setSimulateMessage("提交中...");
-    const response = await fetch(`${API_BASE_URL}/screen/simulate/yard-entry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plate }),
-    });
-    if (!response.ok) {
-      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
-      return;
-    }
-
-    const nextBoard = await fetchScreenBoard();
-    setBoard(nextBoard);
-    setSimulatePlate("");
-    setSimulateMessage("已模拟总入口入场");
-  }
-
-  async function simulateLaneEntry() {
-    const laneId = simulateLaneId || lanes[0]?.id || "";
-    const plate = simulateLanePlate.trim();
-    if (!laneId) {
-      setSimulateMessage("请选择车道");
-      return;
-    }
-    if (!plate) {
-      setSimulateMessage("请输入车牌号");
-      return;
-    }
-
-    setSimulateMessage("提交中...");
-    const response = await fetch(`${API_BASE_URL}/screen/simulate/lane-entry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ laneId, plate }),
-    });
-    if (!response.ok) {
-      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
-      return;
-    }
-
-    const nextBoard = await fetchScreenBoard();
-    setBoard(nextBoard);
-    setSimulateLanePlate("");
-    setSimulateMessage(`已模拟${laneLabel(lanes, laneId)}入口`);
-  }
-
-  async function simulateLaneExit() {
-    const laneId = simulateLaneId || lanes[0]?.id || "";
-    if (!laneId) {
-      setSimulateMessage("请选择车道");
-      return;
-    }
-
-    setSimulateMessage("提交中...");
-    const response = await fetch(`${API_BASE_URL}/screen/simulate/lane-exit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ laneId }),
-    });
-    if (!response.ok) {
-      setSimulateMessage(`模拟失败: ${await readResponseError(response)}`);
-      return;
-    }
-
-    const nextBoard = await fetchScreenBoard();
-    setBoard(nextBoard);
-    setSimulateMessage(`已模拟${laneLabel(lanes, laneId)}出场`);
   }
 
   const shellClassName =
@@ -873,6 +770,11 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         {error ? (
           <div className="absolute left-[730px] top-[78px] z-50 border border-red-400/70 bg-red-950/80 px-4 py-2 text-[16px] text-red-100">
             大屏接口异常：{error}
+          </div>
+        ) : null}
+        {actionMessage ? (
+          <div className="absolute left-[730px] top-[126px] z-50 border border-amber-300/70 bg-amber-950/80 px-4 py-2 text-[16px] text-amber-100">
+            {actionMessage}
           </div>
         ) : null}
 
@@ -940,52 +842,6 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <Panel title="引导牌" x={1610} y={663} size="large">
           <GuideRows tickets={guideEntries} />
         </Panel>
-
-        <form
-          onSubmit={simulateYardEntry}
-          className="absolute left-[430px] top-[82px] z-50 flex h-[34px] items-center gap-2 border border-[#34d8f0]/70 bg-[#04172b]/88 px-3 text-[14px] shadow-[0_0_12px_rgba(52,216,240,0.35)]"
-        >
-          <span className="font-semibold text-[#9cecff]">模拟总入口</span>
-          <input
-            value={simulatePlate}
-            onChange={(event) => setSimulatePlate(event.target.value)}
-            placeholder="输入车牌"
-            className="h-[22px] w-[120px] border border-[#2aa6cf] bg-[#071f39] px-2 text-white outline-none placeholder:text-white/45"
-          />
-          <button type="submit" className="h-[22px] bg-[#b86c08] px-3 font-bold text-white">
-            入场
-          </button>
-          <span className="mx-1 h-[18px] w-px bg-[#2aa6cf]/60" />
-          <span className="font-semibold text-[#9cecff]">模拟车道</span>
-          <select
-            value={simulateLaneId}
-            onChange={(event) => setSimulateLaneId(event.target.value)}
-            className="h-[22px] w-[92px] border border-[#2aa6cf] bg-[#071f39] px-1 text-white outline-none"
-          >
-            {(lanes.length > 0 ? lanes : []).map((lane) => (
-              <option key={lane.id} value={lane.id}>
-                {lane.name}
-              </option>
-            ))}
-            {lanes.length === 0 ? <option value="">无车道</option> : null}
-          </select>
-          <label className="flex h-[22px] items-center border border-[#2aa6cf] bg-[#071f39]">
-            <span className="border-r border-[#2aa6cf]/60 px-2 text-[#9cecff]">入口</span>
-            <input
-              value={simulateLanePlate}
-              onChange={(event) => setSimulateLanePlate(event.target.value)}
-              placeholder="输入车牌"
-              className="h-full w-[108px] bg-transparent px-2 text-white outline-none placeholder:text-white/45"
-            />
-          </label>
-          <button type="button" onClick={simulateLaneEntry} className="h-[22px] bg-[#0f7b9a] px-3 font-bold text-white">
-            入口
-          </button>
-          <button type="button" onClick={simulateLaneExit} className="h-[22px] bg-[#b86c08] px-3 font-bold text-white">
-            出场
-          </button>
-          <span className="min-w-[140px] text-[#cbd5e1]">{simulateMessage}</span>
-        </form>
 
         {pendingEvent ? (
           <div className="absolute inset-0 z-[80] grid place-items-center bg-[#020b16]/68">
