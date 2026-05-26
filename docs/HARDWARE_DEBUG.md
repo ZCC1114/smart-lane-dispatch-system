@@ -143,8 +143,8 @@ MQTT device gateway indexed 11 lane bindings
 - **下发 Topic**：`/device/{didoDeviceId}/get`
 - **上报 Topic**：`/device/{didoDeviceId}/update`
 - **继电器值**：
-  - `100000` = 断开（红灯）
-  - `110000` = 持续吸合（绿灯）
+  - `100000` = 断开（绿灯）
+  - `110000` = 持续吸合（红灯）
   - `900000+N` = 脉冲 N 毫秒（如 `900500` = 脉冲 500ms）
 
 ### 3.3 联调步骤
@@ -162,17 +162,17 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 **预期结果**（收到 JSON）：
 
 ```json
-{"A01": 110000, "res": "dido-12345"}
+{"A01": 100000, "res": "dido-12345"}
 ```
 
-- 入口 DIDO 的 A01 吸合 -> 1 号车道入口绿灯亮
+- 入口 DIDO 的 A01 断开 -> 1 号车道入口绿灯亮
 - 出口 DIDO 的出口灯和地感不在这个 Topic 中
 
 **Step 3：模拟 DIDO 继电器状态反馈**
 
 ```bash
 mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-ENTRY-01/update" -m '{
-  "A01": 110000
+  "A01": 100000
 }'
 ```
 

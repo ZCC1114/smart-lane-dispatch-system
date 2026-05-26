@@ -2,6 +2,7 @@ package com.smartlane.dispatch.device;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -68,10 +69,8 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			int entryPort = resolveEntryPort(binding);
 			String exitHost = resolveExitHost(binding);
 			int exitPort = resolveExitPort(binding);
-			controlRelayIfPresent(entryHost, entryPort, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(entryHost, entryPort, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(exitHost, exitPort, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-			controlRelayIfPresent(exitHost, exitPort, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+			controlSignalRelaysIfPresent(entryHost, entryPort, binding.getEntryGreenRelay(), binding.getEntryRedRelay(), lane.getEntrySignal());
+			controlSignalRelaysIfPresent(exitHost, exitPort, binding.getExitGreenRelay(), binding.getExitRedRelay(), lane.getExitSignal());
 			lastLaneSyncStates.put(lane.getId(), nextSyncState);
 			laneRuntimeStateService.markCommandPublished(lane.getId(), "TCP DIDO 指令已下发", now());
 			laneRuntimeStateService.recordDeviceFeedback(
@@ -121,6 +120,12 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 		lastLaneSyncStates.clear();
 	}
 
+	private void controlSignalRelaysIfPresent(String host, int port, String greenRelayKey, String redRelayKey, String signal) {
+		for (RelayState relayState : signalRelayStates(greenRelayKey, redRelayKey, signal)) {
+			controlRelayIfPresent(host, port, relayState.relayKey(), relayState.on());
+		}
+	}
+
 	private void controlRelayIfPresent(String host, int port, String relay, boolean on) {
 		if (relay == null || relay.isBlank()) {
 			return;
@@ -130,8 +135,36 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 				port,
 				relay,
 				on,
-				properties.getDidoTcp().getProtocol());
+					properties.getDidoTcp().getProtocol());
 		log.debug("TCP DIDO relay command {} {} -> {}", relay, on ? "ON" : "OFF", response.responseHex());
+	}
+
+	private List<RelayState> signalRelayStates(String greenRelayKey, String redRelayKey, String signal) {
+		boolean green = "GREEN".equals(signal);
+		if (!isBlank(greenRelayKey) && !isBlank(redRelayKey)) {
+			return List.of(new RelayState(redRelayKey, !green), new RelayState(greenRelayKey, green));
+		}
+		String relayKey = firstNonBlank(greenRelayKey, redRelayKey);
+		if (isBlank(relayKey)) {
+			return List.of();
+		}
+		return List.of(new RelayState(relayKey, !green));
+	}
+
+	private String firstNonBlank(String... values) {
+		for (String value : values) {
+			if (!isBlank(value)) {
+				return value;
+			}
+		}
+		return null;
+	}
+
+	private boolean isBlank(String value) {
+		return value == null || value.isBlank();
+	}
+
+	private record RelayState(String relayKey, boolean on) {
 	}
 
 	private String resolveEntryHost(DeviceGatewayProperties.LaneBinding binding) {

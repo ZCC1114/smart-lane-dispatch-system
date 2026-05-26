@@ -664,12 +664,10 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				continue;
 			}
 			if (isEntryDidoDevice(didoDeviceId, binding)) {
-				putRelayState(payload, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-				putRelayState(payload, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
+				putSignalRelayStates(payload, binding.getEntryGreenRelay(), binding.getEntryRedRelay(), lane.getEntrySignal());
 			}
 			if (isExitDidoDevice(didoDeviceId, binding)) {
-				putRelayState(payload, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-				putRelayState(payload, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+				putSignalRelayStates(payload, binding.getExitGreenRelay(), binding.getExitRedRelay(), lane.getExitSignal());
 			}
 		}
 		if (payload.isEmpty()) {
@@ -700,20 +698,24 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				continue;
 			}
 			if (isEntryDidoDevice(didoDeviceId, binding)) {
-				int[] entryRed = applyRelayMask(binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
-				stateMask = entryRed[0];
-				enableMask = entryRed[1];
-				int[] entryGreen = applyRelayMask(binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()), stateMask, enableMask);
-				stateMask = entryGreen[0];
-				enableMask = entryGreen[1];
+				int[] entrySignal = applySignalRelayMasks(
+						binding.getEntryGreenRelay(),
+						binding.getEntryRedRelay(),
+						lane.getEntrySignal(),
+						stateMask,
+						enableMask);
+				stateMask = entrySignal[0];
+				enableMask = entrySignal[1];
 			}
 			if (isExitDidoDevice(didoDeviceId, binding)) {
-				int[] exitRed = applyRelayMask(binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
-				stateMask = exitRed[0];
-				enableMask = exitRed[1];
-				int[] exitGreen = applyRelayMask(binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()), stateMask, enableMask);
-				stateMask = exitGreen[0];
-				enableMask = exitGreen[1];
+				int[] exitSignal = applySignalRelayMasks(
+						binding.getExitGreenRelay(),
+						binding.getExitRedRelay(),
+						lane.getExitSignal(),
+						stateMask,
+						enableMask);
+				stateMask = exitSignal[0];
+				enableMask = exitSignal[1];
 			}
 		}
 		if (enableMask == 0) {
@@ -730,6 +732,19 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		int nextStateMask = on ? (stateMask | bit) : (stateMask & ~bit);
 		int nextEnableMask = enableMask | bit;
 		return new int[] { nextStateMask, nextEnableMask };
+	}
+
+	private int[] applySignalRelayMasks(
+			String greenRelayKey,
+			String redRelayKey,
+			String signal,
+			int stateMask,
+			int enableMask) {
+		int[] next = new int[] { stateMask, enableMask };
+		for (RelayState relayState : signalRelayStates(greenRelayKey, redRelayKey, signal)) {
+			next = applyRelayMask(relayState.relayKey(), relayState.on(), next[0], next[1]);
+		}
+		return next;
 	}
 
 	private String buildDidoDeviceSyncState(String didoDeviceId, List<Lane> lanes) {
@@ -950,6 +965,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 	}
 
+	private void putSignalRelayStates(ObjectNode payload, String greenRelayKey, String redRelayKey, String signal) {
+		for (RelayState relayState : signalRelayStates(greenRelayKey, redRelayKey, signal)) {
+			putRelayState(payload, relayState.relayKey(), relayState.on());
+		}
+	}
+
 	private String resolveRelayKey(DeviceGatewayProperties.LaneBinding binding, String relayTarget) {
 		String normalizedTarget = normalizeRelayTarget(relayTarget);
 		return switch (normalizedTarget) {
@@ -1018,14 +1039,31 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		return Integer.parseInt(digits);
 	}
 
+	private List<RelayState> signalRelayStates(String greenRelayKey, String redRelayKey, String signal) {
+		boolean green = "GREEN".equals(signal);
+		if (!isBlank(greenRelayKey) && !isBlank(redRelayKey)) {
+			return List.of(new RelayState(redRelayKey, !green), new RelayState(greenRelayKey, green));
+		}
+		String relayKey = firstNonBlank(greenRelayKey, redRelayKey);
+		if (isBlank(relayKey)) {
+			return List.of();
+		}
+		return List.of(new RelayState(relayKey, !green));
+	}
+
 	private String resolveSignalFromRelayFeedback(JsonNode message, String greenRelayKey, String redRelayKey) {
-		boolean hasGreen = !isBlank(greenRelayKey) && message.has(greenRelayKey);
-		boolean hasRed = !isBlank(redRelayKey) && message.has(redRelayKey);
+		boolean greenConfigured = !isBlank(greenRelayKey);
+		boolean redConfigured = !isBlank(redRelayKey);
+		boolean hasGreen = greenConfigured && message.has(greenRelayKey);
+		boolean hasRed = redConfigured && message.has(redRelayKey);
 		if (!hasGreen && !hasRed) {
 			return null;
 		}
 		boolean greenOn = hasGreen && relayFeedbackOn(message.path(greenRelayKey));
 		boolean redOn = hasRed && relayFeedbackOn(message.path(redRelayKey));
+		if (greenConfigured != redConfigured) {
+			return (greenOn || redOn) ? "RED" : "GREEN";
+		}
 		if (greenOn && !redOn) {
 			return "GREEN";
 		}
@@ -1037,6 +1075,9 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return "GREEN";
 		}
 		return "RED";
+	}
+
+	private record RelayState(String relayKey, boolean on) {
 	}
 
 	private boolean relayFeedbackOn(JsonNode node) {

@@ -114,7 +114,7 @@ SPRING_PROFILES_ACTIVE=mysql \
 - 入口 DIDO: `L01-L11` 共用 `APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID`，`entry-green-relay` 默认映射为 `A01-A11`
 - 出口 DIDO: `L01-L11` 共用 `APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID`，`exit-green-relay` 默认映射为 `A01-A11`
 - 出口 DIDO: `exit-trigger-input-key` 默认映射为 `B01-B11`，用于接收出口地感 IN 信号
-- 单灯模式下: 对应车道 green relay 吸合 = 绿灯，关闭 = 红灯
+- 单灯模式下: 对应车道 green relay 吸合 = 红灯，断开 = 绿灯
 
 修改 `.env` 或容器环境变量后，需要重启 `server` 容器/进程让新配置生效。
 

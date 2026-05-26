@@ -244,9 +244,9 @@ function parseDidoItems(topic: string, payload: string) {
         laneLabel: laneLabel(laneNumber),
         kind: "light",
         targetLabel: role === "entry" ? "入口红绿灯" : role === "exit" ? "出口红绿灯" : "红绿灯",
-        stateLabel: active ? "绿灯" : "红灯",
+        stateLabel: active ? "红灯" : "绿灯",
         rawValue: rawValueText(message[relayKey]),
-        tone: active ? "green" : "red",
+        tone: active ? "red" : "green",
         active,
       });
     }
@@ -291,7 +291,7 @@ function summarizeDidoItems(items: ParsedMqttItem[]) {
     lightCount ? `${lightCount} 路红绿灯` : "",
     sensorCount ? `${sensorCount} 路地感` : "",
   ].filter(Boolean);
-  return `已解析 ${parts.join("、")}，当前未见绿灯或地感触发`;
+  return `已解析 ${parts.join("、")}，当前未见红灯或地感触发`;
 }
 
 function parsedItemClassName(tone: ParsedItemTone) {
@@ -604,7 +604,7 @@ export default function Cx6eTestPage() {
                     type="button"
                     onClick={() => publishRaw(buildRelayPayload(relay, true, mode), { binaryHex: isHex })}
                     disabled={connState !== "connected"}
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-md bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-500 disabled:opacity-50"
                   >
                     <CheckCircle2 className="size-4" />
                     吸合
@@ -613,7 +613,7 @@ export default function Cx6eTestPage() {
                     type="button"
                     onClick={() => publishRaw(buildRelayPayload(relay, false, mode), { binaryHex: isHex })}
                     disabled={connState !== "connected"}
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-500 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
                   >
                     <PlugZap className="size-4" />
                     断开
