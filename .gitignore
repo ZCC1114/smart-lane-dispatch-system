@@ -12,3 +12,4 @@ server/data
 # Local offline deployment bundles and update packages
 smart-lane-offline/
 smart-lane-update/
+deploy-artifacts/

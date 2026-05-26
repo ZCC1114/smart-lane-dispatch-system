@@ -44,14 +44,14 @@ web/
 
 - 显示屏 IP：`172.17.2.70`
 - 显示屏端口：`5005`（仰邦默认端口）
-- 屏幕尺寸：`1920 x 960`
+- 控制卡逻辑屏幕尺寸：`192 x 96`
 - 屏幕拼接：`6 x 6` 块 `320 x 160` 小屏
-- 显示布局：`2` 列 `6` 行，共 `12` 条
-- 文案格式：`车牌-车道`，例如 `苏B12345-1车道`
+- 测试页显示布局：`2` 列 `6` 行，共 `12` 条
+- 业务自动下发显示布局：`1` 列 `4` 行，前 3 行显示引导信息，第 4 行固定提示语
 
 > 如果不知道控制卡端口，可用 `nc -zv 172.17.2.70 5005` 测试连通性。
 
-生产部署已支持自动下发，引导数据变化后后端会刷新 LED。默认环境变量：
+生产部署已支持自动下发，引导数据变化后后端会优先使用 BX6E 动态区刷新 LED，动态区失败时回退完整节目写入。默认环境变量：
 
 ```dotenv
 APP_LED_GUIDE_ENABLED=true
@@ -59,12 +59,17 @@ APP_LED_GUIDE_IP=172.17.2.70
 APP_LED_GUIDE_PORT=5005
 APP_LED_GUIDE_GENERATION=6
 APP_LED_GUIDE_MODEL=Bx6E
-APP_LED_GUIDE_SCREEN_WIDTH=1920
-APP_LED_GUIDE_SCREEN_HEIGHT=960
+APP_LED_GUIDE_SCREEN_WIDTH=192
+APP_LED_GUIDE_SCREEN_HEIGHT=96
 APP_LED_GUIDE_COLUMNS=2
 APP_LED_GUIDE_ROWS=6
 APP_LED_GUIDE_FONT_SIZE=72
 APP_LED_GUIDE_COLOR=RED
+APP_LED_GUIDE_PROMPT_TEXT=请按照车道指示进行停车等待！
+APP_LED_GUIDE_HIGHLIGHT_DURATION_MS=10000
+APP_LED_GUIDE_WRITE_MODE=DYNAMIC_WITH_PROGRAM_FALLBACK
+APP_LED_GUIDE_DYNAMIC_AREA_START_ID=0
+APP_LED_GUIDE_FULL_REFRESH_MS=60000
 ```
 
 ### 2. 控制卡代际与型号
@@ -106,7 +111,7 @@ http://localhost:3000/led-test
 ### 发送文本到显示屏
 
 1. **连接参数**：填写显示屏 IP、端口、选择代际和型号。
-2. **现场预设**：点击 **"现场大屏 1920x960"** 可恢复现场尺寸和 `2列x6行` 布局。
+2. **现场预设**：点击 **"现场大屏 192x96"** 可恢复现场尺寸和 `2列x6行` 布局。
 3. **读取数据**：点击 **"读取总入口数据"** 可从 `/api/screen/board` 拉取总入口抓拍后的推荐车道数据。
 4. **添加文本段**：
    - 点击 **"+ 添加一段文本"** 增加段落。
@@ -114,9 +119,15 @@ http://localhost:3000/led-test
    - 用 ↑ ↓ 调整段落上下顺序。
 5. 点击 **"发送到显示屏"**。
 
-发送成功后，显示屏会立即覆盖原有节目，并按配置的列数、行数切分区域显示。
+发送成功后，显示屏会立即覆盖原有节目，并按测试页配置的列数、行数切分区域显示。
 
-测试页只是手动验证工具。生产业务自动下发由后端 `APP_LED_GUIDE_*` 配置控制，数据来源同样是 `/api/screen/board` 使用的总入口引导数据。
+测试页只是手动验证工具。生产业务自动下发由后端 `APP_LED_GUIDE_*` 配置控制，数据来源同样是 `/api/screen/board` 使用的总入口引导数据。业务自动下发不使用测试页的 `columns` / `rows` / `font-size` 布局参数，固定按 1 列 4 行生成显示帧。
+
+业务自动下发的三种写入模式：
+
+- `DYNAMIC_WITH_PROGRAM_FALLBACK`：默认模式，优先动态区，失败后回退完整节目。
+- `DYNAMIC`：只使用动态区，适合确认现场控制卡动态区稳定后使用。
+- `PROGRAM`：只使用完整节目写入，用于兼容旧链路或现场排障。
 
 ### 支持的颜色
 
@@ -124,7 +135,8 @@ http://localhost:3000/led-test
 
 ## 注意事项
 
-- 发送成功后原有节目会被覆盖，如需恢复请重新发送或使用厂商软件。
+- 测试页发送成功后原有节目会被覆盖，如需恢复请重新发送或使用厂商软件。
+- 业务自动下发使用动态区时，控制卡重启会丢失 RAM 中的动态区内容；后端默认每 60 秒强制全量刷新一次。
 - 字号范围限制为 **8 ~ 120** 像素，超出范围会自动截断。
 - 若连接失败，请检查防火墙是否放行控制卡端口，或确认 IP/端口是否正确。
-- 后端日志（`LedScreenService`）会输出 SDK 初始化状态和连接详情，可用于排查。
+- 后端日志（`LedGuideDisplayWriter`、`LedGuideDynamicAreaWriter`、`LedScreenService`）会输出动态区写入、回退和连接详情，可用于排查。
