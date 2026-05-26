@@ -1026,6 +1026,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 		boolean greenOn = hasGreen && relayFeedbackOn(message.path(greenRelayKey));
 		boolean redOn = hasRed && relayFeedbackOn(message.path(redRelayKey));
+		if (hasGreen && !hasRed) {
+			return greenOn ? "GREEN" : "RED";
+		}
+		if (hasRed && !hasGreen) {
+			return redOn ? "RED" : "GREEN";
+		}
 		if (greenOn && !redOn) {
 			return "GREEN";
 		}

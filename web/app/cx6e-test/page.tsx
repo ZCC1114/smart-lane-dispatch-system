@@ -244,9 +244,9 @@ function parseDidoItems(topic: string, payload: string) {
         laneLabel: laneLabel(laneNumber),
         kind: "light",
         targetLabel: role === "entry" ? "入口红绿灯" : role === "exit" ? "出口红绿灯" : "红绿灯",
-        stateLabel: active ? "绿灯" : "红灯",
+        stateLabel: active ? "红灯" : "绿灯",
         rawValue: rawValueText(message[relayKey]),
-        tone: active ? "green" : "red",
+        tone: active ? "red" : "green",
         active,
       });
     }
@@ -291,7 +291,13 @@ function summarizeDidoItems(items: ParsedMqttItem[]) {
     lightCount ? `${lightCount} 路红绿灯` : "",
     sensorCount ? `${sensorCount} 路地感` : "",
   ].filter(Boolean);
-  return `已解析 ${parts.join("、")}，当前未见绿灯或地感触发`;
+  if (lightCount > 0 && sensorCount > 0) {
+    return `已解析 ${parts.join("、")}，当前红灯继电器均未吸合，未见地感触发`;
+  }
+  if (lightCount > 0) {
+    return `已解析 ${parts.join("、")}，当前红灯继电器均未吸合`;
+  }
+  return `已解析 ${parts.join("、")}，当前未见地感触发`;
 }
 
 function parsedItemClassName(tone: ParsedItemTone) {
@@ -604,19 +610,19 @@ export default function Cx6eTestPage() {
                     type="button"
                     onClick={() => publishRaw(buildRelayPayload(relay, true, mode), { binaryHex: isHex })}
                     disabled={connState !== "connected"}
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-md bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-500 disabled:opacity-50"
                   >
                     <CheckCircle2 className="size-4" />
-                    吸合
+                    吸合（红灯）
                   </button>
                   <button
                     type="button"
                     onClick={() => publishRaw(buildRelayPayload(relay, false, mode), { binaryHex: isHex })}
                     disabled={connState !== "connected"}
-                    className="inline-flex items-center justify-center gap-2 rounded-md bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-500 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
                   >
                     <PlugZap className="size-4" />
-                    断开
+                    断开（绿灯）
                   </button>
                   <button
                     type="button"
@@ -638,7 +644,7 @@ export default function Cx6eTestPage() {
                 </div>
               </div>
               <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-2 text-xs font-bold text-slate-700">当前吸合 payload</div>
+                <div className="mb-2 text-xs font-bold text-slate-700">当前吸合 payload（红灯）</div>
                 <pre className="max-h-28 overflow-auto break-all font-mono text-xs leading-relaxed text-slate-900">{relayPayload}</pre>
               </div>
             </div>
@@ -691,7 +697,7 @@ export default function Cx6eTestPage() {
                   </div>
                   <div className="grid grid-cols-[78px_1fr] gap-2">
                     <span className="text-slate-500">日志解析</span>
-                    <span className="text-slate-700">A01-A11=1-11号车道红绿灯，B01-B11=1-11号车道地感</span>
+                    <span className="text-slate-700">A01-A11=1-11号车道红灯继电器（吸合=红灯，断开=绿灯），B01-B11=1-11号车道地感</span>
                   </div>
                 </div>
               </div>

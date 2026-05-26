@@ -6,7 +6,9 @@ import { startTransition, useEffect } from "react";
 import SockJS from "sockjs-client";
 import { useAuthStore } from "@/stores/auth-store";
 
-const WS_ENDPOINT = process.env.NEXT_PUBLIC_WS_ENDPOINT ?? "http://localhost:8080/ws";
+const WS_ENDPOINT =
+  process.env.NEXT_PUBLIC_WS_ENDPOINT ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080/ws" : "/ws");
 
 export function LiveUpdatesBridge() {
   const queryClient = useQueryClient();

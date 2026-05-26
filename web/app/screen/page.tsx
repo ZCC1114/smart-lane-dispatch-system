@@ -9,7 +9,9 @@ import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 const DESIGN_WIDTH = 1920;
 const DESIGN_HEIGHT = 1080;
 const ASSET = "/screen-assets";
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
 const LANE_LEFTS = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
 const LANE_WIDTH = 92;
 const LANE_PLATE_SIDE_GAP = 4;

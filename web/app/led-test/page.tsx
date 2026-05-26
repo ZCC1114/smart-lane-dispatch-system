@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Activity, ArrowDown, ArrowUp, Monitor, Plus, RefreshCw, Send, Terminal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
 const SITE_LED_IP = "172.17.2.70";
 const SITE_SCREEN_WIDTH = 6 * 320;
 const SITE_SCREEN_HEIGHT = 6 * 160;
