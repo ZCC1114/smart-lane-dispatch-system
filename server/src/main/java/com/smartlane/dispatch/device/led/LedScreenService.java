@@ -32,6 +32,7 @@ import onbon.bx06.series.Bx6Q;
 public class LedScreenService {
 
 	private static final Logger log = LoggerFactory.getLogger(LedScreenService.class);
+	private static final int MAX_FONT_SIZE = 260;
 
 	private volatile boolean bx5Initialized = false;
 	private volatile boolean bx6Initialized = false;
@@ -133,7 +134,7 @@ public class LedScreenService {
 				var page = new onbon.bx05.area.page.TextBxPage(segment.text());
 				page.setForeground(parseColor(segment.color()));
 				page.setFont(new Font("宋体", Font.PLAIN,
-						clamp(segment.fontSize(), 8, 120)));
+						clamp(segment.fontSize(), 8, MAX_FONT_SIZE)));
 				page.setHorizontalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
 				page.setVerticalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
 				page.setDisplayStyle(onbon.bx05.utils.DisplayStyleFactory.getStyle(1));
@@ -183,7 +184,7 @@ public class LedScreenService {
 				var page = new onbon.bx06.area.page.TextBxPage(segment.text());
 				page.setForeground(parseColor(segment.color()));
 				page.setFont(new Font("宋体", Font.PLAIN,
-						clamp(segment.fontSize(), 8, 120)));
+						clamp(segment.fontSize(), 8, MAX_FONT_SIZE)));
 				page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
 				page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
 				page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(1));
