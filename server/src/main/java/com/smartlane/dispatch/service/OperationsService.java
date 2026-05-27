@@ -900,6 +900,53 @@ public class OperationsService {
 	}
 
 	@Transactional
+	public Lane clearLaneRemainingVehicles(String laneId, OffsetDateTime observedAt, String reason) {
+		Lane lane = requireLane(laneId);
+		List<DispatchTicket> openTickets = dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(lane.getId());
+		if (Math.max(lane.getVehicleCount(), openTickets.size()) > 3) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车道剩余车辆超过 3 辆，不能使用兜底清空");
+		}
+
+		OffsetDateTime referenceTime = resolveTime(observedAt);
+		String clearReason = firstNonBlank(reason, "现场确认车道剩余车辆已全部驶出");
+		int previousVehicleCount = lane.getVehicleCount();
+		List<EntryLog> activeLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(lane.getId());
+		List<EntryLog> logsToClose = activeLogs.stream()
+				.filter(log -> openTickets.stream().anyMatch(ticket -> matchesActiveEntryLog(ticket, log)))
+				.toList();
+		if (openTickets.isEmpty()) {
+			logsToClose = activeLogs.stream()
+					.limit(Math.max(0, previousVehicleCount))
+					.toList();
+		}
+
+		for (EntryLog log : logsToClose) {
+			log.setExitTime(referenceTime);
+		}
+		if (!logsToClose.isEmpty()) {
+			entryLogRepository.saveAll(logsToClose);
+		}
+
+		for (DispatchTicket ticket : openTickets) {
+			if (isBlank(ticket.getNotes())) {
+				ticket.setNotes(clearReason);
+			}
+			closeDispatchTicket(ticket, referenceTime);
+		}
+
+		lane.setVehicleCount(0);
+		lane.setCurrentPlate(null);
+		lane.setQueueHeadAt(null);
+		lane.setPriority(false);
+		lane.setLastActionAt(referenceTime);
+		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
+		if (lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
+			advanceExitLane(referenceTime, lane.getId());
+		}
+		return persistLaneRuntime(laneId, referenceTime, "lane_remaining_cleared");
+	}
+
+	@Transactional
 	public Lane applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
 		return exitLaneByLoopTrigger(laneId, observedAt, "lane_exit_triggered");
 	}
@@ -1291,7 +1338,8 @@ public class OperationsService {
 	}
 
 	private String resolveAndPersistActiveExitLaneId(List<Lane> lanes, List<String> laneOrder, OffsetDateTime referenceTime, String activeEntryLaneId) {
-		String resolvedLaneId = resolveActiveExitLaneId(lanes, laneOrder, activeEntryLaneId);
+		String currentLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		String resolvedLaneId = resolveActiveExitLaneId(lanes, laneOrder, activeEntryLaneId, currentLaneId);
 		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, resolvedLaneId, referenceTime);
 		return resolvedLaneId;
 	}
@@ -1309,13 +1357,18 @@ public class OperationsService {
 		return nextEligibleEntryLaneId(orderedLanes, currentLaneId, pendingCounts);
 	}
 
-	private String resolveActiveExitLaneId(List<Lane> lanes, List<String> laneOrder, String activeEntryLaneId) {
+	private String resolveActiveExitLaneId(List<Lane> lanes, List<String> laneOrder, String activeEntryLaneId, String currentLaneId) {
 		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
-		return firstEligibleExitLaneId(orderedLanes, activeEntryLaneId);
+		Lane currentLane = laneById(orderedLanes, currentLaneId);
+		if (isEligibleCurrentExitLane(orderedLanes, currentLane, activeEntryLaneId)) {
+			return currentLane.getId();
+		}
+		return nextEligibleExitLaneId(orderedLanes, currentLaneId, activeEntryLaneId);
 	}
 
 	private boolean canReserveEntrySlot(Lane lane, long pendingCount) {
 		return canActivateLane(lane)
+				&& !"DEGRADED".equals(lane.getSensorStatus())
 				&& lane.getVehicleCount() + pendingCount < lane.getCapacity();
 	}
 
@@ -1343,7 +1396,7 @@ public class OperationsService {
 		String activeEntryLaneId = resolveOpenEntryLaneId(lanes, referenceTime);
 		saveActiveLaneConfig(
 				ACTIVE_EXIT_LANE_KEY,
-				resolveActiveExitLaneId(lanes, laneOrder, activeEntryLaneId),
+				nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, activeEntryLaneId),
 				referenceTime);
 	}
 
@@ -1360,14 +1413,16 @@ public class OperationsService {
 		return null;
 	}
 
-	private String firstEligibleExitLaneId(List<Lane> orderedLanes, String activeEntryLaneId) {
+	private String nextEligibleExitLaneId(List<Lane> orderedLanes, String currentLaneId, String activeEntryLaneId) {
 		int limitIndex = exitSearchLimitIndex(orderedLanes, activeEntryLaneId);
 		if (limitIndex < 0) {
 			return null;
 		}
 
 		String activeEntryFallback = null;
-		for (int index = 0; index <= limitIndex; index++) {
+		int currentIndex = laneIndex(orderedLanes, currentLaneId);
+		int startIndex = currentIndex >= 0 && currentIndex < limitIndex ? currentIndex + 1 : 0;
+		for (int index = startIndex; index <= limitIndex; index++) {
 			Lane lane = orderedLanes.get(index);
 			if (!canActivateLane(lane)) {
 				continue;
@@ -1380,6 +1435,15 @@ public class OperationsService {
 			}
 		}
 		return activeEntryFallback;
+	}
+
+	private boolean isEligibleCurrentExitLane(List<Lane> orderedLanes, Lane currentLane, String activeEntryLaneId) {
+		if (currentLane == null || !canActivateLane(currentLane) || currentLane.getVehicleCount() <= 0) {
+			return false;
+		}
+		int currentIndex = laneIndex(orderedLanes, currentLane.getId());
+		int limitIndex = exitSearchLimitIndex(orderedLanes, activeEntryLaneId);
+		return currentIndex >= 0 && currentIndex <= limitIndex;
 	}
 
 	private int exitSearchLimitIndex(List<Lane> orderedLanes, String activeEntryLaneId) {
@@ -2035,7 +2099,7 @@ public class OperationsService {
 		}
 		double occupancyRate = (lane.getVehicleCount() + reservedCount) * 1.0 / lane.getCapacity();
 		if (lane.getVehicleCount() + reservedCount >= lane.getCapacity()
-				|| ("DEGRADED".equals(lane.getSensorStatus()) && occupancyRate >= 0.85)) {
+				|| "DEGRADED".equals(lane.getSensorStatus())) {
 			return "FULL";
 		}
 		if (occupancyRate >= 0.7 || lane.getVehicleCount() + reservedCount >= Math.max(1, lane.getCapacity() - 1)) {

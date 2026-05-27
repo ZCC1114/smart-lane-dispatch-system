@@ -59,7 +59,7 @@
 | `172.17.2.31-33` | 大华对讲 | 否 | 对讲系统内部使用，不接入本系统 |
 | `172.17.2.40` | 车牌识别一体机 | 是 | 与 `172.17.2.90` 为一套总入口 MF 设备；现场端应为一体机；已确认 `SN=00E02721A3A7`、`groupId=9QHZNII`、`deviceNo=09K2900202441623` |
 | `172.17.2.51-61` | 1-11 号车道入口摄像机 | 是 | `.51=L01`、`.52=L02`，依次到 `.61=L11`; MQTT `devId` 已按现场 UID/MAC 配置 |
-| `172.17.2.70` | LED 显示屏 | 是 | 需要自动显示引导牌内容；已按 Bx6E、1920x960、2列x6行配置 |
+| `172.17.2.70` | LED 显示屏 | 是 | 需要自动显示引导牌内容；已按 Bx6E、控制卡逻辑尺寸 192x96、2列x6行配置 |
 | `172.17.2.80-81` | DIDO 模块 | 是 | 走 MQTT 连接服务器 `172.17.2.10:1883`; 测试页面已调通过；`.80/.81` 分别对应入口/出口待现场最终确认 |
 | `172.17.2.90` | 车牌识别终端 | 是 | 与 `172.17.2.40` 为一套总入口 MF 设备；系统按 MF 报文里的 `SN/groupId/deviceNo` 匹配 |
 
@@ -68,7 +68,7 @@
 - DIDO: 入口/出口真实设备 ID 和 Topic，如果不是 `DIDO-ENTRY-01` / `DIDO-EXIT-01`
 - 总入口 MF: 已按测试上报数据配置 `APP_DEVICE_PARKING_MF_YARD_ENTRY_SN`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID`、`APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO`，现场只需核对实际上报是否仍一致
 - 车道入口摄像机: `APP_DEVICE_L01_CAMERA_DEV_ID` 到 `APP_DEVICE_L11_CAMERA_DEV_ID` 已按现场表配置，现场只需核对 MQTT 实际上报 devId 是否一致
-- LED: 已按 `172.17.2.70:5005`、`Bx6E`、`1920x960`、`2列x6行` 配置，现场只需联通性和显示效果确认
+- LED: 已按 `172.17.2.70:5005`、`Bx6E`、控制卡逻辑尺寸 `192x96`、`2列x6行` 配置，现场只需联通性和显示效果确认
 
 ## 2. 服务器准备
 
@@ -633,11 +633,11 @@ APP_LED_GUIDE_IP=172.17.2.70
 APP_LED_GUIDE_PORT=5005
 APP_LED_GUIDE_GENERATION=6
 APP_LED_GUIDE_MODEL=Bx6E
-APP_LED_GUIDE_SCREEN_WIDTH=1920
-APP_LED_GUIDE_SCREEN_HEIGHT=960
+APP_LED_GUIDE_SCREEN_WIDTH=192
+APP_LED_GUIDE_SCREEN_HEIGHT=96
 APP_LED_GUIDE_COLUMNS=2
 APP_LED_GUIDE_ROWS=6
-APP_LED_GUIDE_FONT_SIZE=72
+APP_LED_GUIDE_FONT_SIZE=15
 APP_LED_GUIDE_COLOR=RED
 
 APP_DISPATCH_ENTRY_LANE_ORDER=1-11
@@ -815,24 +815,24 @@ DO6  -> L06 6号车道入口灯
 DO7  -> L07 7号车道入口灯
 DO8  -> L08 8号车道入口灯
 DO9  -> L09 9号车道入口灯
-DO10 -> L10 10号车道入口灯
-DO11 -> L11 11号车道入口灯
+DO10 -> L11 11号车道入口灯
+DO11 -> L10 10号车道入口灯
 ```
 
 系统默认映射:
 
 ```text
-L01 entry-green-relay=A01
-L02 entry-green-relay=A02
-L03 entry-green-relay=A03
-L04 entry-green-relay=A04
-L05 entry-green-relay=A05
-L06 entry-green-relay=A06
-L07 entry-green-relay=A07
-L08 entry-green-relay=A08
-L09 entry-green-relay=A09
-L10 entry-green-relay=A10
-L11 entry-green-relay=A11
+L01 entry-red-relay=A01
+L02 entry-red-relay=A02
+L03 entry-red-relay=A03
+L04 entry-red-relay=A04
+L05 entry-red-relay=A05
+L06 entry-red-relay=A06
+L07 entry-red-relay=A07
+L08 entry-red-relay=A08
+L09 entry-red-relay=A09
+L10 entry-red-relay=A11
+L11 entry-red-relay=A10
 ```
 
 出口 CX/DIDO 继电器输出映射:
@@ -854,24 +854,24 @@ DO11 -> L11 11号车道出口灯
 系统默认映射:
 
 ```text
-L01 exit-green-relay=A01
-L02 exit-green-relay=A02
-L03 exit-green-relay=A03
-L04 exit-green-relay=A04
-L05 exit-green-relay=A05
-L06 exit-green-relay=A06
-L07 exit-green-relay=A07
-L08 exit-green-relay=A08
-L09 exit-green-relay=A09
-L10 exit-green-relay=A10
-L11 exit-green-relay=A11
+L01 exit-red-relay=A01
+L02 exit-red-relay=A02
+L03 exit-red-relay=A03
+L04 exit-red-relay=A04
+L05 exit-red-relay=A05
+L06 exit-red-relay=A06
+L07 exit-red-relay=A07
+L08 exit-red-relay=A08
+L09 exit-red-relay=A09
+L10 exit-red-relay=A10
+L11 exit-red-relay=A11
 ```
 
 单灯模式规则:
 
 ```text
-对应 DO 口吸合 = 绿灯
-对应 DO 口断开 = 红灯
+对应 DO 口吸合 = 红灯
+对应 DO 口断开 = 绿灯
 ```
 
 出口 CX/DIDO 地感入口映射:
@@ -1034,8 +1034,8 @@ APP_DEVICE_PARKING_MF_DOWN_TOPIC_TEMPLATE=/{mfSn}/mf/down
 
 当前测试页 `/led-test` 已按现场显示格式预置:
 
-- 屏幕尺寸: `1920 x 960`
-- 屏幕拼接: `6 x 6` 块 `320 x 160` 小屏
+- 屏幕尺寸: 控制卡逻辑尺寸 `192 x 96`
+- 物理拼接: `6 x 6` 块 `320 x 160` 小屏，软件下发仍使用控制卡逻辑尺寸
 - 显示布局: `2` 列 `6` 行，共 `12` 条
 - 文案格式: `车牌-车道`，例如 `苏B12345-1车道`
 - 数据来源: `/api/screen/board` 的总入口引导数据
@@ -1418,11 +1418,11 @@ set_env APP_LED_GUIDE_IP 172.17.2.70
 set_env APP_LED_GUIDE_PORT 5005
 set_env APP_LED_GUIDE_GENERATION 6
 set_env APP_LED_GUIDE_MODEL Bx6E
-set_env APP_LED_GUIDE_SCREEN_WIDTH 1920
-set_env APP_LED_GUIDE_SCREEN_HEIGHT 960
+set_env APP_LED_GUIDE_SCREEN_WIDTH 192
+set_env APP_LED_GUIDE_SCREEN_HEIGHT 96
 set_env APP_LED_GUIDE_COLUMNS 2
 set_env APP_LED_GUIDE_ROWS 6
-set_env APP_LED_GUIDE_FONT_SIZE 72
+set_env APP_LED_GUIDE_FONT_SIZE 15
 set_env APP_LED_GUIDE_COLOR RED
 
 set_env APP_DISPATCH_ENTRY_LANE_ORDER 1-11

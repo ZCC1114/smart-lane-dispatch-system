@@ -19,7 +19,7 @@ public class LedGuideDisplayProperties {
 	private int screenHeight = 96;
 	private int columns = 2;
 	private int rows = 6;
-	private int fontSize = 72;
+	private int fontSize = 15;
 	private String color = "RED";
 	private String promptText = "请按照车道指示进行停车等待！";
 	private long highlightDurationMs = 10000;

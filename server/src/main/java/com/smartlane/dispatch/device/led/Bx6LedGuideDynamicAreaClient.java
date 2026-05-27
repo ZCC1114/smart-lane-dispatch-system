@@ -104,7 +104,7 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 	}
 
 	private void writeOnce(LedGuideDynamicAreaRequest request) throws IOException {
-		Bx6GScreenProfile profile = new Bx6GScreenProfile(request.screenWidth(), request.screenHeight(), card);
+		Bx6GScreenProfile profile = LedScreenProfiles.withSize(screen.getProfile(), card, request.screenWidth(), request.screenHeight());
 		DynamicBxAreaRule rule = new DynamicBxAreaRule();
 		rule.setId(request.areaId());
 		rule.setImmediatePlay((byte) 1);
@@ -113,11 +113,12 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 
 		DynamicBxArea area = new DynamicBxArea(request.x(), request.y(), request.width(), request.height(), profile);
 		TextBxPage page = new TextBxPage(displayText(request.text()));
+		page.setBackground(Color.BLACK);
 		page.setForeground(parseColor(request.color()));
-		page.setFont(new Font("宋体", Font.PLAIN, clamp(request.fontSize(), 8, MAX_FONT_SIZE)));
+		page.setFont(LedFonts.textFont(Font.BOLD, clamp(request.fontSize(), 8, MAX_FONT_SIZE)));
 		page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
 		page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
-		page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(1));
+		page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
 		area.addPage(page);
 
 		Result<ACK> result = screen.writeDynamic(rule, area);

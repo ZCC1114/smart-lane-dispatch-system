@@ -52,7 +52,8 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private static final byte[] CX_ENABLE_RELAY_UPLOAD_COMMAND = hexBytes("4D930101010AA1000000");
 	private static final DateTimeFormatter DASH_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 	private static final DateTimeFormatter SLASH_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
-	private static final Set<String> SMART_CAMERA_LANE_ENTRY_ALARM_TYPES = Set.of("1", "49409");
+	private static final Set<String> SMART_CAMERA_LANE_ENTRY_ALARM_TYPES = Set.of("1");
+	private static final Set<String> SMART_CAMERA_LANE_STATUS_ALARM_TYPES = Set.of("49409", "49665");
 
 	private final DeviceGatewayProperties properties;
 	private final ObjectMapper objectMapper;
@@ -67,6 +68,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private final Map<String, List<DeviceGatewayProperties.LaneBinding>> bindingsByMfDeviceNo = new ConcurrentHashMap<>();
 	private final Map<String, DeviceGatewayProperties.LaneBinding> bindingsByCameraDevId = new ConcurrentHashMap<>();
 	private final Map<String, List<DeviceGatewayProperties.LaneBinding>> bindingsByDidoDeviceId = new ConcurrentHashMap<>();
+	private final Map<String, String> activeEntryCameraMotorStayLaneIds = new ConcurrentHashMap<>();
 	private final Map<String, String> lastLaneSyncStates = new ConcurrentHashMap<>();
 	private final Map<String, String> lastDidoDeviceSyncStates = new ConcurrentHashMap<>();
 	private final Map<String, String> lastGateActions = new ConcurrentHashMap<>();
@@ -234,6 +236,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		lastDidoDeviceSyncStates.clear();
 		lastGateActions.clear();
 		lastDidoInputStates.clear();
+		activeEntryCameraMotorStayLaneIds.clear();
 	}
 
 	@Scheduled(initialDelay = 1000, fixedDelayString = "${app.device.mqtt.reconnect-delay-ms:5000}")
@@ -454,11 +457,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 		JsonNode content = message.path("content");
 		OffsetDateTime observedAt = parseDeviceTime(firstNonBlank(text(content.path("alarmTime")), text(message.path("utcTs"))));
+		entryBinding = resolveLaneStatusAlarmBinding(devId, entryBinding, content);
 		switch (cmd) {
 			case "heartbeat" -> updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "智能相机在线");
 			case "devVerInfo", "getVerInfoRsp" -> updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "智能相机版本已上报");
 			case "devOffline" -> updateLaneDeviceStatus(binding.getLaneId(), "OFFLINE", observedAt, "智能相机离线");
-			case "devAlarm" -> handleSmartCameraAlarm(entryBinding, content, observedAt);
+			case "devAlarm" -> handleSmartCameraAlarm(devId, entryBinding, content, observedAt);
 			case "passCount" -> handleSmartCameraCountIgnored(entryBinding, observedAt);
 			case "getHaveCarRsp" -> handleSmartCameraPresenceIgnored(entryBinding, observedAt);
 			case "getVideoRsp", "clearCountRsp" -> log.debug("Smart camera response {} received from devId={}", cmd, devId);
@@ -506,10 +510,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	}
 
 	private void handleSmartCameraAlarm(
+			String devId,
 			DeviceGatewayProperties.LaneBinding binding,
 			JsonNode content,
 			OffsetDateTime observedAt) {
 		String alarmType = text(content.path("alarmType"));
+		if (isSmartCameraLaneStatusAlarmType(alarmType)) {
+			handleSmartCameraLaneStatusAlarm(devId, binding, content, observedAt, alarmType);
+			return;
+		}
 		if (!isSmartCameraLaneEntryAlarmType(alarmType)) {
 			log.debug("Ignored smart camera alarm type {} for lane {}", alarmType, binding.getLaneId());
 			return;
@@ -531,16 +540,26 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "入口相机触发但未识别车牌");
 			return;
 		}
+	}
 
+	private void handleSmartCameraLaneStatusAlarm(
+			String devId,
+			DeviceGatewayProperties.LaneBinding binding,
+			JsonNode content,
+			OffsetDateTime observedAt,
+			String alarmType) {
+		String plate = firstNonBlank(text(content.path("plateNum")), text(content.path("plateNumVDC")));
 		AlarmMapping mapping = AlarmMapping.from(alarmType);
 		if (mapping == null) {
 			log.debug("Smart camera alarm type {} has no lane status mapping for lane {}", alarmType, binding.getLaneId());
 			return;
 		}
 		if (mapping.endEvent()) {
+			clearMotorStayLane(devId);
 			updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, mapping.message() + "解除");
 			return;
 		}
+		rememberMotorStayLane(devId, binding);
 		String message = mapping.message();
 		if (!isBlank(plate)) {
 			message += ": " + plate;
@@ -568,6 +587,33 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		return activeBinding;
 	}
 
+	private DeviceGatewayProperties.LaneBinding resolveLaneStatusAlarmBinding(
+			String devId,
+			DeviceGatewayProperties.LaneBinding fallbackBinding,
+			JsonNode content) {
+		if (!isActiveEntrySmartCamera(devId)) {
+			return fallbackBinding;
+		}
+		if (!"49665".equals(text(content.path("alarmType")))) {
+			return fallbackBinding;
+		}
+		String laneId = activeEntryCameraMotorStayLaneIds.get(cameraDevIdKey(devId));
+		DeviceGatewayProperties.LaneBinding originalBinding = bindingsByLaneId.get(laneId);
+		return originalBinding == null ? fallbackBinding : originalBinding;
+	}
+
+	private void rememberMotorStayLane(String devId, DeviceGatewayProperties.LaneBinding binding) {
+		if (isActiveEntrySmartCamera(devId)) {
+			activeEntryCameraMotorStayLaneIds.put(cameraDevIdKey(devId), binding.getLaneId());
+		}
+	}
+
+	private void clearMotorStayLane(String devId) {
+		if (isActiveEntrySmartCamera(devId)) {
+			activeEntryCameraMotorStayLaneIds.remove(cameraDevIdKey(devId));
+		}
+	}
+
 	private boolean shouldRegisterSmartCameraPlate(String alarmType, JsonNode content) {
 		return "1".equals(alarmType) || isSmartCameraEntryDirection(content);
 	}
@@ -578,6 +624,10 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private boolean isSmartCameraLaneEntryAlarmType(String alarmType) {
 		return SMART_CAMERA_LANE_ENTRY_ALARM_TYPES.contains(alarmType);
+	}
+
+	private boolean isSmartCameraLaneStatusAlarmType(String alarmType) {
+		return SMART_CAMERA_LANE_STATUS_ALARM_TYPES.contains(alarmType);
 	}
 
 	private boolean isSmartCameraEntryDirection(JsonNode content) {

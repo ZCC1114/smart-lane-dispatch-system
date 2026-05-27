@@ -339,6 +339,79 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void screenClearRemainingVehiclesShouldCloseLaneQueueAndAdvanceExitLane() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(2);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value("L01"))
+			.andExpect(jsonPath("$.vehicleCount").value(0));
+
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "L01".equals(ticket.getActualLaneId())))
+			.isNotEmpty()
+			.allMatch(ticket -> "EXITED".equals(ticket.getStatus()) && ticket.getClosedAt() != null && ticket.getExitTime() != null);
+
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("GREEN"));
+	}
+
+	@Test
+	void screenClearRemainingVehiclesShouldAdvanceFromCurrentExitLaneToNextLane() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane seventhLane = buildLane("L07", "L07", "7号车道");
+		seventhLane.setCapacity(2);
+		Lane eighthLane = buildLane("L08", "L08", "8号车道");
+		eighthLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, seventhLane, eighthLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L07", "沪A70001", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L08", "沪A80001", "2026-04-20T08:04:00+08:00");
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey("active_entry_lane")
+				.configValue("L08")
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey("active_exit_lane")
+				.configValue("L07")
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L07");
+
+		mockMvc.perform(post("/api/screen/lanes/L07/clear-remaining"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.id").value("L07"))
+			.andExpect(jsonPath("$.vehicleCount").value(0));
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L08");
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"))
+			.andExpect(jsonPath("$[?(@.id=='L07')].exitSignal").value("RED"))
+			.andExpect(jsonPath("$[?(@.id=='L08')].exitSignal").value("GREEN"));
+	}
+
+	@Test
 	void exitLaneShouldHoldCurrentEntryLaneWhenNoLaneHasVehicles() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");

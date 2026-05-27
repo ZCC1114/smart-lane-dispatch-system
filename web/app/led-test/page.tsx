@@ -8,11 +8,11 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
 const SITE_LED_IP = "172.17.2.70";
-const SITE_SCREEN_WIDTH = 6 * 320;
-const SITE_SCREEN_HEIGHT = 6 * 160;
+const SITE_SCREEN_WIDTH = 192;
+const SITE_SCREEN_HEIGHT = 96;
 const SITE_COLUMNS = 2;
 const SITE_ROWS = 6;
-const SITE_FONT_SIZE = 72;
+const SITE_FONT_SIZE = 15;
 
 const COLORS = [
   { value: "RED", label: "红色", bg: "bg-red-500" },
@@ -45,6 +45,22 @@ interface ScreenBoardResponse {
   guideAssignments?: DispatchTicket[];
   waitingAssignments?: DispatchTicket[];
   recentDispatches?: DispatchTicket[];
+}
+
+interface LedSendRequest {
+  ip: string;
+  port: number;
+  generation: "5" | "6";
+  model: string;
+  screenWidth: number;
+  screenHeight: number;
+  columns: number;
+  rows: number;
+  segments: Array<{
+    text: string;
+    fontSize: number;
+    color: string;
+  }>;
 }
 
 let nextId = 1;
@@ -93,6 +109,7 @@ export default function LedTestPage() {
   const [loading, setLoading] = useState(false);
   const [loadingBoard, setLoadingBoard] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [lastSendPayload, setLastSendPayload] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
 
   function addSegment() {
@@ -181,24 +198,27 @@ export default function LedTestPage() {
     setResult(null);
     setStatus("idle");
     try {
+      const requestPayload: LedSendRequest = {
+        ip: ip.trim(),
+        port: Number.parseInt(port, 10) || 5005,
+        generation,
+        model,
+        screenWidth: Number.parseInt(screenWidth, 10) || SITE_SCREEN_WIDTH,
+        screenHeight: Number.parseInt(screenHeight, 10) || SITE_SCREEN_HEIGHT,
+        columns: Number.parseInt(columns, 10) || SITE_COLUMNS,
+        rows: Number.parseInt(rows, 10) || SITE_ROWS,
+        segments: validSegments.map((s) => ({
+          text: s.text.trim(),
+          fontSize: s.fontSize,
+          color: s.color,
+        })),
+      };
+      const requestBody = JSON.stringify(requestPayload);
+      setLastSendPayload(requestBody);
       const response = await fetch(`${API_BASE_URL}/screen/led-test/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ip: ip.trim(),
-          port: Number.parseInt(port, 10) || 5005,
-          generation,
-          model,
-          screenWidth: Number.parseInt(screenWidth, 10) || SITE_SCREEN_WIDTH,
-          screenHeight: Number.parseInt(screenHeight, 10) || SITE_SCREEN_HEIGHT,
-          columns: Number.parseInt(columns, 10) || SITE_COLUMNS,
-          rows: Number.parseInt(rows, 10) || SITE_ROWS,
-          segments: validSegments.map((s) => ({
-            text: s.text.trim(),
-            fontSize: s.fontSize,
-            color: s.color,
-          })),
-        }),
+        body: requestBody,
       });
       const payload = (await response.json()) as { result: string };
       setResult(payload.result);
@@ -334,7 +354,7 @@ export default function LedTestPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100"
               >
                 <Monitor className="size-3.5" />
-                现场大屏 1920x960
+                现场大屏 192x96
               </button>
               <button
                 type="button"
@@ -494,10 +514,22 @@ export default function LedTestPage() {
             </div>
           ) : null}
 
+          {lastSendPayload ? (
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-slate-500">
+                <Terminal className="size-3.5 text-slate-500" />
+                原始发送报文
+              </h3>
+              <pre className="max-h-80 overflow-auto rounded-md border border-slate-200 bg-slate-950 p-3 text-xs leading-5 text-emerald-100">
+                <code>{lastSendPayload}</code>
+              </pre>
+            </div>
+          ) : null}
+
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-2 text-sm font-bold text-slate-700">使用说明</h2>
             <ul className="list-inside list-disc space-y-1 text-xs text-slate-600">
-              <li>现场大屏按 6x6 块 320x160 模组计算，发送尺寸为 1920x960。</li>
+              <li>现场大屏按控制卡逻辑尺寸 192x96 发送，2 列 6 行时单格为 96x16。</li>
               <li>现场格式为 2 列 6 行，每条内容按“车牌-车道”展示，例如“苏B12345-1车道”。</li>
               <li>点击“读取总入口数据”会从大屏接口读取总入口抓拍后的推荐车道数据。</li>
               <li>点击色块切换颜色，当前选中的颜色会带有绿色边框。</li>

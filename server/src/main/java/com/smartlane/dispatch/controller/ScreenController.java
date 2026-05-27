@@ -79,6 +79,11 @@ public class ScreenController {
 		return operationsService.simulateScreenLaneExit(request.laneId(), null);
 	}
 
+	@PostMapping("/lanes/{laneId}/clear-remaining")
+	public Lane clearLaneRemainingVehicles(@PathVariable String laneId) {
+		return operationsService.clearLaneRemainingVehicles(laneId, null, "现场确认车道剩余车辆已全部驶出");
+	}
+
 	@PostMapping("/simulate/global-exit")
 	public Lane simulateGlobalExit() {
 		operationsService.updateDispatchRuntime(new DispatchRuntimeRequest(true, true));

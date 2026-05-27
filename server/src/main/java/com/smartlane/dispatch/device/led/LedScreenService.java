@@ -132,12 +132,13 @@ public class LedScreenService {
 				var area = new onbon.bx05.area.TextCaptionBxArea(
 						cell.x(), cell.y(), cell.width(), cell.height(), profile);
 				var page = new onbon.bx05.area.page.TextBxPage(segment.text());
+				page.setBackground(Color.BLACK);
 				page.setForeground(parseColor(segment.color()));
-				page.setFont(new Font("宋体", Font.PLAIN,
+				page.setFont(LedFonts.textFont(Font.BOLD,
 						clamp(segment.fontSize(), 8, MAX_FONT_SIZE)));
 				page.setHorizontalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
 				page.setVerticalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
-				page.setDisplayStyle(onbon.bx05.utils.DisplayStyleFactory.getStyle(1));
+				page.setDisplayStyle(onbon.bx05.utils.DisplayStyleFactory.getStyle(2));
 				area.addPage(page);
 				program.addArea(area);
 			}
@@ -182,12 +183,13 @@ public class LedScreenService {
 				var area = new onbon.bx06.area.TextCaptionBxArea(
 						cell.x(), cell.y(), cell.width(), cell.height(), profile);
 				var page = new onbon.bx06.area.page.TextBxPage(segment.text());
+				page.setBackground(Color.BLACK);
 				page.setForeground(parseColor(segment.color()));
-				page.setFont(new Font("宋体", Font.PLAIN,
+				page.setFont(LedFonts.textFont(Font.BOLD,
 						clamp(segment.fontSize(), 8, MAX_FONT_SIZE)));
 				page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
 				page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
-				page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(1));
+				page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
 				area.addPage(page);
 				program.addArea(area);
 			}
@@ -221,17 +223,11 @@ public class LedScreenService {
 	}
 
 	private Bx5GScreenProfile resolveG5Profile(Bx5GScreenProfile cardProfile, int screenWidth, int screenHeight) {
-		if (screenWidth <= 0 || screenHeight <= 0) {
-			return cardProfile;
-		}
-		return new Bx5GScreenProfile(screenWidth, screenHeight, new onbon.bx05.series.Bx5G());
+		return LedScreenProfiles.withSize(cardProfile, screenWidth, screenHeight);
 	}
 
 	private Bx6GScreenProfile resolveG6Profile(Bx6GScreenProfile cardProfile, Bx6Card card, int screenWidth, int screenHeight) {
-		if (screenWidth <= 0 || screenHeight <= 0) {
-			return cardProfile;
-		}
-		return new Bx6GScreenProfile(screenWidth, screenHeight, card);
+		return LedScreenProfiles.withSize(cardProfile, card, screenWidth, screenHeight);
 	}
 
 	private LedLayout resolveLayout(int screenWidth, int screenHeight, int columns, int rows, int segmentCount) {

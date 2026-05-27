@@ -9,8 +9,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class LedGuideDynamicAreaWriter {
 
-	private static final int DEFAULT_SCREEN_WIDTH = 1920;
-	private static final int DEFAULT_SCREEN_HEIGHT = 960;
+	private static final int DEFAULT_SCREEN_WIDTH = 192;
+	private static final int DEFAULT_SCREEN_HEIGHT = 96;
 
 	private final LedGuideDisplayProperties properties;
 	private final LedGuideDynamicAreaClient client;

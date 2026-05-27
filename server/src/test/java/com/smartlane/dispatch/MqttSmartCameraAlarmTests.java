@@ -95,15 +95,36 @@ class MqttSmartCameraAlarmTests {
 	}
 
 	@Test
-	void smartCameraDevAlarmType49409ShouldRegisterLaneOneEntry() {
-		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+	void smartCameraDevAlarmType49409ShouldMarkLaneFullAndMoveActiveEntryLane() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
 
 		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
 
-		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(1);
-		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
-				.extracting(EntryLog::getPlate)
-				.containsExactly("苏BFE8888");
+		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
+		assertThat(updatedLaneOne.getVehicleCount()).isZero();
+		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("DEGRADED");
+		assertThat(updatedLaneOne.getStatus()).isEqualTo("FULL");
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+	}
+
+	@Test
+	void smartCameraDevAlarmType49665ShouldClearMotorStayFullProtection() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+
+		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
+		ingestSmartCameraAlarm("49665", "", "in", "2026-05-06 17:03:10");
+
+		operationsService.getLanes();
+		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
+		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("ONLINE");
+		assertThat(updatedLaneOne.getStatus()).isEqualTo("OPEN");
+		assertThat(updatedLaneOne.getVehicleCount()).isZero();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
 	}
 
 	@Test

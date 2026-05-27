@@ -1,6 +1,6 @@
 "use client";
 
-import { ScreenBoard } from "@/app/screen/page";
+import { ScreenBoard } from "@/components/screen-board";
 
 export default function DashboardPage() {
   return <ScreenBoard mode="embedded" />;

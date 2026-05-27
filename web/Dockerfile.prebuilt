@@ -1,0 +1,15 @@
+ARG DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
+
+FROM ${DOCKER_IMAGE_REGISTRY}/node:23-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+COPY .next/standalone ./
+COPY .next/static ./.next/static
+COPY public ./public
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

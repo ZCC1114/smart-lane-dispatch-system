@@ -60,7 +60,7 @@ class LedGuideDisplayServiceTests {
 				"苏B22222 驶入 11车道",
 				"苏B33333 驶入 3车道",
 				PROMPT_TEXT);
-		assertThat(segments).extracting(Segment::fontSize).containsExactly(10, 10, 10, 10);
+		assertThat(segments).extracting(Segment::fontSize).containsExactly(14, 14, 14, 11);
 	}
 
 	@Test
@@ -76,7 +76,7 @@ class LedGuideDisplayServiceTests {
 				"驶入",
 				"11车道",
 				PROMPT_TEXT);
-		assertThat(segments).extracting(Segment::fontSize).containsExactly(22, 16, 20, 10);
+		assertThat(segments).extracting(Segment::fontSize).containsExactly(22, 12, 22, 11);
 	}
 
 	@Test

@@ -206,7 +206,7 @@ public class LedGuideDisplayService {
 	}
 
 	private int listFontSize() {
-		return scaledFontSize(10, 0.75);
+		return scaledFontSize(14, 0.85);
 	}
 
 	private int highlightPlateFontSize() {
@@ -214,15 +214,15 @@ public class LedGuideDisplayService {
 	}
 
 	private int highlightActionFontSize() {
-		return scaledFontSize(16, 0.85);
+		return scaledFontSize(12, 0.65);
 	}
 
 	private int highlightLaneFontSize() {
-		return scaledFontSize(20, 0.95);
+		return scaledFontSize(22, 0.95);
 	}
 
 	private int promptFontSize() {
-		return scaledFontSize(10, 0.75);
+		return scaledFontSize(11, 0.7);
 	}
 
 	private int scaledFontSize(int baseSizeAt192x96, double maxRowRatio) {

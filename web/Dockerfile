@@ -27,7 +27,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN npm run build
+RUN npm run build -- --webpack
 
 FROM ${DOCKER_IMAGE_REGISTRY}/node:23-alpine AS runtime
 WORKDIR /app
