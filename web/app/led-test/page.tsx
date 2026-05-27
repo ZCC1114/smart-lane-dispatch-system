@@ -12,6 +12,7 @@ const SITE_SCREEN_WIDTH = 192;
 const SITE_SCREEN_HEIGHT = 96;
 const SITE_COLUMNS = 2;
 const SITE_ROWS = 6;
+const BUSINESS_ROWS = 4;
 const SITE_FONT_SIZE = 15;
 
 const COLORS = [
@@ -63,6 +64,8 @@ interface LedSendRequest {
   }>;
 }
 
+type SendMode = "program" | "dynamic";
+
 let nextId = 1;
 
 function sampleSegments() {
@@ -72,6 +75,24 @@ function sampleSegments() {
     fontSize: SITE_FONT_SIZE,
     color: "RED",
   }));
+}
+
+function businessListSegments() {
+  return [
+    { id: nextId++, text: "苏B00001 驶入 1车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "苏B00002 驶入 2车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "苏B00003 驶入 3车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "请按照车道指示进行停车等待！", fontSize: 11, color: "RED" },
+  ];
+}
+
+function businessHighlightSegments() {
+  return [
+    { id: nextId++, text: "苏B00001", fontSize: 22, color: "RED" },
+    { id: nextId++, text: "驶入", fontSize: 12, color: "RED" },
+    { id: nextId++, text: "1车道", fontSize: 22, color: "RED" },
+    { id: nextId++, text: "请按照车道指示进行停车等待！", fontSize: 11, color: "RED" },
+  ];
 }
 
 function laneText(ticket: DispatchTicket) {
@@ -106,6 +127,7 @@ export default function LedTestPage() {
   const [columns, setColumns] = useState(String(SITE_COLUMNS));
   const [rows, setRows] = useState(String(SITE_ROWS));
   const [segments, setSegments] = useState<Segment[]>(sampleSegments);
+  const [sendMode, setSendMode] = useState<SendMode>("program");
   const [loading, setLoading] = useState(false);
   const [loadingBoard, setLoadingBoard] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -120,12 +142,37 @@ export default function LedTestPage() {
   }
 
   function applySitePreset() {
+    setSendMode("program");
     setIp(SITE_LED_IP);
     setScreenWidth(String(SITE_SCREEN_WIDTH));
     setScreenHeight(String(SITE_SCREEN_HEIGHT));
     setColumns(String(SITE_COLUMNS));
     setRows(String(SITE_ROWS));
     setSegments(sampleSegments());
+  }
+
+  function applyBusinessListPreset() {
+    setSendMode("dynamic");
+    setIp(SITE_LED_IP);
+    setGeneration("6");
+    setModel("Bx6E");
+    setScreenWidth(String(SITE_SCREEN_WIDTH));
+    setScreenHeight(String(SITE_SCREEN_HEIGHT));
+    setColumns("1");
+    setRows(String(BUSINESS_ROWS));
+    setSegments(businessListSegments());
+  }
+
+  function applyBusinessHighlightPreset() {
+    setSendMode("dynamic");
+    setIp(SITE_LED_IP);
+    setGeneration("6");
+    setModel("Bx6E");
+    setScreenWidth(String(SITE_SCREEN_WIDTH));
+    setScreenHeight(String(SITE_SCREEN_HEIGHT));
+    setColumns("1");
+    setRows(String(BUSINESS_ROWS));
+    setSegments(businessHighlightSegments());
   }
 
   function removeSegment(id: number) {
@@ -194,10 +241,16 @@ export default function LedTestPage() {
       setStatus("error");
       return;
     }
+    if (sendMode === "dynamic" && generation !== "6") {
+      setResult("动态区长连接只支持六代控制卡");
+      setStatus("error");
+      return;
+    }
     setLoading(true);
     setResult(null);
     setStatus("idle");
     try {
+      const payloadSegments = sendMode === "dynamic" ? validSegments.slice(0, BUSINESS_ROWS) : validSegments;
       const requestPayload: LedSendRequest = {
         ip: ip.trim(),
         port: Number.parseInt(port, 10) || 5005,
@@ -205,9 +258,9 @@ export default function LedTestPage() {
         model,
         screenWidth: Number.parseInt(screenWidth, 10) || SITE_SCREEN_WIDTH,
         screenHeight: Number.parseInt(screenHeight, 10) || SITE_SCREEN_HEIGHT,
-        columns: Number.parseInt(columns, 10) || SITE_COLUMNS,
-        rows: Number.parseInt(rows, 10) || SITE_ROWS,
-        segments: validSegments.map((s) => ({
+        columns: sendMode === "dynamic" ? 1 : Number.parseInt(columns, 10) || SITE_COLUMNS,
+        rows: sendMode === "dynamic" ? BUSINESS_ROWS : Number.parseInt(rows, 10) || SITE_ROWS,
+        segments: payloadSegments.map((s) => ({
           text: s.text.trim(),
           fontSize: s.fontSize,
           color: s.color,
@@ -215,7 +268,8 @@ export default function LedTestPage() {
       };
       const requestBody = JSON.stringify(requestPayload);
       setLastSendPayload(requestBody);
-      const response = await fetch(`${API_BASE_URL}/screen/led-test/send`, {
+      const endpoint = sendMode === "dynamic" ? "send-dynamic" : "send";
+      const response = await fetch(`${API_BASE_URL}/screen/led-test/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: requestBody,
@@ -231,8 +285,8 @@ export default function LedTestPage() {
     }
   }
 
-  const previewColumns = Math.max(1, Number.parseInt(columns, 10) || SITE_COLUMNS);
-  const previewRows = Math.max(1, Number.parseInt(rows, 10) || SITE_ROWS);
+  const previewColumns = sendMode === "dynamic" ? 1 : Math.max(1, Number.parseInt(columns, 10) || SITE_COLUMNS);
+  const previewRows = sendMode === "dynamic" ? BUSINESS_ROWS : Math.max(1, Number.parseInt(rows, 10) || SITE_ROWS);
   const previewCapacity = previewColumns * previewRows;
 
   return (
@@ -271,6 +325,38 @@ export default function LedTestPage() {
               连接参数
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1 text-xs font-semibold text-slate-600 sm:col-span-2">
+                发送方式
+                <div className="inline-flex w-fit overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setSendMode("program")}
+                    className={cn(
+                      "rounded px-3 py-1.5 text-xs font-bold transition",
+                      sendMode === "program"
+                        ? "bg-white text-blue-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
+                    )}
+                  >
+                    完整节目
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSendMode("dynamic");
+                      setGeneration("6");
+                    }}
+                    className={cn(
+                      "rounded px-3 py-1.5 text-xs font-bold transition",
+                      sendMode === "dynamic"
+                        ? "bg-white text-emerald-700 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
+                    )}
+                  >
+                    动态区长连接
+                  </button>
+                </div>
+              </div>
               <label className="grid gap-1 text-xs font-semibold text-slate-600">
                 显示屏 IP
                 <input
@@ -355,6 +441,22 @@ export default function LedTestPage() {
               >
                 <Monitor className="size-3.5" />
                 现场大屏 192x96
+              </button>
+              <button
+                type="button"
+                onClick={applyBusinessListPreset}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100"
+              >
+                <Monitor className="size-3.5" />
+                业务列表 1x4
+              </button>
+              <button
+                type="button"
+                onClick={applyBusinessHighlightPreset}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100"
+              >
+                <Monitor className="size-3.5" />
+                高亮引导 1x4
               </button>
               <button
                 type="button"
@@ -495,7 +597,7 @@ export default function LedTestPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 <Send className="size-4" />
-                {loading ? "发送中..." : "发送到显示屏"}
+                {loading ? "发送中..." : sendMode === "dynamic" ? "动态区长连接发送" : "发送到显示屏"}
               </button>
             </div>
           </div>
@@ -530,6 +632,7 @@ export default function LedTestPage() {
             <h2 className="mb-2 text-sm font-bold text-slate-700">使用说明</h2>
             <ul className="list-inside list-disc space-y-1 text-xs text-slate-600">
               <li>现场大屏按控制卡逻辑尺寸 192x96 发送，2 列 6 行时单格为 96x16。</li>
+              <li>动态区长连接模式按业务大屏 1 列 4 行发送，只取前 4 段内容并复用控制卡连接。</li>
               <li>现场格式为 2 列 6 行，每条内容按“车牌-车道”展示，例如“苏B12345-1车道”。</li>
               <li>点击“读取总入口数据”会从大屏接口读取总入口抓拍后的推荐车道数据。</li>
               <li>点击色块切换颜色，当前选中的颜色会带有绿色边框。</li>

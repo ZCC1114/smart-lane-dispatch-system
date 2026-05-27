@@ -67,7 +67,7 @@ APP_LED_GUIDE_FONT_SIZE=15
 APP_LED_GUIDE_COLOR=RED
 APP_LED_GUIDE_PROMPT_TEXT=请按照车道指示进行停车等待！
 APP_LED_GUIDE_HIGHLIGHT_DURATION_MS=10000
-APP_LED_GUIDE_WRITE_MODE=PROGRAM
+APP_LED_GUIDE_WRITE_MODE=DYNAMIC_WITH_PROGRAM_FALLBACK
 APP_LED_GUIDE_DYNAMIC_AREA_START_ID=0
 APP_LED_GUIDE_FULL_REFRESH_MS=60000
 ```
@@ -125,8 +125,8 @@ http://localhost:3000/led-test
 
 业务自动下发的三种写入模式：
 
-- `PROGRAM`：默认模式，只使用完整节目写入。现场需要 4 行新布局但不启用动态区时使用。
-- `DYNAMIC_WITH_PROGRAM_FALLBACK`：优先动态区，失败后回退完整节目。
+- `DYNAMIC_WITH_PROGRAM_FALLBACK`：默认模式，优先动态区长连接写入，失败后回退完整节目。
+- `PROGRAM`：只使用完整节目写入；动态区现场异常时可临时切回该模式。
 - `DYNAMIC`：只使用动态区，适合确认现场控制卡动态区稳定后使用。
 
 ### 支持的颜色

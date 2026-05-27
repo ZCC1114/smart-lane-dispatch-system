@@ -89,7 +89,7 @@ class MqttParkingMfYardEntryTests {
 				    "groupId": "9QHZNII",
 				    "parkingTime": "2026-05-12 14:53:36",
 				    "plateColor": "BLUE",
-				    "plateNo": "苏B3R89T",
+				    "plateNo": "苏B3T530",
 				    "realTime": true,
 				    "uploadTime": 1778568817063
 				  },
@@ -107,14 +107,89 @@ class MqttParkingMfYardEntryTests {
 				payload.getBytes(StandardCharsets.UTF_8));
 
 		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
-		assertThat(ticket.getPlate()).isEqualTo("苏B3R89T");
+		assertThat(ticket.getPlate()).isEqualTo("苏B3T530");
 		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
 		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
 		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
 				.singleElement()
 				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
-				.containsExactly("苏B3R89T", "L01", null);
+				.containsExactly("苏B3T530", "L01", null);
+	}
+
+	@Test
+	void parkingMfBluePlateWithoutTaxiPatternShouldBeDroppedBeforeAssignment() {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+
+		String payload = """
+				{
+				  "cmd": "plateResult",
+				  "data": {
+				    "confidence": 27,
+				    "deviceNo": "09K2900202441623",
+				    "groupId": "9QHZNII",
+				    "parkingTime": "2026-05-22 18:56:41",
+				    "plateColor": "BLUE",
+				    "plateNo": "苏B3R89T",
+				    "realTime": true,
+				    "uploadTime": 1779447401000
+				  },
+				  "msgId": "C_6a0fdrop",
+				  "sn": "00E02721A3A7",
+				  "timestamp": 1779447401000,
+				  "timezone": "Asia/Shanghai"
+				}
+				""";
+
+		ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"handleRawMqttMessage",
+				"/00E02721A3A7/mf/up",
+				payload.getBytes(StandardCharsets.UTF_8));
+
+		assertThat(dispatchTicketRepository.findAll()).isEmpty();
+		assertThat(entryLogRepository.findAll()).isEmpty();
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
+	}
+
+	@Test
+	void parkingMfGreenPlateShouldBypassBlueTaxiPattern() {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+
+		String payload = """
+				{
+				  "cmd": "plateResult",
+				  "data": {
+				    "confidence": 27,
+				    "deviceNo": "09K2900202441623",
+				    "groupId": "9QHZNII",
+				    "parkingTime": "2026-05-22 18:56:41",
+				    "plateColor": "GREEN",
+				    "plateNo": "苏BD12345",
+				    "realTime": true,
+				    "uploadTime": 1779447401000
+				  },
+				  "msgId": "C_6a0fgreen",
+				  "sn": "00E02721A3A7",
+				  "timestamp": 1779447401000,
+				  "timezone": "Asia/Shanghai"
+				}
+				""";
+
+		ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"handleRawMqttMessage",
+				"/00E02721A3A7/mf/up",
+				payload.getBytes(StandardCharsets.UTF_8));
+
+		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
+		assertThat(ticket.getPlate()).isEqualTo("苏BD12345");
+		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
+				.singleElement()
+				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
+				.containsExactly("苏BD12345", "L01", null);
 	}
 
 	@Test

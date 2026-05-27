@@ -108,7 +108,7 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 		DynamicBxAreaRule rule = new DynamicBxAreaRule();
 		rule.setId(request.areaId());
 		rule.setImmediatePlay((byte) 1);
-		rule.setRunMode((byte) 1);
+		rule.setRunMode((byte) 0);
 		rule.setTimeout(0);
 
 		DynamicBxArea area = new DynamicBxArea(request.x(), request.y(), request.width(), request.height(), profile);

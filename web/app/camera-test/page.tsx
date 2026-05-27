@@ -40,7 +40,8 @@ const DEFAULT_CAMERA_ID = "18030023535D";
 const DEFAULT_MF_SN = "00E02721A3A7";
 const DEFAULT_MF_GROUP_ID = "9QHZNII";
 const DEFAULT_MF_DEVICE_NO = "09K2900202441623";
-const DEFAULT_PLATE = "苏B3R89T";
+const DEFAULT_PLATE = "苏B3T530";
+const DEFAULT_MF_PLATE_COLOR = "BLUE";
 const LANE_CAMERA_IDS = [
   { laneId: "L01", label: "1号车道", devId: "18030023535D" },
   { laneId: "L02", label: "2号车道", devId: "1803002352FD" },
@@ -119,7 +120,7 @@ function buildCameraCommand(cameraId: string, cmd: CameraCommand, content: Recor
   );
 }
 
-function buildParkingMfPlateResult(sn: string, groupId: string, deviceNo: string, plate: string) {
+function buildParkingMfPlateResult(sn: string, groupId: string, deviceNo: string, plate: string, plateColor: string) {
   const timestamp = Date.now();
   return JSON.stringify(
     {
@@ -132,6 +133,7 @@ function buildParkingMfPlateResult(sn: string, groupId: string, deviceNo: string
         groupId,
         deviceNo,
         plateNo: plate,
+        plateColor,
         parkingTime: formatCameraTime(),
         uploadTime: timestamp,
         realTime: true,
@@ -178,6 +180,7 @@ export default function CameraTestPage() {
   const [mfGroupId, setMfGroupId] = useState(DEFAULT_MF_GROUP_ID);
   const [mfDeviceNo, setMfDeviceNo] = useState(DEFAULT_MF_DEVICE_NO);
   const [mfPlate, setMfPlate] = useState(DEFAULT_PLATE);
+  const [mfPlateColor, setMfPlateColor] = useState(DEFAULT_MF_PLATE_COLOR);
   const [customPayload, setCustomPayload] = useState("");
   const [client, setClient] = useState<MqttClient | null>(null);
   const [connState, setConnState] = useState<"idle" | "connecting" | "connected" | "error">("idle");
@@ -192,6 +195,7 @@ export default function CameraTestPage() {
   const normalizedMfGroupId = mfGroupId.trim() || DEFAULT_MF_GROUP_ID;
   const normalizedMfDeviceNo = mfDeviceNo.trim() || DEFAULT_MF_DEVICE_NO;
   const normalizedMfPlate = mfPlate.trim() || DEFAULT_PLATE;
+  const normalizedMfPlateColor = mfPlateColor.trim() || DEFAULT_MF_PLATE_COLOR;
   const mfUpTopic = `/${normalizedMfSn}/mf/up`;
   const mfDownTopic = `/${normalizedMfSn}/mf/down`;
   const topicFilters = useMemo(
@@ -566,20 +570,33 @@ export default function CameraTestPage() {
                     />
                   </label>
                 </div>
-                <label className="grid gap-1 text-xs font-semibold text-slate-600">
-                  测试车牌
-                  <input
-                    value={mfPlate}
-                    onChange={(event) => setMfPlate(event.target.value)}
-                    className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
-                  />
-                </label>
+                <div className="grid grid-cols-[1fr_120px] gap-2">
+                  <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                    测试车牌
+                    <input
+                      value={mfPlate}
+                      onChange={(event) => setMfPlate(event.target.value)}
+                      className="rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-900 outline-none focus:border-blue-500"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                    车牌颜色
+                    <select
+                      value={mfPlateColor}
+                      onChange={(event) => setMfPlateColor(event.target.value)}
+                      className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500"
+                    >
+                      <option value="BLUE">蓝牌</option>
+                      <option value="GREEN">绿牌</option>
+                    </select>
+                  </label>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() =>
                       publishMfUp(
-                        buildParkingMfPlateResult(normalizedMfSn, normalizedMfGroupId, normalizedMfDeviceNo, normalizedMfPlate),
+                        buildParkingMfPlateResult(normalizedMfSn, normalizedMfGroupId, normalizedMfDeviceNo, normalizedMfPlate, normalizedMfPlateColor),
                         "总入口抓拍",
                       )
                     }

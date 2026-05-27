@@ -8,5 +8,10 @@ public record YardEntryPayload(
 		@NotBlank(message = "车牌号码不能为空") String plate,
 		String vehicleType,
 		String source,
-		OffsetDateTime capturedAt) {
+		OffsetDateTime capturedAt,
+		String plateColor) {
+
+	public YardEntryPayload(String plate, String vehicleType, String source, OffsetDateTime capturedAt) {
+		this(plate, vehicleType, source, capturedAt, null);
+	}
 }

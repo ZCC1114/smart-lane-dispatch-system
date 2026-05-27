@@ -640,16 +640,27 @@ public class OperationsService {
 	@Transactional
 	public DispatchTicket registerYardEntry(YardEntryPayload payload) {
 		OffsetDateTime capturedAt = resolveTime(payload.capturedAt());
+		String normalizedPlate = normalizePlate(payload.plate());
+		String normalizedSource = isBlank(payload.source()) ? "YARD_CAMERA" : payload.source().toUpperCase(Locale.ROOT);
+		if (LicensePlateRules.shouldIgnoreYardEntry(normalizedPlate, payload.plateColor())) {
+			log.info(
+					"Yard entry capture ignored because blue taxi plate pattern did not match plate={} plateColor={} source={} capturedAt={}",
+					normalizedPlate,
+					payload.plateColor(),
+					normalizedSource,
+					capturedAt);
+			return null;
+		}
+
 		expireStaleDispatchTickets(capturedAt);
 
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
-		String normalizedSource = isBlank(payload.source()) ? "YARD_CAMERA" : payload.source().toUpperCase(Locale.ROOT);
 		boolean entryDispatchBefore = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
 		String activeEntryLaneBefore = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
 		log.info(
 				"Yard entry capture received plate={} source={} capturedAt={} entryDispatchBefore={} activeEntryLaneBefore={} lanes={} laneOrder={}",
-				normalizePlate(payload.plate()),
+				normalizedPlate,
 				normalizedSource,
 				capturedAt,
 				entryDispatchBefore,
@@ -665,7 +676,7 @@ public class OperationsService {
 		Lane targetLane = laneById(lanes, activeAutoEntryLaneId);
 		log.info(
 				"Yard entry assignment decision plate={} source={} entryDispatchEnabled={} activeEntryLane={} targetLane={} pendingForTarget={} vehicleCount={} capacity={}",
-				normalizePlate(payload.plate()),
+				normalizedPlate,
 				normalizedSource,
 				entryDispatchEnabled,
 				activeAutoEntryLaneId,
@@ -676,7 +687,7 @@ public class OperationsService {
 
 		DispatchTicket ticket = DispatchTicket.builder()
 				.id("DSP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
-				.plate(normalizePlate(payload.plate()))
+				.plate(normalizedPlate)
 				.yardEntryTime(capturedAt)
 				.vehicleType(isBlank(payload.vehicleType()) ? "出租车" : payload.vehicleType())
 				.source(normalizedSource)

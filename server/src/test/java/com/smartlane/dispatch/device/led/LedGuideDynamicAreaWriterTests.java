@@ -35,7 +35,7 @@ class LedGuideDynamicAreaWriterTests {
 	}
 
 	@Test
-	void writesFourRowDynamicAreasWithStableCoordinates() throws Exception {
+	void writesHighlightDynamicAreasWithImportantRowsFirst() throws Exception {
 		LedGuideDisplayFrame frame = frame();
 
 		LedGuideDisplayWriteResult result = writer.write(frame, false);
@@ -45,15 +45,15 @@ class LedGuideDynamicAreaWriterTests {
 		verify(client, org.mockito.Mockito.times(4)).write(requestCaptor.capture());
 		assertThat(requestCaptor.getAllValues())
 				.extracting(LedGuideDynamicAreaRequest::areaId)
-				.containsExactly(2, 3, 4, 5);
+				.containsExactly(2, 4, 3, 5);
 		assertThat(requestCaptor.getAllValues())
 				.extracting(LedGuideDynamicAreaRequest::y)
-				.containsExactly(0, 24, 48, 72);
+				.containsExactly(0, 48, 24, 72);
 		assertThat(requestCaptor.getAllValues())
 				.extracting(LedGuideDynamicAreaRequest::height)
 				.containsExactly(24, 24, 24, 24);
-		assertThat(requestCaptor.getAllValues().get(1).text()).isEqualTo("驶入");
-		assertThat(requestCaptor.getAllValues().get(2).fontSize()).isEqualTo(20);
+		assertThat(requestCaptor.getAllValues().get(1).text()).isEqualTo("11车道");
+		assertThat(requestCaptor.getAllValues().get(1).fontSize()).isEqualTo(22);
 	}
 
 	@Test
@@ -102,8 +102,8 @@ class LedGuideDynamicAreaWriterTests {
 				LedGuideDisplayFrame.Mode.HIGHLIGHT,
 				List.of(
 						new LedGuideDisplayFrame.Line("苏B11111", 22, "RED"),
-						new LedGuideDisplayFrame.Line("驶入", 16, "RED"),
-						new LedGuideDisplayFrame.Line("11车道", 20, "RED"),
-						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 10, "RED")));
+						new LedGuideDisplayFrame.Line("驶入", 12, "RED"),
+						new LedGuideDisplayFrame.Line("11车道", 22, "RED"),
+						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 11, "RED")));
 	}
 }

@@ -41,7 +41,7 @@ public class LedGuideDynamicAreaWriter {
 			try {
 				List<LedGuideDynamicAreaRequest> requests = buildRequests(frame);
 				int sentCount = 0;
-				for (int index = 0; index < requests.size(); index++) {
+				for (int index : writeOrder(frame, requests.size())) {
 					LedGuideDynamicAreaRequest request = requests.get(index);
 					String cacheKey = request.cacheKey();
 					if (forceRefresh || !cacheKey.equals(lastRowKeys[index])) {
@@ -85,6 +85,13 @@ public class LedGuideDynamicAreaWriter {
 							row.color());
 				})
 				.toList();
+	}
+
+	private int[] writeOrder(LedGuideDisplayFrame frame, int size) {
+		if (frame.mode() == LedGuideDisplayFrame.Mode.HIGHLIGHT && size >= 4) {
+			return new int[] {0, 2, 1, 3};
+		}
+		return IntStream.range(0, size).toArray();
 	}
 
 	private int positive(int value, int defaultValue) {

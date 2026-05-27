@@ -383,14 +383,16 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		String groupId = text(data.path("groupId"));
 		String deviceNo = text(data.path("deviceNo"));
 		String plate = text(data.path("plateNo"));
+		String plateColor = extractPlateColor(data);
 		OffsetDateTime capturedAt = parseDeviceTime(firstNonBlank(text(data.path("parkingTime")), text(data.path("uploadTime")), text(message.path("timestamp"))));
 		boolean yardEntry = isYardEntryParkingMf(sn, groupId, deviceNo);
 		log.info(
-				"Parking MF plateResult received sn={} groupId={} deviceNo={} plate={} capturedAt={} yardEntryMatch={} configuredYardSn={} configuredYardGroupId={} configuredYardDeviceNo={}",
+				"Parking MF plateResult received sn={} groupId={} deviceNo={} plate={} plateColor={} capturedAt={} yardEntryMatch={} configuredYardSn={} configuredYardGroupId={} configuredYardDeviceNo={}",
 				sn,
 				groupId,
 				deviceNo,
 				plate,
+				plateColor,
 				capturedAt,
 				yardEntry,
 				nullToEmpty(properties.getParkingMf().getYardEntrySn()),
@@ -399,7 +401,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		if (yardEntry) {
 			logParkingMfYardConfigMismatch(sn, groupId, deviceNo);
 			if (!isBlank(plate)) {
-				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD");
+				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD", plateColor);
 			}
 			publishParkingMfResponse(sn, "plateResultResp", text(message.path("msgId")));
 			return;
@@ -496,8 +498,9 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 
 		String alarmType = text(content.path("alarmType"));
 		String plate = firstNonBlank(text(content.path("plateNum")), text(content.path("plateNumVDC")));
+		String plateColor = extractPlateColor(content);
 		if (!isBlank(plate) && shouldRegisterSmartCameraPlate(alarmType, content)) {
-			registerYardEntryFromDevice(plate, observedAt, "SMART_CAMERA");
+			registerYardEntryFromDevice(plate, observedAt, "SMART_CAMERA", plateColor);
 		}
 	}
 
@@ -1298,12 +1301,21 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	}
 
 	private void registerYardEntryFromDevice(String plate, OffsetDateTime capturedAt, String source) {
+		registerYardEntryFromDevice(plate, capturedAt, source, null);
+	}
+
+	private void registerYardEntryFromDevice(String plate, OffsetDateTime capturedAt, String source, String plateColor) {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
-			DispatchTicket ticket = operationsService.registerYardEntry(new YardEntryPayload(plate, "出租车", source, capturedAt));
+			DispatchTicket ticket = operationsService.registerYardEntry(new YardEntryPayload(plate, "出租车", source, capturedAt, plateColor));
+			if (ticket == null) {
+				log.info("Yard entry registration from MQTT ignored plate={} plateColor={} source={} capturedAt={}", plate, plateColor, source, capturedAt);
+				return;
+			}
 			log.info(
-					"Yard entry registration from MQTT completed plate={} source={} capturedAt={} ticketId={} status={} assignedLane={}",
+					"Yard entry registration from MQTT completed plate={} plateColor={} source={} capturedAt={} ticketId={} status={} assignedLane={}",
 					plate,
+					plateColor,
 					source,
 					capturedAt,
 					ticket.getId(),
@@ -1430,6 +1442,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private OffsetDateTime observedAtFromMessage(JsonNode message) {
 		JsonNode content = message.path("content");
 		return parseDeviceTime(firstNonBlank(text(content.path("alarmTime")), text(message.path("utcTs"))));
+	}
+
+	private String extractPlateColor(JsonNode node) {
+		return firstNonBlank(
+				text(node.path("plateColor")),
+				text(node.path("plateColour")),
+				text(node.path("plate_color")),
+				text(node.path("plateColorType")),
+				text(node.path("plateColorName")));
 	}
 
 	private OffsetDateTime now() {
