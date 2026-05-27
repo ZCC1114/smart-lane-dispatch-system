@@ -13,3 +13,8 @@ server/data
 smart-lane-offline/
 smart-lane-update/
 deploy-artifacts/
+release/
+
+# Local reference docs and handoff notes
+BX_05_06_SDK_20241105/
+CODEX_HANDOFF_CONTEXT.md
