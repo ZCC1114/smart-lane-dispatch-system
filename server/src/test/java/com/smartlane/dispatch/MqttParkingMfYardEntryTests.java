@@ -1,6 +1,9 @@
 package com.smartlane.dispatch;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -9,6 +12,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -18,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartlane.dispatch.device.DeviceGatewayProperties;
 import com.smartlane.dispatch.device.MqttDeviceGateway;
+import com.smartlane.dispatch.device.SimpleMqttClient;
 import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
@@ -71,6 +76,7 @@ class MqttParkingMfYardEntryTests {
 		laneRepository.deleteAll();
 		laneRuntimeStateService.clearAll();
 		mqttDeviceGateway.clearSyncState();
+		ReflectionTestUtils.setField(mqttDeviceGateway, "mqttClient", null);
 		deviceGatewayProperties.getParkingMf().setYardEntrySn("00E02721A3A7");
 		deviceGatewayProperties.getParkingMf().setYardEntryGroupId(null);
 		deviceGatewayProperties.getParkingMf().setYardEntryDeviceNo("09K2900202441623");
@@ -120,6 +126,61 @@ class MqttParkingMfYardEntryTests {
 				.singleElement()
 				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
 				.containsExactly("苏B3T530", "L01", null);
+	}
+
+	@Test
+	void parkingMfPlateResultFromYardEntryCameraShouldSendLedControlWithPlateOnly() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		SimpleMqttClient client = mock(SimpleMqttClient.class);
+		when(client.isConnected()).thenReturn(true);
+		ReflectionTestUtils.setField(mqttDeviceGateway, "mqttClient", client);
+
+		String payload = """
+				{
+				  "cmd": "plateResult",
+				  "data": {
+				    "carImg": "https://img.bolinkpay.com/picture/00E02721A3A7/09K2900202441623/20260528/19/20260528_195323_000.jpg",
+				    "confidence": 27,
+				    "deviceNo": "09K2900202441623",
+				    "groupId": "9QHZNII",
+				    "parkingTime": "2026-05-28 19:53:23",
+				    "plateColor": "BLUE",
+				    "plateNo": "苏B6T728",
+				    "realTime": true,
+				    "uploadTime": 1779969203650
+				  },
+				  "msgId": "C_6a182cb37f3e754c05842bc8",
+				  "sn": "00E02721A3A7",
+				  "timestamp": 1779969203650,
+				  "timezone": "Asia/Shanghai"
+				}
+				""";
+
+		ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"handleRawMqttMessage",
+				"/00E02721A3A7/mf/up",
+				payload.getBytes(StandardCharsets.UTF_8));
+
+		ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+		verify(client).publish(topicCaptor.capture(), payloadCaptor.capture());
+
+		assertThat(topicCaptor.getValue()).isEqualTo("/00E02721A3A7/mf/down");
+		JsonNode downlink = objectMapper.readTree(payloadCaptor.getValue());
+		assertThat(downlink.path("cmd").asText()).isEqualTo("ledControl");
+		assertThat(downlink.path("msgId").asText()).startsWith("ledControl-");
+		assertThat(downlink.path("timestamp").asLong()).isGreaterThan(0L);
+		assertThat(downlink.has("sn")).isFalse();
+		assertThat(downlink.has("timezone")).isFalse();
+
+		JsonNode data = downlink.path("data");
+		assertThat(data.path("groupId").asText()).isEqualTo("9QHZNII");
+		assertThat(data.path("voice").asText()).isEqualTo("苏B6T728");
+		assertThat(data.has("qrCode")).isFalse();
+		assertThat(data.path("show").isArray()).isTrue();
+		assertThat(data.path("show")).hasSize(1);
+		assertThat(data.path("show").get(0).path("text").asText()).isEqualTo("苏B6T728");
 	}
 
 	@Test

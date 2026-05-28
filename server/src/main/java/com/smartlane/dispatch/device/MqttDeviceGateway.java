@@ -438,8 +438,8 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			logParkingMfYardConfigMismatch(sn, groupId, deviceNo);
 			if (!isBlank(plate)) {
 				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD", plateColor);
+				publishParkingMfYardEntryLedControl(sn, groupId, plate);
 			}
-			publishParkingMfResponse(sn, "plateResultResp", text(message.path("msgId")), data);
 			return;
 		}
 
@@ -1083,6 +1083,38 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				cmd,
 				topic,
 				payloadText);
+	}
+
+	private void publishParkingMfYardEntryLedControl(String sn, String groupId, String plate) throws IOException {
+		SimpleMqttClient client = mqttClient;
+		if (client == null || !client.isConnected() || isBlank(sn) || isBlank(plate)) {
+			return;
+		}
+		ObjectNode payload = buildParkingMfYardEntryLedControlPayload(groupId, plate);
+		String topic = renderParkingMfTopic(sn);
+		String payloadText = objectMapper.writeValueAsString(payload);
+		client.publish(topic, payloadText);
+		flowLog.info(
+				"节点=总入口MF屏显下发 event=YARD_MF_LED_CONTROL sn={} groupId={} plate={} topic={} payload={}",
+				sn,
+				groupId,
+				plate,
+				topic,
+				payloadText);
+	}
+
+	private ObjectNode buildParkingMfYardEntryLedControlPayload(String groupId, String plate) {
+		ObjectNode payload = objectMapper.createObjectNode();
+		payload.put("cmd", "ledControl");
+		payload.put("msgId", nextMessageId("ledControl"));
+		payload.put("timestamp", System.currentTimeMillis());
+
+		ObjectNode data = payload.putObject("data");
+		data.put("groupId", nullToEmpty(groupId));
+		data.put("voice", plate);
+		ArrayNode show = data.putArray("show");
+		show.addObject().put("text", plate);
+		return payload;
 	}
 
 	private void publishParkingMfResponse(
