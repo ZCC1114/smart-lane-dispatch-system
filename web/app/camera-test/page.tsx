@@ -96,6 +96,19 @@ function displayPayload(payload: Buffer | Uint8Array | string) {
   return text || Buffer.from(payload).toString("hex").toUpperCase();
 }
 
+function mqttCommandFromPayload(payload: string) {
+  try {
+    const parsed = JSON.parse(payload) as { cmd?: unknown };
+    return typeof parsed.cmd === "string" ? parsed.cmd.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function isHeartbeatPayload(payload: string) {
+  return mqttCommandFromPayload(payload).includes("heartbeat");
+}
+
 function deviceIdFromTopic(topic: string) {
   const match = /^\/device\/([^/]+)\/(?:get|update|will)$/.exec(topic);
   return match?.[1] ?? "";
@@ -242,13 +255,17 @@ export default function CameraTestPage() {
     nextClient.on("message", (topic, payload) => {
       const topicDeviceId = deviceIdFromTopic(topic);
       const laneLabel = topicDeviceId ? laneLabelForDeviceId(topicDeviceId) : "";
+      const payloadText = displayPayload(payload);
       if (monitorMode === "all" && topicDeviceId && !laneLabel) {
+        return;
+      }
+      if (isHeartbeatPayload(payloadText)) {
         return;
       }
       addLog({
         direction: topic === downTopic || topic === mfDownTopic ? "tx" : "rx",
         topic,
-        payload: displayPayload(payload),
+        payload: payloadText,
         laneLabel: laneLabel || (topicDeviceId ? `未映射 ${topicDeviceId}` : undefined),
       });
     });
@@ -301,7 +318,9 @@ export default function CameraTestPage() {
         return;
       }
       client.publish(topic, payload);
-      addLog({ direction, topic, payload: label ? `${label}: ${payload}` : payload });
+      if (!isHeartbeatPayload(payload)) {
+        addLog({ direction, topic, payload: label ? `${label}: ${payload}` : payload });
+      }
       setMessage(`已发送到 ${topic}`);
     },
     [addLog, client],

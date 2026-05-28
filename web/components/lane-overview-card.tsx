@@ -6,8 +6,9 @@ import type { LaneSnapshot } from "@/lib/types";
 import { cn, formatPlateDisplay, formatShortTime, laneStatusLabel, laneTypeLabel, sensorStatusLabel } from "@/lib/utils";
 
 function activeSignal(lane: LaneSnapshot) {
-  if (lane.entrySignal !== "OFFLINE") return lane.entrySignal;
-  return lane.exitSignal;
+  if (lane.entrySignal === "GREEN" || lane.exitSignal === "GREEN") return "GREEN";
+  if (lane.entrySignal === "OFFLINE" && lane.exitSignal === "OFFLINE") return "OFFLINE";
+  return "RED";
 }
 
 export function LaneOverviewCard({
@@ -90,7 +91,7 @@ export function LaneOverviewCard({
         </div>
 
         <div className="mt-4 flex items-center justify-between text-xs text-[var(--text-secondary)]">
-          <span>{lane.mode === "AUTO" ? "自动联动" : lane.mode === "MANUAL" ? "人工控制" : "设备离线"}</span>
+          <span>{lane.mode === "OFFLINE" ? "设备离线" : "联动运行"}</span>
           <span>剩余可分配 {lane.availableSlots}</span>
         </div>
         <div className="mt-2 flex items-center justify-between text-xs text-[var(--text-secondary)]">

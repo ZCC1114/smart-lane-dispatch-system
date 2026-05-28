@@ -26,6 +26,7 @@ const ALERT_BUTTON_BLUE_CLASS = "border-[#55ddff] bg-[linear-gradient(180deg,#1f
 const ALERT_BUTTON_ORANGE_CLASS = "border-[#ff9366] bg-[linear-gradient(180deg,#c94b32_0%,#7f241b_100%)]";
 const LANE_EMPTY_CONFIRMATION_THRESHOLD = 3;
 const LANE_EMPTY_CONFIRMATION_INTERVAL_MS = 10 * 60 * 1000;
+const ACTION_MESSAGE_TIMEOUT_MS = 6500;
 
 interface DispatchTicket {
   id: string;
@@ -66,12 +67,17 @@ interface LaneSnapshot {
   id: string;
   code: string;
   name: string;
+  status: "OPEN" | "BUSY" | "FULL" | "OFFLINE";
+  mode: "AUTO" | "MANUAL" | "OFFLINE";
   capacity: number;
   vehicleCount: number;
   currentPlate: string | null;
+  lastActionAt: string;
   lastEntryPlate: string | null;
   entrySignal: "RED" | "GREEN" | "OFFLINE";
   exitSignal: "RED" | "GREEN" | "OFFLINE";
+  reservedCount: number;
+  availableSlots: number;
 }
 
 interface ScreenEvent {
@@ -237,6 +243,28 @@ function laneSignalState(signal: LaneSnapshot["entrySignal"] | LaneSnapshot["exi
     return "red";
   }
   return "green";
+}
+
+function laneRemainingCount(lane: LaneSnapshot, laneVehicles: ScreenBoardData["laneVehicles"]) {
+  return Math.max(lane.vehicleCount, laneVehicles[lane.id]?.length ?? 0);
+}
+
+function laneLastActionAtMs(lane: LaneSnapshot) {
+  const value = Date.parse(lane.lastActionAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function isLaneBaseClearable(lane: LaneSnapshot, board: ScreenBoardData, laneVehicles: ScreenBoardData["laneVehicles"]) {
+  const remainingCount = laneRemainingCount(lane, laneVehicles);
+  return Boolean(
+    board.exitDispatchEnabled &&
+      lane.id === board.activeExitLaneId &&
+      lane.id !== board.activeEntryLaneId &&
+      lane.entrySignal !== "GREEN" &&
+      lane.exitSignal === "GREEN" &&
+      remainingCount > 0 &&
+      remainingCount <= LANE_EMPTY_CONFIRMATION_THRESHOLD,
+  );
 }
 
 function plateTone(plate?: string | null) {
@@ -726,7 +754,11 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const guideEntries = pendingGuideEntries.length ? pendingGuideEntries : board?.guideAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = useMemo(() => board?.laneVehicles ?? {}, [board?.laneVehicles]);
-  const pendingClearLaneCount = pendingClearLane ? Math.max(pendingClearLane.vehicleCount, laneVehicles[pendingClearLane.id]?.length ?? 0) : 0;
+  const currentPendingClearLane = pendingClearLane ? lanes.find((lane) => lane.id === pendingClearLane.id) ?? pendingClearLane : null;
+  const pendingClearLaneCount = currentPendingClearLane ? laneRemainingCount(currentPendingClearLane, laneVehicles) : 0;
+  const pendingClearLaneClearable = Boolean(
+    board && currentPendingClearLane && isLaneBaseClearable(currentPendingClearLane, board, laneVehicles),
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -734,33 +766,43 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   }, []);
 
   useEffect(() => {
+    if (!actionMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setActionMessage(""), ACTION_MESSAGE_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [actionMessage]);
+
+  useEffect(() => {
+    if (!pendingClearLane || clearingLaneId || pendingClearLaneClearable) {
+      return;
+    }
+
+    setPendingClearLane(null);
+  }, [clearingLaneId, pendingClearLane, pendingClearLaneClearable]);
+
+  useEffect(() => {
     if (!board || pendingEvent || pendingClearLane || clearingLaneId) {
       return;
     }
 
     const nowMs = Date.now();
-    const candidate = [...lanes]
-      .map((lane) => ({
-        lane,
-        remainingCount: Math.max(lane.vehicleCount, laneVehicles[lane.id]?.length ?? 0),
-      }))
-      .filter((item) => item.remainingCount > 0 && item.remainingCount <= LANE_EMPTY_CONFIRMATION_THRESHOLD)
-      .sort((left, right) => {
-        if (left.lane.id === board.activeExitLaneId) return -1;
-        if (right.lane.id === board.activeExitLaneId) return 1;
-        return extractLaneOrder(left.lane) - extractLaneOrder(right.lane);
-      })
-      .find((item) => nowMs - (laneClearReminderAt[item.lane.id] ?? 0) >= LANE_EMPTY_CONFIRMATION_INTERVAL_MS);
+    const candidate = lanes.find((lane) => lane.id === board.activeExitLaneId);
 
-    if (!candidate) {
+    if (!candidate || !isLaneBaseClearable(candidate, board, laneVehicles)) {
+      return;
+    }
+    const lastRelevantAt = Math.max(laneLastActionAtMs(candidate), laneClearReminderAt[candidate.id] ?? 0);
+    if (nowMs - lastRelevantAt < LANE_EMPTY_CONFIRMATION_INTERVAL_MS) {
       return;
     }
 
     setLaneClearReminderAt((current) => ({
       ...current,
-      [candidate.lane.id]: nowMs,
+      [candidate.id]: nowMs,
     }));
-    setPendingClearLane(candidate.lane);
+    setPendingClearLane(candidate);
   }, [board, board?.activeExitLaneId, clearingLaneId, laneClearReminderAt, laneVehicles, lanes, pendingClearLane, pendingEvent]);
 
   function requestHandleEvent(event: ScreenEvent) {
@@ -798,7 +840,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       return;
     }
 
-    const lane = pendingClearLane;
+    const lane = currentPendingClearLane ?? pendingClearLane;
     setClearingLaneId(lane.id);
     try {
       const response = await fetch(`${API_BASE_URL}/screen/lanes/${encodeURIComponent(lane.id)}/clear-remaining`, { method: "POST" });
@@ -844,12 +886,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           {formatBeijingDateTime(now)}
         </div>
         {mode === "embedded" ? (
-          <div className="absolute right-[18px] top-[14px] z-50 flex items-center gap-4">
-            <div className="flex items-center gap-3 text-[20px] font-semibold text-[#cbd5e1]">
-              <span className="text-[#ff9f1a]">☀</span>
-              <span>多云</span>
-              <span>23~34℃</span>
-            </div>
+          <div className="absolute right-[18px] top-[14px] z-50 flex items-center">
             <button
               type="button"
               onClick={toggleOverviewExpanded}
@@ -860,13 +897,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
               {overviewExpanded ? <Minimize2 className="size-4.5" /> : <Maximize2 className="size-4.5" />}
             </button>
           </div>
-        ) : (
-          <div className="absolute right-[18px] top-[19px] flex items-center gap-3 text-[20px] font-semibold text-[#cbd5e1]">
-            <span className="text-[#ff9f1a]">☀</span>
-            <span>多云</span>
-            <span>23~34℃</span>
-          </div>
-        )}
+        ) : null}
 
         <Asset name="道路.png" className="absolute left-[42px] top-[125px] h-[923px] w-[1839px]" />
         <Asset name="光斑 flare.png" className="absolute left-[532px] top-[68px] h-[72px] w-[849px] opacity-80" />
@@ -973,7 +1004,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
                 <button
                   type="button"
                   onClick={confirmClearLaneRemaining}
-                  disabled={clearingLaneId === pendingClearLane.id}
+                  disabled={clearingLaneId === pendingClearLane.id || !pendingClearLaneClearable}
                   className="h-[34px] w-[154px] border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
                 >
                   {clearingLaneId === pendingClearLane.id ? "清空中" : "确认已驶出"}

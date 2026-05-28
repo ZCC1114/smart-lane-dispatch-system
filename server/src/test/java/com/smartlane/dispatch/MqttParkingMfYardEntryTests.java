@@ -13,6 +13,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.smartlane.dispatch.device.DeviceGatewayProperties;
 import com.smartlane.dispatch.device.MqttDeviceGateway;
 import com.smartlane.dispatch.entity.DispatchTicket;
@@ -57,6 +60,8 @@ class MqttParkingMfYardEntryTests {
 
 	@Autowired
 	private MqttDeviceGateway mqttDeviceGateway;
+
+	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	@BeforeEach
 	void setUp() {
@@ -115,6 +120,49 @@ class MqttParkingMfYardEntryTests {
 				.singleElement()
 				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
 				.containsExactly("苏B3T530", "L01", null);
+	}
+
+	@Test
+	void parkingMfPlateResultResponseShouldEchoPlateData() throws Exception {
+		JsonNode sourceData = objectMapper.readTree("""
+				{
+				  "carBrand": "",
+				  "carImg": "https://img.bolinkpay.com/picture/00E02721A3A7/09K2900202441623/20260528/10/20260528_100351_000.jpg",
+				  "confidence": 27,
+				  "deviceNo": "09K2900202441623",
+				  "groupId": "9QHZNII",
+				  "parkingTime": "2026-05-28 10:03:51",
+				  "plateColor": "BLUE",
+				  "plateNo": "苏B0T908",
+				  "realTime": true,
+				  "state": "1",
+				  "uploadTime": 1779933831610
+				}
+				""");
+
+		ObjectNode payload = ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"buildParkingMfResponsePayload",
+				"00E02721A3A7",
+				"plateResultResp",
+				"C_6a17a2877f3e754c05841885",
+				sourceData);
+
+		assertThat(payload.path("cmd").asText()).isEqualTo("plateResultResp");
+		assertThat(payload.path("msgId").asText()).isEqualTo("C_6a17a2877f3e754c05841885");
+		assertThat(payload.path("sn").asText()).isEqualTo("00E02721A3A7");
+		assertThat(payload.path("timezone").asText()).isEqualTo("Asia/Shanghai");
+		assertThat(payload.path("data").path("deviceNo").asText()).isEqualTo("09K2900202441623");
+		assertThat(payload.path("data").path("groupId").asText()).isEqualTo("9QHZNII");
+		assertThat(payload.path("data").path("plateNo").asText()).isEqualTo("苏B0T908");
+		assertThat(payload.path("data").path("plateColor").asText()).isEqualTo("BLUE");
+		assertThat(payload.path("data").path("carImg").asText()).startsWith("https://img.bolinkpay.com/");
+		assertThat(payload.path("data").path("parkingTime").asText()).isEqualTo("2026-05-28 10:03:51");
+		assertThat(payload.path("data").path("confidence").asInt()).isEqualTo(27);
+		assertThat(payload.path("data").path("carBrand").asText()).isEmpty();
+		assertThat(payload.path("data").path("realTime").asBoolean()).isTrue();
+		assertThat(payload.path("data").path("state").asText()).isEqualTo("1");
+		assertThat(payload.path("data").path("uploadTime").asLong()).isEqualTo(1779933831610L);
 	}
 
 	@Test

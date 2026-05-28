@@ -24,14 +24,14 @@ function createPreviewLanes(): LaneSnapshot[] {
     { vehicleCount: 2, capacity: 6, status: "OPEN", entrySignal: "GREEN", exitSignal: "RED", priority: false },
     { vehicleCount: 4, capacity: 6, status: "BUSY", entrySignal: "RED", exitSignal: "RED", priority: false },
     { vehicleCount: 6, capacity: 6, status: "FULL", entrySignal: "RED", exitSignal: "RED", priority: false },
-    { vehicleCount: 1, capacity: 5, status: "OPEN", entrySignal: "GREEN", exitSignal: "GREEN", priority: true },
-    { vehicleCount: 3, capacity: 7, status: "OPEN", entrySignal: "GREEN", exitSignal: "RED", priority: false },
+    { vehicleCount: 1, capacity: 5, status: "OPEN", entrySignal: "RED", exitSignal: "RED", priority: true },
+    { vehicleCount: 3, capacity: 7, status: "OPEN", entrySignal: "RED", exitSignal: "RED", priority: false },
     { vehicleCount: 5, capacity: 7, status: "BUSY", entrySignal: "RED", exitSignal: "RED", priority: false },
-    { vehicleCount: 0, capacity: 6, status: "OPEN", entrySignal: "GREEN", exitSignal: "RED", priority: false },
+    { vehicleCount: 0, capacity: 6, status: "OPEN", entrySignal: "RED", exitSignal: "RED", priority: false },
     { vehicleCount: 6, capacity: 8, status: "BUSY", entrySignal: "RED", exitSignal: "RED", priority: false },
     { vehicleCount: 7, capacity: 8, status: "FULL", entrySignal: "RED", exitSignal: "RED", priority: false },
-    { vehicleCount: 2, capacity: 5, status: "OPEN", entrySignal: "GREEN", exitSignal: "RED", priority: false },
-    { vehicleCount: 4, capacity: 6, status: "BUSY", entrySignal: "RED", exitSignal: "GREEN", priority: true },
+    { vehicleCount: 2, capacity: 5, status: "OPEN", entrySignal: "RED", exitSignal: "RED", priority: false },
+    { vehicleCount: 4, capacity: 6, status: "BUSY", entrySignal: "RED", exitSignal: "RED", priority: true },
   ] as const;
 
   return presets.map((preset, index) => ({
@@ -271,10 +271,9 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
 
       return api.updateSignal({
         laneId: pendingAction.lane.id,
-        entrySignal: pendingAction.signalKey === "entrySignal" ? pendingAction.signal : normalizeSignal(pendingAction.lane.entrySignal),
-        exitSignal: pendingAction.signalKey === "exitSignal" ? pendingAction.signal : normalizeSignal(pendingAction.lane.exitSignal),
-        mode: "MANUAL",
-        reason: `场区图手动切换${pendingAction.signalKey === "entrySignal" ? "入口" : "出口"}信号至${signalLabel(pendingAction.signal)}`,
+        entrySignal: pendingAction.signalKey === "entrySignal" ? pendingAction.signal : pendingAction.lane.entrySignal,
+        exitSignal: pendingAction.signalKey === "exitSignal" ? pendingAction.signal : pendingAction.lane.exitSignal,
+        reason: `场区图切换${pendingAction.signalKey === "entrySignal" ? "入口" : "出口"}放行游标：${pendingAction.lane.name}${pendingAction.signalKey === "entrySignal" ? "入口" : "出口"}至${signalLabel(pendingAction.signal)}`,
       });
     },
     onSuccess: async () => {
@@ -294,26 +293,23 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
 
     setPreviewLanes((current) =>
       current.map((lane) => {
-        if (lane.id !== pendingAction.lane.id) {
-          return lane;
-        }
-
+        const selected = lane.id === pendingAction.lane.id;
         const nextLane = {
           ...lane,
-          mode: "MANUAL",
+          mode: "AUTO",
           lastActionAt: new Date().toISOString(),
-          entrySignal: pendingAction.signalKey === "entrySignal" ? pendingAction.signal : normalizeSignal(lane.entrySignal),
-          exitSignal: pendingAction.signalKey === "exitSignal" ? pendingAction.signal : normalizeSignal(lane.exitSignal),
+          entrySignal: pendingAction.signalKey === "entrySignal" ? (selected ? pendingAction.signal : lane.entrySignal) : lane.entrySignal,
+          exitSignal: pendingAction.signalKey === "exitSignal" ? (selected ? pendingAction.signal : lane.exitSignal) : lane.exitSignal,
         } satisfies LaneSnapshot;
 
         return {
           ...nextLane,
           ledMessage:
             nextLane.entrySignal === "RED" && nextLane.exitSignal === "RED"
-              ? "人工禁止通行"
+              ? "禁止通行"
               : nextLane.exitSignal === "GREEN"
-                ? "人工允许通行"
-                : "人工待放行",
+                ? "出口放行，请按序通行"
+                : "入口待命，请按屏显提示通行",
         };
       }),
     );
@@ -330,7 +326,7 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
           pendingAction
             ? `${pendingAction.lane.name} 的${pendingAction.signalKey === "entrySignal" ? "入口灯" : "出口灯"}将切换为${signalLabel(
                 pendingAction.signal,
-              )}，并将车道控制模式切换为手动。`
+              )}，系统会保证入口方向最多一个绿灯、出口方向最多一个绿灯。`
             : ""
         }
         confirmText="确认切换"
@@ -436,7 +432,7 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
                 <div className="mt-4 space-y-3 text-sm text-slate-600">
                   <p>1. 车道颜色代表当前运行状态，绿为正常，黄为繁忙，红为满停禁入。</p>
                   <p>2. 黄色出租车块表示已停放车辆，空白块表示待停位置。</p>
-                  <p>3. 点击车道两端信号灯可切换红黄绿，提交后会立即下发手动覆盖命令。</p>
+                  <p>3. 点击车道两端信号灯可移动对应方向放行游标，入口与出口分别最多保留一个绿灯。</p>
                 </div>
               </div>
 

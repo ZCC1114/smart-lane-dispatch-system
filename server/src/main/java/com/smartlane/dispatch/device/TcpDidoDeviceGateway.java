@@ -23,6 +23,7 @@ import jakarta.annotation.PostConstruct;
 public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 
 	private static final Logger log = LoggerFactory.getLogger(TcpDidoDeviceGateway.class);
+	private static final Logger flowLog = LoggerFactory.getLogger("vehicle-flow");
 	private static final ZoneOffset DEVICE_ZONE = ZoneOffset.ofHours(8);
 
 	private final DeviceGatewayProperties properties;
@@ -68,10 +69,10 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			int entryPort = resolveEntryPort(binding);
 			String exitHost = resolveExitHost(binding);
 			int exitPort = resolveExitPort(binding);
-			controlRelayIfPresent(entryHost, entryPort, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(entryHost, entryPort, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
-			controlRelayIfPresent(exitHost, exitPort, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
-			controlRelayIfPresent(exitHost, exitPort, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
+			controlRelayIfPresent(lane, "ENTRY_RED", entryHost, entryPort, binding.getEntryRedRelay(), !"GREEN".equals(lane.getEntrySignal()));
+			controlRelayIfPresent(lane, "ENTRY_GREEN", entryHost, entryPort, binding.getEntryGreenRelay(), "GREEN".equals(lane.getEntrySignal()));
+			controlRelayIfPresent(lane, "EXIT_RED", exitHost, exitPort, binding.getExitRedRelay(), !"GREEN".equals(lane.getExitSignal()));
+			controlRelayIfPresent(lane, "EXIT_GREEN", exitHost, exitPort, binding.getExitGreenRelay(), "GREEN".equals(lane.getExitSignal()));
 			lastLaneSyncStates.put(lane.getId(), nextSyncState);
 			laneRuntimeStateService.markCommandPublished(lane.getId(), "TCP DIDO 指令已下发", now());
 			laneRuntimeStateService.recordDeviceFeedback(
@@ -103,7 +104,18 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 		String host = resolveRelayHost(binding, relayTarget);
 		int port = resolveRelayPort(binding, relayTarget);
 		try {
-			tcpDidoCommandService.controlRelay(host, port, relayKey, on, properties.getDidoTcp().getProtocol());
+			TcpDidoRelayResponse response = tcpDidoCommandService.controlRelay(host, port, relayKey, on, properties.getDidoTcp().getProtocol());
+			flowLog.info(
+					"节点=TCP手动继电器下发 event=RELAY_COMMAND protocol=TCP_DIDO laneId={} laneName={} target={} relay={} on={} reason={} host={} port={} responseHex={}",
+					lane.getId(),
+					lane.getName(),
+					relayTarget,
+					relayKey,
+					on,
+					reason == null ? "" : reason,
+					host,
+					port,
+					response.responseHex());
 			String message = relayDisplayName(relayTarget) + (on ? "已吸合" : "已关闭");
 			if (reason != null && !reason.isBlank()) {
 				message += " · " + reason;
@@ -121,7 +133,7 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 		lastLaneSyncStates.clear();
 	}
 
-	private void controlRelayIfPresent(String host, int port, String relay, boolean on) {
+	private void controlRelayIfPresent(Lane lane, String relayTarget, String host, int port, String relay, boolean on) {
 		if (relay == null || relay.isBlank()) {
 			return;
 		}
@@ -132,6 +144,18 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 				on,
 				properties.getDidoTcp().getProtocol());
 		log.debug("TCP DIDO relay command {} {} -> {}", relay, on ? "ON" : "OFF", response.responseHex());
+		flowLog.info(
+				"节点=TCP红绿灯继电器下发 event=DIDO_TRAFFIC_LIGHT_COMMAND protocol=TCP_DIDO laneId={} laneName={} target={} relay={} on={} host={} port={} entrySignal={} exitSignal={} responseHex={}",
+				lane.getId(),
+				lane.getName(),
+				relayTarget,
+				relay,
+				on,
+				host,
+				port,
+				lane.getEntrySignal(),
+				lane.getExitSignal(),
+				response.responseHex());
 	}
 
 	private String resolveEntryHost(DeviceGatewayProperties.LaneBinding binding) {

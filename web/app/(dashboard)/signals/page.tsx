@@ -1,14 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole, Power, RefreshCcw } from "lucide-react";
+import { LockKeyhole, Power } from "lucide-react";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { Panel } from "@/components/panel";
 import { SignalStack } from "@/components/signal-stack";
-import { StatusBadge } from "@/components/status-badge";
 import { api } from "@/lib/api";
-import type { LaneMode, SignalState } from "@/lib/types";
+import type { SignalState } from "@/lib/types";
 import { canOperateSignals } from "@/lib/permissions";
 import { cn, sensorStatusLabel, signalLabel } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -46,7 +45,6 @@ export default function SignalsPage() {
     laneId: string;
     entrySignal: SignalState;
     exitSignal: SignalState;
-    mode: LaneMode;
     reason: string;
   } | null>(null);
 
@@ -60,25 +58,18 @@ export default function SignalsPage() {
   });
 
   const selectedLane = lanesQuery.data?.find((lane) => lane.id === (selectedLaneId ?? lanesQuery.data?.[0]?.id)) ?? lanesQuery.data?.[0];
-  const activeEntryLaneName = dispatchBoardQuery.data?.activeEntryLaneName ?? dispatchBoardQuery.data?.activeEntryLaneId ?? "未开启";
-  const activeExitLaneName = dispatchBoardQuery.data?.activeExitLaneName ?? dispatchBoardQuery.data?.activeExitLaneId ?? "未开启";
+  const activeEntrySignalName = dispatchBoardQuery.data?.activeEntryLaneId
+    ? `${dispatchBoardQuery.data.activeEntryLaneName ?? dispatchBoardQuery.data.activeEntryLaneId} 入口`
+    : "未开启";
+  const activeExitSignalName = dispatchBoardQuery.data?.activeExitLaneId
+    ? `${dispatchBoardQuery.data.activeExitLaneName ?? dispatchBoardQuery.data.activeExitLaneId} 出口`
+    : "未开启";
   const waitingAssignments = dispatchBoardQuery.data?.waitingAssignments.length ?? 0;
 
   const signalMutation = useMutation({
     mutationFn: () => api.updateSignal(pendingAction!),
     onSuccess: async () => {
       setPendingAction(null);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["lanes"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["dispatch-board"] }),
-      ]);
-    },
-  });
-
-  const restoreMutation = useMutation({
-    mutationFn: api.restoreAutoControl,
-    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["lanes"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
@@ -96,7 +87,7 @@ export default function SignalsPage() {
       <ConfirmModal
         open={Boolean(pendingAction)}
         title="确认发送信号指令"
-        description={`目标车道 ${selectedLane?.name ?? ""} 将切换为手动覆盖模式，并按照指定入口/出口信号下发控制命令。`}
+        description={`目标车道 ${selectedLane?.name ?? ""} 将更新对应方向放行游标，入口与出口互不抢占。`}
         confirmText="确认下发"
         busy={signalMutation.isPending}
         onCancel={() => setPendingAction(null)}
@@ -106,29 +97,23 @@ export default function SignalsPage() {
       <div className="space-y-6">
         <Panel
           title="全局调度状态"
-          eyebrow="独立展示，不随车道切换"
-          action={
-            <button
-              type="button"
-              disabled={readOnly || restoreMutation.isPending}
-              onClick={() => restoreMutation.mutate()}
-              className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
-            >
-              <RefreshCcw className="size-3.5" />
-              恢复全域自动
-            </button>
-          }
+          eyebrow="入口 / 出口放行游标"
         >
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 lg:grid-cols-4">
             {[
               {
-                label: "自动流程当前入口车道",
-                value: activeEntryLaneName,
+                label: "入口放行",
+                value: activeEntrySignalName,
                 tone: "emerald",
               },
               {
-                label: "自动流程当前出口车道",
-                value: activeExitLaneName,
+                label: "出口放行",
+                value: activeExitSignalName,
+                tone: "emerald",
+              },
+              {
+                label: "放行规则",
+                value: "入口/出口各一",
                 tone: "sky",
               },
               {
@@ -161,25 +146,24 @@ export default function SignalsPage() {
         >
           <div className="overflow-x-auto rounded-sm border border-[var(--border-soft)] bg-white">
             <table className="min-w-[820px] w-full table-fixed border-collapse text-sm">
-              <colgroup>
-                <col className="w-[8%]" />
-                <col className="w-[14%]" />
-                <col className="w-[11%]" />
-                <col className="w-[11%]" />
-                <col className="w-[11%]" />
-                <col className="w-[15%]" />
-                <col className="w-[15%]" />
-                <col className="w-[15%]" />
-              </colgroup>
+	              <colgroup>
+	                <col className="w-[8%]" />
+	                <col className="w-[18%]" />
+	                <col className="w-[12%]" />
+	                <col className="w-[12%]" />
+	                <col className="w-[17%]" />
+	                <col className="w-[16%]" />
+	                <col className="w-[17%]" />
+	              </colgroup>
               <thead className="bg-slate-50/85">
                 <tr className="text-left">
-                  {["序号", "车道", "模式", "入口灯", "出口灯", "车辆在场", "待入道预留", "传感"].map((header) => (
+                  {["序号", "车道", "入口灯", "出口灯", "车辆在场", "待入道预留", "传感"].map((header) => (
                     <th
                       key={header}
                       scope="col"
                       className={cn(
                         laneTableHeaderClassName,
-                        header === "车道" || header === "模式" ? "text-left" : "text-center",
+                        header === "车道" ? "text-left" : "text-center",
                       )}
                     >
                       {header}
@@ -207,9 +191,6 @@ export default function SignalsPage() {
                           </div>
                           <p className="mt-1 text-xs text-[var(--text-secondary)]">{lane.code}</p>
                         </div>
-                      </td>
-                      <td className={cn(laneTableCellClassName, "pl-2 text-left")}>
-                        <StatusBadge value={lane.mode} kind="mode" />
                       </td>
                       <td className={cn(laneTableCellClassName, "text-center")}>
                         <SignalDot signal={lane.entrySignal} />
@@ -262,9 +243,9 @@ export default function SignalsPage() {
 
               <div className="space-y-4">
                 {[
-                  { key: "entrySignal", label: "入口信号", value: selectedLane.entrySignal },
-                  { key: "exitSignal", label: "出口信号", value: selectedLane.exitSignal },
-                ].map((field) => (
+	                  { key: "entrySignal", label: "入口信号", value: selectedLane.entrySignal },
+	                  { key: "exitSignal", label: "出口信号", value: selectedLane.exitSignal },
+	                ].map((field) => (
                   <div key={field.key} className="rounded-sm border border-[var(--border-soft)] bg-slate-50/70 p-5">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -273,21 +254,20 @@ export default function SignalsPage() {
                       </div>
                       <Power className="size-5 text-[var(--text-muted)]" />
                     </div>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      {signalOptions.map((signal) => (
-                        <button
+	                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+	                      {signalOptions.map((signal) => (
+	                        <button
                           key={signal}
                           type="button"
                           disabled={readOnly}
-                          onClick={() =>
-                            setPendingAction({
-                              laneId: selectedLane.id,
-                              entrySignal: field.key === "entrySignal" ? signal : selectedLane.entrySignal,
-                              exitSignal: field.key === "exitSignal" ? signal : selectedLane.exitSignal,
-                              mode: "MANUAL",
-                              reason: `控制台手动切换${field.label}至${signal}`,
-                            })
-                          }
+	                          onClick={() =>
+	                            setPendingAction({
+	                              laneId: selectedLane.id,
+	                              entrySignal: field.key === "entrySignal" ? signal : selectedLane.entrySignal,
+	                              exitSignal: field.key === "exitSignal" ? signal : selectedLane.exitSignal,
+	                              reason: `控制台切换${field.key === "entrySignal" ? "入口" : "出口"}放行游标：${selectedLane.name}${field.label}至${signal}`,
+	                            })
+	                          }
                           className="rounded-sm border border-[var(--border-soft)] px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-50"
                         >
                           {signalLabel(signal)}

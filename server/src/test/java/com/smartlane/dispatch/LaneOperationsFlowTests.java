@@ -177,7 +177,10 @@ class LaneOperationsFlowTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(1))
 			.andExpect(jsonPath("$[?(@.id=='L01')].reservedCount").value(0))
-			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"));
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].entrySignal").value("GREEN"));
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
 		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
 				.extracting(EntryLog::getPlate)
 				.containsExactly("沪A12345");
@@ -224,56 +227,59 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void manualSignalGreenShouldNotTakeOverAutomaticEntryDispatch() throws Exception {
+	void signalGreenShouldMoveEntryCursorAndKeepEntryGreenUnique() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(firstLane, secondLane));
 		String token = loginAndGetToken();
 
-		postSignalOverride(token, "L02", "GREEN", "RED", "测试手动开放非自动车道入口灯");
+		postSignalOverride(token, "L02", "GREEN", "RED", "测试切换入口放行游标");
 
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isNull();
 		List<Lane> lanesAfterOverride = operationsService.getLanes();
 		assertThat(lanesAfterOverride).filteredOn(lane -> "L01".equals(lane.getId()))
 				.singleElement()
 				.extracting(Lane::getEntrySignal)
-				.isEqualTo("GREEN");
+				.isEqualTo("RED");
 		assertThat(lanesAfterOverride).filteredOn(lane -> "L02".equals(lane.getId()))
 				.singleElement()
 				.extracting(Lane::getEntrySignal)
 				.isEqualTo("GREEN");
+		assertSingleGreenSignal("L02", "ENTRY");
 
 		postYardEntry(token, "沪A55555", "2026-04-20T08:00:00+08:00");
 
 		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
-		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L02");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
 	}
 
 	@Test
-	void manualRedOnAutomaticEntryLaneShouldNotAdvanceAutomaticDispatch() throws Exception {
+	void signalRedShouldAdvanceEntryCursorFromThatLane() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(firstLane, secondLane));
 		String token = loginAndGetToken();
 
-		postSignalOverride(token, "L01", "RED", "RED", "测试手动关闭自动入口车道入口灯");
+		postSignalOverride(token, "L01", "RED", "RED", "测试关闭入口放行游标");
 
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
 		assertThat(operationsService.getLanes()).filteredOn(lane -> "L01".equals(lane.getId()))
 				.singleElement()
 				.extracting(Lane::getEntrySignal)
 				.isEqualTo("RED");
+		assertSingleGreenSignal("L02", "ENTRY");
 
 		postYardEntry(token, "沪A66666", "2026-04-20T08:00:00+08:00");
 
 		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
-		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L02");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
 	}
 
 	@Test
-	void manualEntryGreenShouldStillTurnRedWhenLaneIsFull() throws Exception {
+	void entryGreenShouldSkipFullLaneAndMoveCursorToNextEntry() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(1);
 		firstLane.setVehicleCount(1);
@@ -288,8 +294,7 @@ class LaneOperationsFlowTests {
 					{
 					  "laneId": "L01",
 					  "entrySignal": "GREEN",
-					  "exitSignal": "GREEN",
-					  "mode": "MANUAL",
+					  "exitSignal": "RED",
 					  "reason": "测试满位保护"
 					}
 					"""))
@@ -298,10 +303,39 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$.exitSignal").value("GREEN"));
 
 		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+		assertSingleGreenSignal("L02", "ENTRY");
 	}
 
 	@Test
-	void exitLaneShouldAdvanceOnlyAfterCurrentLaneIsFullyCleared() throws Exception {
+	void signalOverrideShouldAllowIndependentEntryAndExitGreen() throws Exception {
+		Lane lane = buildLane("L01", "L01", "1号车道");
+		lane.setVehicleCount(1);
+		laneRepository.save(lane);
+		String token = loginAndGetToken();
+
+		mockMvc.perform(post("/api/signals/L01")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "entrySignal": "GREEN",
+					  "exitSignal": "GREEN",
+					  "reason": "测试入口出口独立绿灯"
+					}
+					"""))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.entrySignal").value("GREEN"))
+			.andExpect(jsonPath("$.exitSignal").value("GREEN"));
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertSingleGreenSignal("L01", "ENTRY");
+		assertSingleGreenSignal("L01", "EXIT");
+	}
+
+	@Test
+	void exitLaneShouldAdvanceWhenCurrentLaneCountReachesZero() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
@@ -312,6 +346,7 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
 
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
@@ -336,6 +371,90 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"))
 			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("GREEN"));
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
+		assertSingleGreenSignal("L02", "EXIT");
+	}
+
+	@Test
+	void exitLaneShouldNotAdvanceWithoutClearOrHandoffTrigger() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(2);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(2);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		operationsService.getLanes();
+
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("RED"));
+		assertSingleGreenSignal("L01", "EXIT");
+	}
+
+	@Test
+	void nonCurrentAndNonNextExitLoopShouldStillDeductLaneQueue() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(3);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		Lane thirdLane = buildLane("L03", "L03", "3号车道");
+		thirdLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane, thirdLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L03", "沪A30001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
+
+		operationsService.applyLaneExitTrigger("L03", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertThat(laneRepository.findById("L03").orElseThrow().getVehicleCount()).isZero();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L03")).isEmpty();
+		assertSingleGreenSignal("L01", "EXIT");
+	}
+
+	@Test
+	void exitLaneShouldHandoffAfterNextLaneLoopTriggersThreeTimes() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(4);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(4);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20002", "2026-04-20T08:06:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20003", "2026-04-20T08:08:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20004", "2026-04-20T08:09:00+08:00");
+		openExitSignal(token, "L01");
+
+		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(3);
+
+		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:12:00+08:00"));
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(2);
+
+		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:14:00+08:00"));
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertSingleGreenSignal("L02", "EXIT");
 	}
 
 	@Test
@@ -350,6 +469,7 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
 
 		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
 			.andExpect(status().isOk())
@@ -370,6 +490,46 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void screenClearRemainingVehiclesShouldRejectWhenRemainingAboveThreshold() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(4);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(4);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10003", "2026-04-20T08:04:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10004", "2026-04-20T08:06:00+08:00");
+		openExitSignal(token, "L01");
+
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+			.andExpect(status().isBadRequest());
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(4);
+	}
+
+	@Test
+	void screenClearRemainingVehiclesShouldRejectWhenEntryLaneIsStillOpen() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(4);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(4);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+			.andExpect(status().isBadRequest());
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(1);
+	}
+
+	@Test
 	void screenClearRemainingVehiclesShouldAdvanceFromCurrentExitLaneToNextLane() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane seventhLane = buildLane("L07", "L07", "7号车道");
@@ -382,18 +542,7 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L07", "沪A70001", "2026-04-20T08:02:00+08:00");
 		postVehicleEntry(token, "L08", "沪A80001", "2026-04-20T08:04:00+08:00");
-		dispatchConfigRepository.save(DispatchConfig.builder()
-				.configKey("active_entry_lane")
-				.configValue("L08")
-				.updatedAt(now())
-				.updatedBy("测试")
-				.build());
-		dispatchConfigRepository.save(DispatchConfig.builder()
-				.configKey("active_exit_lane")
-				.configValue("L07")
-				.updatedAt(now())
-				.updatedBy("测试")
-				.build());
+		openExitSignal(token, "L07");
 
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L07");
 
@@ -412,13 +561,14 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void exitLaneShouldHoldCurrentEntryLaneWhenNoLaneHasVehicles() throws Exception {
+	void exitLaneShouldLeaveExitWhenCurrentLaneClearsAndNoNextExitEvidence() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(firstLane, secondLane));
 		String token = loginAndGetToken();
 
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		openExitSignal(token, "L01");
 
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
@@ -428,51 +578,45 @@ class LaneOperationsFlowTests {
 		operationsService.applyPassCountDelta("L01", -1, OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
 
 		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
-		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isNull();
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
-			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"))
 			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("RED"));
+		assertSingleGreenSignal("L01", "ENTRY");
 	}
 
 	@Test
-	void exitLaneShouldFollowFifoUntilCurrentEntryLaneAndThenHoldIt() throws Exception {
+	void exitLaneShouldAdvanceFromClearedCurrentLaneWithoutNextLaneHandoffEvidence() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(1);
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		secondLane.setCapacity(1);
-		Lane thirdLane = buildLane("L03", "L03", "3号车道");
-		thirdLane.setCapacity(1);
 		Lane fourthLane = buildLane("L04", "L04", "4号车道");
 		fourthLane.setCapacity(3);
-		laneRepository.saveAll(List.of(firstLane, secondLane, thirdLane, fourthLane));
+		laneRepository.saveAll(List.of(firstLane, secondLane, fourthLane));
 		String token = loginAndGetToken();
 
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:02:00+08:00");
-		postVehicleEntry(token, "L03", "沪A30001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
 
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L04");
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
 
 		operationsService.applyPassCountDelta("L01", -1, OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
 
-		operationsService.applyPassCountDelta("L02", -1, OffsetDateTime.parse("2026-04-20T08:12:00+08:00"));
-		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L03");
-
-		operationsService.applyPassCountDelta("L03", -1, OffsetDateTime.parse("2026-04-20T08:14:00+08:00"));
-		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L04");
-		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L04");
-
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[?(@.id=='L04')].vehicleCount").value(0))
-			.andExpect(jsonPath("$[?(@.id=='L04')].entrySignal").value("GREEN"))
-			.andExpect(jsonPath("$[?(@.id=='L04')].exitSignal").value("GREEN"));
+			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L04')].entrySignal").value("GREEN"));
+		assertSingleGreenSignal("L02", "EXIT");
 	}
 
 	@Test
@@ -521,6 +665,7 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		openExitSignal(token, "L01");
 
 		mockMvc.perform(post("/api/screen/simulate/global-exit")
 				.header("Authorization", "Bearer " + token))
@@ -608,7 +753,7 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$.entryDispatchEnabled").value(true))
 			.andExpect(jsonPath("$.exitDispatchEnabled").value(true))
 			.andExpect(jsonPath("$.activeEntryLaneId").value("L01"))
-			.andExpect(jsonPath("$.activeExitLaneId").value("L01"));
+			.andExpect(jsonPath("$.activeExitLaneId").doesNotExist());
 
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
@@ -616,7 +761,8 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L02')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("GREEN"))
-			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"));
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"));
+		assertSingleGreenSignal("L01", "ENTRY");
 
 		assertThat(entryLogRepository.findAll()).isNotEmpty().allMatch(log -> log.getExitTime() != null);
 		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc())
@@ -851,11 +997,38 @@ class LaneOperationsFlowTests {
 					  "laneId": "%s",
 					  "entrySignal": "%s",
 					  "exitSignal": "%s",
-					  "mode": "MANUAL",
 					  "reason": "%s"
 					}
 					""".formatted(laneId, entrySignal, exitSignal, reason)))
 			.andExpect(status().isOk());
+	}
+
+	private void openExitSignal(String token, String laneId) throws Exception {
+		String entrySignal = operationsService.getLanes().stream()
+				.filter(lane -> laneId.equals(lane.getId()))
+				.findFirst()
+				.map(Lane::getEntrySignal)
+				.orElse("OFFLINE");
+		postSignalOverride(token, laneId, entrySignal, "GREEN", "测试切换出口放行游标");
+	}
+
+	private void assertSingleGreenSignal(String laneId, String direction) {
+		List<Lane> lanes = operationsService.getLanes();
+		long greenSignals = lanes.stream()
+				.mapToLong(lane -> "ENTRY".equals(direction)
+						? ("GREEN".equals(lane.getEntrySignal()) ? 1L : 0L)
+						: ("GREEN".equals(lane.getExitSignal()) ? 1L : 0L))
+				.sum();
+		assertThat(greenSignals).isEqualTo(1);
+		assertThat(lanes).filteredOn(lane -> laneId.equals(lane.getId()))
+				.singleElement()
+				.satisfies(lane -> {
+					if ("ENTRY".equals(direction)) {
+						assertThat(lane.getEntrySignal()).isEqualTo("GREEN");
+					} else {
+						assertThat(lane.getExitSignal()).isEqualTo("GREEN");
+					}
+				});
 	}
 
 	private String loginAndGetToken() throws Exception {

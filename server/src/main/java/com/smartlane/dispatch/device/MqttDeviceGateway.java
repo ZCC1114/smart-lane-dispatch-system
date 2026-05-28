@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +48,7 @@ import jakarta.annotation.PreDestroy;
 public class MqttDeviceGateway implements LaneDeviceGateway {
 
 	private static final Logger log = LoggerFactory.getLogger(MqttDeviceGateway.class);
+	private static final Logger flowLog = LoggerFactory.getLogger("vehicle-flow");
 	private static final ZoneOffset DEVICE_ZONE = ZoneOffset.ofHours(8);
 	private static final byte[] CX_ENABLE_REMOTE_CONFIG_COMMAND = hexBytes("4D9301010101A1000000");
 	private static final byte[] CX_ENABLE_RELAY_UPLOAD_COMMAND = hexBytes("4D930101010AA1000000");
@@ -210,13 +212,37 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 
 		try {
+			String topic = renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId);
 			if (didoPayloadMode().startsWith("hex-")) {
-				publishDidoRelayHex(client, didoDeviceId, relayKey, on);
+				byte[] command = publishDidoRelayHex(client, didoDeviceId, relayKey, on);
+				flowLog.info(
+						"节点=手动继电器下发 event=RELAY_COMMAND protocol=MQTT_HEX laneId={} laneName={} deviceId={} target={} relay={} on={} reason={} topic={} payloadHex={}",
+						lane.getId(),
+						lane.getName(),
+						didoDeviceId,
+						relayTarget,
+						relayKey,
+						on,
+						nullToEmpty(reason),
+						topic,
+						bytesToHex(command));
 			} else {
 				ObjectNode payload = objectMapper.createObjectNode();
 				payload.put(relayKey, didoRelayValue(on));
 				payload.put("res", nextMessageId("dido-manual"));
-				client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), objectMapper.writeValueAsString(payload));
+				String payloadText = objectMapper.writeValueAsString(payload);
+				client.publish(topic, payloadText);
+				flowLog.info(
+						"节点=手动继电器下发 event=RELAY_COMMAND protocol=MQTT_JSON laneId={} laneName={} deviceId={} target={} relay={} on={} reason={} topic={} payload={}",
+						lane.getId(),
+						lane.getName(),
+						didoDeviceId,
+						relayTarget,
+						relayKey,
+						on,
+						nullToEmpty(reason),
+						topic,
+						payloadText);
 			}
 			String message = relayDisplayName(relayTarget) + (on ? "已吸合" : "已关闭");
 			if (!isBlank(reason)) {
@@ -398,12 +424,22 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				nullToEmpty(properties.getParkingMf().getYardEntrySn()),
 				nullToEmpty(properties.getParkingMf().getYardEntryGroupId()),
 				nullToEmpty(properties.getParkingMf().getYardEntryDeviceNo()));
+		flowLog.info(
+				"节点=总入口MF收到车牌 event=YARD_MF_PLATE_RECEIVED sn={} groupId={} deviceNo={} plate={} plateColor={} capturedAt={} yardEntryMatch={} msgId={}",
+				sn,
+				groupId,
+				deviceNo,
+				plate,
+				plateColor,
+				capturedAt,
+				yardEntry,
+				text(message.path("msgId")));
 		if (yardEntry) {
 			logParkingMfYardConfigMismatch(sn, groupId, deviceNo);
 			if (!isBlank(plate)) {
 				registerYardEntryFromDevice(plate, capturedAt, "ALPR_YARD", plateColor);
 			}
-			publishParkingMfResponse(sn, "plateResultResp", text(message.path("msgId")));
+			publishParkingMfResponse(sn, "plateResultResp", text(message.path("msgId")), data);
 			return;
 		}
 
@@ -437,7 +473,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					"出租车",
 					"ALPR");
 		}
-		publishParkingMfResponse(binding, sn, "plateResultResp", text(message.path("msgId")));
+		publishParkingMfResponse(binding, sn, "plateResultResp", text(message.path("msgId")), data);
 	}
 
 	private void handleSmartCameraMessage(String topic, JsonNode message, String cmd) {
@@ -499,6 +535,15 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		String alarmType = text(content.path("alarmType"));
 		String plate = firstNonBlank(text(content.path("plateNum")), text(content.path("plateNumVDC")));
 		String plateColor = extractPlateColor(content);
+		flowLog.info(
+				"节点=总入口相机收到告警 event=YARD_SMART_CAMERA_ALARM devId={} topic={} alarmType={} plate={} plateColor={} observedAt={} accepted={}",
+				devId,
+				topic,
+				alarmType,
+				plate,
+				plateColor,
+				observedAt,
+				!isBlank(plate) && shouldRegisterSmartCameraPlate(alarmType, content));
 		if (!isBlank(plate) && shouldRegisterSmartCameraPlate(alarmType, content)) {
 			registerYardEntryFromDevice(plate, observedAt, "SMART_CAMERA", plateColor);
 		}
@@ -523,12 +568,27 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return;
 		}
 		if (!isSmartCameraLaneEntryAlarmType(alarmType)) {
+			flowLog.info(
+					"节点=车道相机告警忽略 event=LANE_CAMERA_ALARM_IGNORED laneId={} devId={} alarmType={} observedAt={} reason=UNSUPPORTED_ALARM",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					observedAt);
 			log.debug("Ignored smart camera alarm type {} for lane {}", alarmType, binding.getLaneId());
 			return;
 		}
 
 		String plate = firstNonBlank(text(content.path("plateNum")), text(content.path("plateNumVDC")));
 		if (!isBlank(plate) && shouldRegisterSmartCameraLaneEntryPlate(alarmType, content)) {
+			flowLog.info(
+					"节点=车道入口识别过车 event=LANE_CAMERA_PASS laneId={} devId={} alarmType={} plate={} plateColor={} observedAt={} inOut={}",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					plate,
+					extractPlateColor(content),
+					observedAt,
+					text(content.path("inOut")));
 			registerVehicleEntryFromDevice(
 					binding.getLaneId(),
 					plate,
@@ -540,6 +600,13 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 
 		if ("1".equals(alarmType)) {
+			flowLog.info(
+					"节点=车道入口过车未识别车牌 event=LANE_CAMERA_PASS_NO_PLATE laneId={} devId={} alarmType={} observedAt={} inOut={}",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					observedAt,
+					text(content.path("inOut")));
 			updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "入口相机触发但未识别车牌");
 			return;
 		}
@@ -559,6 +626,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 		if (mapping.endEvent()) {
 			clearMotorStayLane(devId);
+			flowLog.info(
+					"节点=车道滞留解除 event=LANE_CAMERA_STAY_END laneId={} devId={} alarmType={} plate={} observedAt={} message={}",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					plate,
+					observedAt,
+					mapping.message());
 			updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, mapping.message() + "解除");
 			return;
 		}
@@ -567,6 +642,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		if (!isBlank(plate)) {
 			message += ": " + plate;
 		}
+		flowLog.info(
+				"节点=车道滞留告警 event=LANE_CAMERA_STAY laneId={} devId={} alarmType={} plate={} observedAt={} message={}",
+				binding.getLaneId(),
+				devId,
+				alarmType,
+				plate,
+				observedAt,
+				message);
 		updateLaneDeviceStatus(binding.getLaneId(), "DEGRADED", observedAt, message);
 	}
 
@@ -639,10 +722,18 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	}
 
 	private void handleSmartCameraCountIgnored(DeviceGatewayProperties.LaneBinding binding, OffsetDateTime observedAt) {
+		flowLog.info(
+				"节点=入口相机计数忽略 event=LANE_CAMERA_PASS_COUNT_IGNORED laneId={} observedAt={} reason=EXIT_STATISTICS_USE_EXIT_LOOP",
+				binding.getLaneId(),
+				observedAt);
 		updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "入口相机计数上报已忽略，出场统计以出口地感为准");
 	}
 
 	private void handleSmartCameraPresenceIgnored(DeviceGatewayProperties.LaneBinding binding, OffsetDateTime observedAt) {
+		flowLog.info(
+				"节点=入口相机在位忽略 event=LANE_CAMERA_PRESENCE_IGNORED laneId={} observedAt={} reason=EXIT_STATISTICS_USE_EXIT_LOOP",
+				binding.getLaneId(),
+				observedAt);
 		updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, "入口相机在位响应已忽略，出场统计以出口地感为准");
 	}
 
@@ -665,6 +756,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					? resolveSignalFromRelayFeedback(message, binding.getExitGreenRelay(), binding.getExitRedRelay())
 					: null;
 			if (!isBlank(entrySignal) || !isBlank(exitSignal)) {
+				flowLog.info(
+						"节点=DIDO灯态反馈 event=DIDO_SIGNAL_FEEDBACK deviceId={} laneId={} entrySignal={} exitSignal={} observedAt={} payload={}",
+						didoDeviceId,
+						binding.getLaneId(),
+						nullToEmpty(entrySignal),
+						nullToEmpty(exitSignal),
+						observedAt,
+						message);
 				updateLaneSignalFeedback(
 						binding.getLaneId(),
 						entrySignal,
@@ -692,9 +791,24 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		boolean triggered = discreteInputTriggered(inputNode);
 		String inputStateKey = didoDeviceId + "|" + binding.getLaneId() + "|" + binding.getExitTriggerInputKey();
 		Boolean previous = lastDidoInputStates.put(inputStateKey, triggered);
+		flowLog.info(
+				"节点=出口地感输入 event=EXIT_LOOP_INPUT deviceId={} laneId={} inputKey={} value={} triggered={} previous={} observedAt={}",
+				didoDeviceId,
+				binding.getLaneId(),
+				binding.getExitTriggerInputKey(),
+				inputNode,
+				triggered,
+				previous,
+				observedAt);
 		if (previous == null || previous || !triggered) {
 			return;
 		}
+		flowLog.info(
+				"节点=出口地感触发 event=EXIT_LOOP_TRIGGERED deviceId={} laneId={} inputKey={} observedAt={}",
+				didoDeviceId,
+				binding.getLaneId(),
+				binding.getExitTriggerInputKey(),
+				observedAt);
 		applyLaneExitTrigger(binding.getLaneId(), observedAt);
 	}
 
@@ -702,10 +816,18 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			SimpleMqttClient client,
 			String didoDeviceId,
 			List<Lane> lanes) throws IOException {
+		String topic = renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId);
+		String laneSignals = summarizeLaneSignals(lanes);
 		if (didoPayloadMode().startsWith("hex-")) {
 			byte[] command = buildDidoBatchHexCommand(didoDeviceId, lanes);
 			if (command != null && command.length > 0) {
-				client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), command);
+				client.publish(topic, command);
+				flowLog.info(
+						"节点=红绿灯批量下发 event=DIDO_TRAFFIC_LIGHT_COMMAND protocol=MQTT_HEX deviceId={} topic={} lanes={} payloadHex={}",
+						didoDeviceId,
+						topic,
+						laneSignals,
+						bytesToHex(command));
 			}
 			return;
 		}
@@ -729,19 +851,27 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return;
 		}
 		payload.put("res", nextMessageId("dido"));
-		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), objectMapper.writeValueAsString(payload));
+		String payloadText = objectMapper.writeValueAsString(payload);
+		client.publish(topic, payloadText);
+		flowLog.info(
+				"节点=红绿灯批量下发 event=DIDO_TRAFFIC_LIGHT_COMMAND protocol=MQTT_JSON deviceId={} topic={} lanes={} payload={}",
+				didoDeviceId,
+				topic,
+				laneSignals,
+				payloadText);
 	}
 
-	private void publishDidoRelayHex(
+	private byte[] publishDidoRelayHex(
 			SimpleMqttClient client,
 			String didoDeviceId,
 			String relay,
 			boolean on) throws IOException {
 		if (isBlank(relay)) {
-			return;
+			return new byte[0];
 		}
 		byte[] command = tcpDidoCommandService.buildRelayCommand(relayIndex(relay), on, didoHexProtocol());
 		client.publish(renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId), command);
+		return command;
 	}
 
 	private byte[] buildDidoBatchHexCommand(String didoDeviceId, List<Lane> lanes) {
@@ -820,6 +950,12 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				.orElse("");
 	}
 
+	private String summarizeLaneSignals(List<Lane> lanes) {
+		return lanes.stream()
+				.map(lane -> lane.getId() + "(entry=" + lane.getEntrySignal() + ",exit=" + lane.getExitSignal() + ",count=" + lane.getVehicleCount() + ")")
+				.collect(Collectors.joining(","));
+	}
+
 	private void syncParkingCamera(
 			SimpleMqttClient client,
 			Lane lane,
@@ -885,9 +1021,19 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 						String topic = renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId);
 						if (properties.getDido().isEnableRemoteConfigOnConnect()) {
 							client.publish(topic, CX_ENABLE_REMOTE_CONFIG_COMMAND);
+							flowLog.info(
+									"节点=DIDO启动指令 event=DIDO_STARTUP_COMMAND protocol=MQTT_HEX deviceId={} topic={} command=ENABLE_REMOTE_CONFIG payloadHex={}",
+									didoDeviceId,
+									topic,
+									bytesToHex(CX_ENABLE_REMOTE_CONFIG_COMMAND));
 						}
 						if (properties.getDido().isEnableRelayUploadOnConnect()) {
 							client.publish(topic, CX_ENABLE_RELAY_UPLOAD_COMMAND);
+							flowLog.info(
+									"节点=DIDO启动指令 event=DIDO_STARTUP_COMMAND protocol=MQTT_HEX deviceId={} topic={} command=ENABLE_RELAY_UPLOAD payloadHex={}",
+									didoDeviceId,
+									topic,
+									bytesToHex(CX_ENABLE_RELAY_UPLOAD_COMMAND));
 						}
 					} catch (Exception ex) {
 						log.warn("Failed to publish CX DIDO startup command for device {}", didoDeviceId, ex);
@@ -901,7 +1047,13 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					payload.put("readall", 0);
 					payload.put("res", nextMessageId("dido-read"));
 					String topic = renderTopic(properties.getDido().getDownTopicTemplate(), didoDeviceId);
-					client.publish(topic, objectMapper.writeValueAsString(payload));
+					String payloadText = objectMapper.writeValueAsString(payload);
+					client.publish(topic, payloadText);
+					flowLog.info(
+							"节点=DIDO启动指令 event=DIDO_STARTUP_COMMAND protocol=MQTT_JSON deviceId={} topic={} command=READ_ALL payload={}",
+							didoDeviceId,
+							topic,
+							payloadText);
 				} catch (Exception ex) {
 					log.warn("Failed to request DIDO state for device {}", didoDeviceId, ex);
 				}
@@ -920,7 +1072,17 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		payload.put("timestamp", System.currentTimeMillis());
 		payload.put("sn", binding.getMfSn());
 		payload.set("data", data);
-		client.publish(renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
+		String topic = renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding);
+		String payloadText = objectMapper.writeValueAsString(payload);
+		client.publish(topic, payloadText);
+		flowLog.info(
+				"节点=车道停车相机下发 event=PARKING_MF_DOWNLINK laneId={} sn={} groupId={} cmd={} topic={} payload={}",
+				binding.getLaneId(),
+				binding.getMfSn(),
+				binding.getMfGroupId(),
+				cmd,
+				topic,
+				payloadText);
 	}
 
 	private void publishParkingMfResponse(
@@ -928,32 +1090,94 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			String sn,
 			String cmd,
 			String sourceMsgId) throws IOException {
-		publishParkingMfResponse(renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding), firstNonBlank(sn, binding.getMfSn()), cmd, sourceMsgId);
+		publishParkingMfResponse(binding, sn, cmd, sourceMsgId, null);
+	}
+
+	private void publishParkingMfResponse(
+			DeviceGatewayProperties.LaneBinding binding,
+			String sn,
+			String cmd,
+			String sourceMsgId,
+			JsonNode responseData) throws IOException {
+		publishParkingMfResponse(
+				renderTopic(properties.getParkingMf().getDownTopicTemplate(), binding),
+				firstNonBlank(sn, binding.getMfSn()),
+				cmd,
+				sourceMsgId,
+				responseData);
 	}
 
 	private void publishParkingMfResponse(
 			String sn,
 			String cmd,
 			String sourceMsgId) throws IOException {
-		publishParkingMfResponse(renderParkingMfTopic(sn), sn, cmd, sourceMsgId);
+		publishParkingMfResponse(sn, cmd, sourceMsgId, null);
+	}
+
+	private void publishParkingMfResponse(
+			String sn,
+			String cmd,
+			String sourceMsgId,
+			JsonNode responseData) throws IOException {
+		publishParkingMfResponse(renderParkingMfTopic(sn), sn, cmd, sourceMsgId, responseData);
 	}
 
 	private void publishParkingMfResponse(
 			String topic,
 			String sn,
 			String cmd,
-			String sourceMsgId) throws IOException {
+			String sourceMsgId,
+			JsonNode responseData) throws IOException {
 		SimpleMqttClient client = mqttClient;
 		if (client == null || !client.isConnected()) {
 			return;
 		}
+		ObjectNode payload = buildParkingMfResponsePayload(sn, cmd, sourceMsgId, responseData);
+		String payloadText = objectMapper.writeValueAsString(payload);
+		client.publish(topic, payloadText);
+		flowLog.info(
+				"节点=MF相机确认回包 event=PARKING_MF_RESPONSE sn={} cmd={} msgId={} topic={} payload={}",
+				sn,
+				cmd,
+				payload.path("msgId").asText(),
+				topic,
+				payloadText);
+	}
+
+	private ObjectNode buildParkingMfResponsePayload(String sn, String cmd, String sourceMsgId, JsonNode responseData) {
 		ObjectNode payload = objectMapper.createObjectNode();
 		payload.put("cmd", cmd);
 		payload.put("msgId", firstNonBlank(sourceMsgId, nextMessageId(cmd)));
 		payload.put("timestamp", System.currentTimeMillis());
 		payload.put("sn", sn);
-		payload.set("data", objectMapper.createObjectNode());
-		client.publish(topic, objectMapper.writeValueAsString(payload));
+		payload.put("timezone", "Asia/Shanghai");
+		payload.set("data", buildParkingMfResponseData(responseData));
+		return payload;
+	}
+
+	private ObjectNode buildParkingMfResponseData(JsonNode sourceData) {
+		ObjectNode data = objectMapper.createObjectNode();
+		if (sourceData == null || sourceData.isMissingNode() || sourceData.isNull()) {
+			return data;
+		}
+		copyJsonField(sourceData, data, "deviceNo");
+		copyJsonField(sourceData, data, "groupId");
+		copyJsonField(sourceData, data, "plateNo");
+		copyJsonField(sourceData, data, "plateColor");
+		copyJsonField(sourceData, data, "carImg");
+		copyJsonField(sourceData, data, "parkingTime");
+		copyJsonField(sourceData, data, "confidence");
+		copyJsonField(sourceData, data, "carBrand");
+		copyJsonField(sourceData, data, "realTime");
+		copyJsonField(sourceData, data, "state");
+		copyJsonField(sourceData, data, "uploadTime");
+		return data;
+	}
+
+	private void copyJsonField(JsonNode source, ObjectNode target, String fieldName) {
+		if (source.has(fieldName) && !source.get(fieldName).isNull()) {
+			target.set(fieldName, source.get(fieldName).deepCopy());
+		}
 	}
 
 	private void publishSmartCameraCommand(
@@ -970,7 +1194,16 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		payload.put("devId", binding.getCameraDevId());
 		payload.put("utcTs", System.currentTimeMillis());
 		payload.set("content", content);
-		client.publish(renderTopic(properties.getSmartCamera().getDownTopicTemplate(), binding), objectMapper.writeValueAsString(payload));
+		String topic = renderTopic(properties.getSmartCamera().getDownTopicTemplate(), binding);
+		String payloadText = objectMapper.writeValueAsString(payload);
+		client.publish(topic, payloadText);
+		flowLog.info(
+				"节点=SmartCamera指令下发 event=SMART_CAMERA_COMMAND laneId={} devId={} cmd={} topic={} payload={}",
+				binding.getLaneId(),
+				binding.getCameraDevId(),
+				cmd,
+				topic,
+				payloadText);
 	}
 
 	private String renderTopic(String template, DeviceGatewayProperties.LaneBinding binding) {
@@ -1294,6 +1527,13 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
 			log.info("Lane entry registration from MQTT laneId={} plate={} source={} entryTime={}", laneId, plate, source, entryTime);
+			flowLog.info(
+					"节点=车道入场登记请求 event=LANE_ENTRY_REGISTER_REQUEST laneId={} plate={} vehicleType={} source={} entryTime={}",
+					laneId,
+					plate,
+					vehicleType,
+					source,
+					entryTime);
 			operationsService.registerVehicleEntryFromDevice(laneId, plate, entryTime, vehicleType, source);
 		} else {
 			log.warn("Cannot register lane entry because OperationsService is unavailable laneId={} plate={} source={}", laneId, plate, source);
@@ -1310,10 +1550,25 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			DispatchTicket ticket = operationsService.registerYardEntry(new YardEntryPayload(plate, "出租车", source, capturedAt, plateColor));
 			if (ticket == null) {
 				log.info("Yard entry registration from MQTT ignored plate={} plateColor={} source={} capturedAt={}", plate, plateColor, source, capturedAt);
+				flowLog.info(
+						"节点=总入口抓拍忽略 event=YARD_ENTRY_IGNORED plate={} plateColor={} source={} capturedAt={}",
+						plate,
+						plateColor,
+						source,
+						capturedAt);
 				return;
 			}
 			log.info(
 					"Yard entry registration from MQTT completed plate={} plateColor={} source={} capturedAt={} ticketId={} status={} assignedLane={}",
+					plate,
+					plateColor,
+					source,
+					capturedAt,
+					ticket.getId(),
+					ticket.getStatus(),
+					ticket.getAssignedLaneId());
+			flowLog.info(
+					"节点=总入口抓拍登记完成 event=YARD_ENTRY_REGISTERED plate={} plateColor={} source={} capturedAt={} ticketId={} status={} assignedLane={}",
 					plate,
 					plateColor,
 					source,
@@ -1336,6 +1591,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private void applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
+			flowLog.info("节点=出口地感执行业务 event=EXIT_LOOP_APPLY laneId={} observedAt={}", laneId, observedAt);
 			operationsService.applyLaneExitTrigger(laneId, observedAt);
 		}
 	}
@@ -1523,6 +1779,17 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			bytes[index] = (byte) Integer.parseInt(cleaned.substring(index * 2, index * 2 + 2), 16);
 		}
 		return bytes;
+	}
+
+	private static String bytesToHex(byte[] bytes) {
+		if (bytes == null || bytes.length == 0) {
+			return "";
+		}
+		StringBuilder builder = new StringBuilder(bytes.length * 2);
+		for (byte value : bytes) {
+			builder.append(String.format("%02X", value & 0xFF));
+		}
+		return builder.toString();
 	}
 
 	private void closeClient() {

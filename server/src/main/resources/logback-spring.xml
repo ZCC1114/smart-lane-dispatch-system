@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<include resource="org/springframework/boot/logging/logback/defaults.xml" />
+	<include resource="org/springframework/boot/logging/logback/console-appender.xml" />
+
+	<springProperty scope="context" name="VEHICLE_FLOW_LOG_FILE" source="app.logging.vehicle-flow-file" defaultValue="logs/vehicle-flow.log" />
+
+	<appender name="VEHICLE_FLOW_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<file>${VEHICLE_FLOW_LOG_FILE}</file>
+		<encoder>
+			<pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %msg%n</pattern>
+			<charset>UTF-8</charset>
+		</encoder>
+		<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+			<fileNamePattern>${VEHICLE_FLOW_LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+			<maxFileSize>20MB</maxFileSize>
+			<maxHistory>14</maxHistory>
+			<totalSizeCap>512MB</totalSizeCap>
+		</rollingPolicy>
+	</appender>
+
+	<logger name="vehicle-flow" level="INFO" additivity="false">
+		<appender-ref ref="VEHICLE_FLOW_FILE" />
+	</logger>
+
+	<root level="${LOG_LEVEL_ROOT:-INFO}">
+		<appender-ref ref="CONSOLE" />
+	</root>
+</configuration>

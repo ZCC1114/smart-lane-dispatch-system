@@ -107,7 +107,7 @@ export interface SignalOverrideRequest {
   laneId: string;
   entrySignal: SignalState;
   exitSignal: SignalState;
-  mode: LaneMode;
+  mode?: LaneMode;
   reason: string;
 }
 

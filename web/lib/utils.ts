@@ -47,8 +47,7 @@ export function laneStatusLabel(status: LaneStatus) {
 }
 
 export function laneModeLabel(mode: LaneMode) {
-  if (mode === "AUTO") return "自动";
-  if (mode === "MANUAL") return "手动";
+  if (mode === "AUTO" || mode === "MANUAL") return "联动";
   return "离线";
 }
 

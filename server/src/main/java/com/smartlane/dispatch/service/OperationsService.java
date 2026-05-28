@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -63,6 +64,7 @@ import jakarta.annotation.PostConstruct;
 public class OperationsService {
 
 	private static final Logger log = LoggerFactory.getLogger(OperationsService.class);
+	private static final Logger flowLog = LoggerFactory.getLogger("vehicle-flow");
 	private static final long SCREEN_BOARD_DIAGNOSTIC_LOG_INTERVAL_MS = 30000L;
 
 	private static final Pattern FIRST_NUMBER = Pattern.compile("\\d+");
@@ -73,6 +75,8 @@ public class OperationsService {
 	private static final String EXIT_DISPATCH_ENABLED_KEY = "exit_dispatch_enabled";
 	private static final String ACTIVE_ENTRY_LANE_KEY = "active_entry_lane";
 	private static final String ACTIVE_EXIT_LANE_KEY = "active_exit_lane";
+	private static final String ACTIVE_SIGNAL_LANE_KEY = "active_signal_lane";
+	private static final String ACTIVE_SIGNAL_DIRECTION_KEY = "active_signal_direction";
 	private static final String ASSIGNMENT_RESERVE_MINUTES_KEY = "assignment_reserve_minutes";
 	private static final String LAST_DAILY_RESET_AT_KEY = "last_daily_reset_at";
 	private static final String LEGACY_EXIT_LANE_ORDER_KEY = "exit_lane_order";
@@ -80,10 +84,10 @@ public class OperationsService {
 	private static final String LEGACY_ENTRY_DISPATCH_PAUSED_LANE_KEY = "entry_dispatch_paused_lane";
 
 	private static final List<String> VALID_SIGNAL_STATES = List.of("RED", "GREEN", "OFFLINE");
-	private static final List<String> VALID_LANE_MODES = List.of("AUTO", "MANUAL", "OFFLINE");
 	private static final List<String> VALID_RELAY_CONTROL_TARGETS = List.of("ENTRY_RED", "ENTRY_GREEN", "EXIT_RED", "EXIT_GREEN");
 	private static final List<String> VALID_BLACKLIST_LEVELS = List.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
 	private static final List<String> VALID_SENSOR_STATES = List.of("ONLINE", "DEGRADED", "OFFLINE");
+	private static final List<String> VALID_SIGNAL_DIRECTIONS = List.of("ENTRY", "EXIT");
 	private static final List<String> VALID_COMMAND_TYPES = List.of(
 			"FORCE_OPEN_GATE",
 			"MANUAL_ENTRY",
@@ -91,6 +95,8 @@ public class OperationsService {
 			"TEMP_ALLOW",
 			"CORRECT_COUNT",
 			"SET_PRIORITY");
+	private static final int LANE_REMAINING_CLEAR_THRESHOLD = 3;
+	private static final int EXIT_HANDOFF_TRIGGER_THRESHOLD = 3;
 
 	private final LaneRepository laneRepository;
 	private final DispatchConfigRepository dispatchConfigRepository;
@@ -108,6 +114,7 @@ public class OperationsService {
 	private final boolean defaultExitDispatchEnabled;
 	private final long assignmentReserveMinutes;
 	private final AtomicLong lastScreenBoardDiagnosticLogAt = new AtomicLong(0L);
+	private final Map<String, Integer> exitHandoffTriggerCounts = new ConcurrentHashMap<>();
 
 	public OperationsService(
 			LaneRepository laneRepository,
@@ -147,6 +154,8 @@ public class OperationsService {
 		clearDispatchConfig(LEGACY_EXIT_LANE_ORDER_KEY);
 		clearDispatchConfig(LEGACY_ENTRY_DISPATCH_CURSOR_KEY);
 		clearDispatchConfig(LEGACY_ENTRY_DISPATCH_PAUSED_LANE_KEY);
+		clearDispatchConfig(ACTIVE_SIGNAL_LANE_KEY);
+		clearDispatchConfig(ACTIVE_SIGNAL_DIRECTION_KEY);
 	}
 
 	@Transactional
@@ -346,8 +355,8 @@ public class OperationsService {
 		}
 
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
-		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
-		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		saveActiveEntrySignalConfig(firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		saveActiveExitSignalConfig(null, referenceTime);
 		refreshLaneRuntime(referenceTime);
 		invalidateRuntimeViews("dispatch_config_updated");
 		return getDispatchConfig();
@@ -361,11 +370,19 @@ public class OperationsService {
 
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
-		if (request.entryDispatchEnabled() && isBlank(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))) {
-			saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		if (request.entryDispatchEnabled()) {
+			if (isBlank(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))) {
+				saveActiveEntrySignalConfig(firstOrderedLaneId(lanes, laneOrder), referenceTime);
+			}
+		} else {
+			saveActiveEntrySignalConfig(null, referenceTime);
 		}
-		if (request.exitDispatchEnabled() && isBlank(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		if (request.exitDispatchEnabled()) {
+			if (isBlank(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
+				saveActiveExitSignalConfig(nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), null, null), referenceTime);
+			}
+		} else {
+			saveActiveExitSignalConfig(null, referenceTime);
 		}
 
 		refreshLaneRuntime(referenceTime);
@@ -404,11 +421,12 @@ public class OperationsService {
 			lane.setLastActionAt(referenceTime);
 			lane.setStatus(resolveStatusForLane(lane, 0L));
 		}
+		exitHandoffTriggerCounts.clear();
 
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
-		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
-		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		saveActiveEntrySignalConfig(firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		saveActiveExitSignalConfig(null, referenceTime);
 		saveDispatchConfig(LAST_DAILY_RESET_AT_KEY, referenceTime.toString(), referenceTime);
 
 		refreshLaneRuntime(referenceTime);
@@ -486,17 +504,27 @@ public class OperationsService {
 	@Transactional
 	public Lane overrideSignal(String laneId, SignalOverrideRequest request) {
 		validateSignals(request.entrySignal(), request.exitSignal());
-		validateLaneMode(request.mode());
 		Lane lane = requireLane(laneId);
 		OffsetDateTime referenceTime = now();
-		lane.setMode(request.mode());
+		lane.setMode("AUTO");
 		lane.setLastActionAt(referenceTime);
-		if ("MANUAL".equals(request.mode())) {
-			laneRuntimeStateService.recordTarget(lane.getId(), request.entrySignal(), request.exitSignal(), request.reason(), referenceTime);
-		} else if ("OFFLINE".equals(request.mode())) {
-			laneRuntimeStateService.recordTarget(lane.getId(), "OFFLINE", "OFFLINE", request.reason(), referenceTime);
-		} else {
-			laneRuntimeStateService.clearManualTarget(lane.getId());
+		laneRuntimeStateService.clearManualTarget(lane.getId());
+		boolean allRedRequest = "RED".equals(request.entrySignal()) && "RED".equals(request.exitSignal());
+		String currentActiveEntryLaneId = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
+		String currentActiveExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		if ("GREEN".equals(request.entrySignal())) {
+			saveActiveEntrySignalConfig(lane.getId(), referenceTime);
+		} else if ("RED".equals(request.entrySignal())
+				&& (lane.getId().equals(currentActiveEntryLaneId) || (allRedRequest && isBlank(currentActiveEntryLaneId)))) {
+			List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
+			List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
+			advanceEntrySignal(referenceTime, lane.getId(), lanes, laneOrder, pendingAssignmentCounts(referenceTime));
+		}
+		if ("GREEN".equals(request.exitSignal())) {
+			saveActiveExitSignalConfig(lane.getId(), referenceTime);
+		} else if ("RED".equals(request.exitSignal())
+				&& (lane.getId().equals(currentActiveExitLaneId) || (allRedRequest && isBlank(currentActiveExitLaneId)))) {
+			advanceExitSignalAfterCleared(referenceTime, lane.getId());
 		}
 		lane.setStatus(resolveStatusForLane(lane, pendingAssignmentCounts(referenceTime).getOrDefault(lane.getId(), 0L)));
 		return persistLaneRuntime(lane.getId(), referenceTime, "signal_override");
@@ -505,20 +533,36 @@ public class OperationsService {
 	public void controlLaneRelay(String laneId, RelayControlRequest request) {
 		validateRelayControlTarget(request.target());
 		Lane lane = requireLane(laneId);
-		laneDeviceGateway.controlRelay(lane, request.target(), Boolean.TRUE.equals(request.on()), request.reason());
+		String normalizedTarget = request.target().trim().toUpperCase(Locale.ROOT).replace('-', '_');
+		if (Boolean.TRUE.equals(request.on()) && ("ENTRY_GREEN".equals(normalizedTarget) || "EXIT_GREEN".equals(normalizedTarget))) {
+			OffsetDateTime referenceTime = now();
+			if ("ENTRY_GREEN".equals(normalizedTarget)) {
+				saveActiveEntrySignalConfig(lane.getId(), referenceTime);
+			} else {
+				saveActiveExitSignalConfig(lane.getId(), referenceTime);
+			}
+			persistLaneRuntime(laneId, referenceTime, "relay_green_redirected_to_active_signal");
+			return;
+		}
+		laneDeviceGateway.controlRelay(lane, normalizedTarget, Boolean.TRUE.equals(request.on()), request.reason());
 	}
 
 	@Transactional
 	public void restoreAutoControl() {
 		OffsetDateTime referenceTime = now();
 		laneDeviceGateway.clearSyncState();
+		exitHandoffTriggerCounts.clear();
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
-		for (Lane lane : laneRepository.findAllByOrderByCodeAsc()) {
+		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
+		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
+		for (Lane lane : lanes) {
 			lane.setMode("AUTO");
 			lane.setLastActionAt(referenceTime);
 			laneRuntimeStateService.clearManualTarget(lane.getId());
 		}
+		saveActiveEntrySignalConfig(firstOrderedLaneId(lanes, laneOrder), referenceTime);
+		saveActiveExitSignalConfig(nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), null, null), referenceTime);
 		refreshLaneRuntime(referenceTime);
 		invalidateRuntimeViews("restore_auto");
 	}
@@ -526,12 +570,12 @@ public class OperationsService {
 	@Transactional
 	public void globalLockdown() {
 		OffsetDateTime referenceTime = now();
+		exitHandoffTriggerCounts.clear();
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
-		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, null, referenceTime);
-		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, null, referenceTime);
+		clearActiveSignalConfig(referenceTime);
 		for (Lane lane : laneRepository.findAllByOrderByCodeAsc()) {
-			lane.setMode("MANUAL");
+			lane.setMode("AUTO");
 			lane.setStatus("FULL");
 			lane.setLastActionAt(referenceTime);
 			laneRuntimeStateService.recordTarget(lane.getId(), "RED", "RED", "全域锁死，请等待指挥中心", referenceTime);
@@ -551,8 +595,9 @@ public class OperationsService {
 
 		switch (request.commandType()) {
 			case "FORCE_OPEN_GATE", "MANUAL_ENTRY", "TEMP_ALLOW" -> {
-				lane.setMode("MANUAL");
-				laneRuntimeStateService.recordTarget(lane.getId(), "GREEN", "GREEN", "人工放行", referenceTime);
+				lane.setMode("AUTO");
+				laneRuntimeStateService.clearManualTarget(lane.getId());
+				saveActiveEntrySignalConfig(lane.getId(), referenceTime);
 				lane.setVehicleCount(Math.min(lane.getCapacity(), lane.getVehicleCount() + 1));
 				updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
 				lane.setLastEntryAt(referenceTime);
@@ -589,9 +634,7 @@ public class OperationsService {
 				lane.setVehicleCount(Math.min(lane.getCapacity(), correctedCount));
 				updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
 				reconcileLaneQueue(lane, lane.getVehicleCount(), referenceTime);
-				if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-					advanceExitLane(referenceTime, lane.getId());
-				}
+				advanceExitSignalIfCurrentCleared(lane, referenceTime);
 			}
 			case "SET_PRIORITY" -> lane.setPriority(request.markPriority() == null ? !lane.isPriority() : request.markPriority());
 			default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的指令类型");
@@ -631,9 +674,7 @@ public class OperationsService {
 		lane.setLastSensorAt(observedAt);
 		lane.setLastActionAt(observedAt);
 		reconcileLaneQueue(lane, lane.getVehicleCount(), observedAt);
-		if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			advanceExitLane(observedAt, lane.getId());
-		}
+		advanceExitSignalIfCurrentCleared(lane, observedAt);
 		return persistLaneRuntime(lane.getId(), observedAt, "lane_sensor_ingested");
 	}
 
@@ -645,6 +686,12 @@ public class OperationsService {
 		if (LicensePlateRules.shouldIgnoreYardEntry(normalizedPlate, payload.plateColor())) {
 			log.info(
 					"Yard entry capture ignored because blue taxi plate pattern did not match plate={} plateColor={} source={} capturedAt={}",
+					normalizedPlate,
+					payload.plateColor(),
+					normalizedSource,
+					capturedAt);
+			flowLog.info(
+					"节点=总入口抓拍忽略 event=YARD_ENTRY_IGNORED plate={} plateColor={} source={} capturedAt={} reason=PLATE_RULE_NOT_MATCHED",
 					normalizedPlate,
 					payload.plateColor(),
 					normalizedSource,
@@ -661,6 +708,16 @@ public class OperationsService {
 		log.info(
 				"Yard entry capture received plate={} source={} capturedAt={} entryDispatchBefore={} activeEntryLaneBefore={} lanes={} laneOrder={}",
 				normalizedPlate,
+				normalizedSource,
+				capturedAt,
+				entryDispatchBefore,
+				activeEntryLaneBefore,
+				lanes.size(),
+				laneOrder);
+		flowLog.info(
+				"节点=总入口抓拍入场 event=YARD_ENTRY_CAPTURE plate={} plateColor={} source={} capturedAt={} entryDispatchBefore={} activeEntryLaneBefore={} lanes={} laneOrder={}",
+				normalizedPlate,
+				payload.plateColor(),
 				normalizedSource,
 				capturedAt,
 				entryDispatchBefore,
@@ -716,10 +773,20 @@ public class OperationsService {
 					targetLane.getId(),
 					targetLane.getName(),
 					capturedAt);
+			flowLog.info(
+					"节点=总入口分配车道 event=YARD_ENTRY_ASSIGNED plate={} ticketId={} laneId={} laneName={} capturedAt={} pendingForLane={} vehicleCount={} capacity={} entryLogCreated=true",
+					ticket.getPlate(),
+					ticket.getId(),
+					targetLane.getId(),
+					targetLane.getName(),
+					capturedAt,
+					pendingCounts.getOrDefault(targetLane.getId(), 0L),
+					targetLane.getVehicleCount(),
+					targetLane.getCapacity());
 
 			pendingCounts.merge(targetLane.getId(), 1L, Long::sum);
 			if (!canReserveEntrySlot(targetLane, pendingCounts.getOrDefault(targetLane.getId(), 0L))) {
-				advanceEntryLane(capturedAt, targetLane.getId(), lanes, laneOrder, pendingCounts);
+				advanceEntrySignal(capturedAt, targetLane.getId(), lanes, laneOrder, pendingCounts);
 			}
 		} else {
 			ticket.setStatus("NO_LANE_AVAILABLE");
@@ -727,6 +794,16 @@ public class OperationsService {
 			dispatchTicketRepository.save(ticket);
 			log.warn(
 					"Yard entry could not assign lane plate={} ticketId={} source={} capturedAt={} entryDispatchEnabled={} activeEntryLane={} lanes={} pendingCounts={}",
+					ticket.getPlate(),
+					ticket.getId(),
+					ticket.getSource(),
+					capturedAt,
+					entryDispatchEnabled,
+					activeAutoEntryLaneId,
+					lanes.size(),
+					pendingCounts);
+			flowLog.warn(
+					"节点=总入口无可分配车道 event=YARD_ENTRY_NO_LANE plate={} ticketId={} source={} capturedAt={} entryDispatchEnabled={} activeEntryLane={} lanes={} pendingCounts={}",
 					ticket.getPlate(),
 					ticket.getId(),
 					ticket.getSource(),
@@ -761,9 +838,26 @@ public class OperationsService {
 				lane.setLastEntryAt(entryTime);
 				lane.setLastEntryPlate(plate);
 				lane.setLastActionAt(entryTime);
+				flowLog.info(
+						"节点=车道重复入场忽略 event=LANE_ENTRY_DUPLICATE_IGNORED laneId={} laneName={} plate={} source={} entryTime={} ticketId={} reason=ALREADY_IN_SAME_LANE",
+						lane.getId(),
+						lane.getName(),
+						plate,
+						source,
+						entryTime,
+						activeTicket.getId());
 				persistLaneRuntime(lane.getId(), entryTime, "vehicle_entry_duplicate_ignored");
 				return activeLogInLane;
 			}
+			flowLog.warn(
+					"节点=车道入场拒绝 event=LANE_ENTRY_REJECTED laneId={} laneName={} plate={} source={} entryTime={} existingLane={} existingTicketId={} reason=PLATE_ALREADY_ACTIVE",
+					lane.getId(),
+					lane.getName(),
+					plate,
+					source,
+					entryTime,
+					firstNonBlank(activeTicket.getActualLaneId(), activeTicket.getAssignedLaneId()),
+					activeTicket.getId());
 			throw new ResponseStatusException(
 					HttpStatus.CONFLICT,
 					"车牌已在" + firstNonBlank(activeTicket.getActualLaneName(), activeTicket.getAssignedLaneName(), activeTicket.getActualLaneId(), "其他车道") + "未出场，不能重复入场");
@@ -778,6 +872,13 @@ public class OperationsService {
 			lane.setLastEntryAt(entryTime);
 			lane.setLastEntryPlate(plate);
 			lane.setLastActionAt(entryTime);
+			flowLog.info(
+					"节点=车道重复入场忽略 event=LANE_ENTRY_DUPLICATE_IGNORED laneId={} laneName={} plate={} source={} entryTime={} reason=ACTIVE_LOG_IN_SAME_LANE",
+					lane.getId(),
+					lane.getName(),
+					plate,
+					source,
+					entryTime);
 			persistLaneRuntime(lane.getId(), entryTime, "vehicle_entry_duplicate_ignored");
 			return activeLogInLane;
 		}
@@ -804,6 +905,17 @@ public class OperationsService {
 		entryLog.setSource(source);
 		entryLog = entryLogRepository.save(entryLog);
 		upsertDispatchTicketForLaneEntry(ticket, lane, plate, vehicleType, source, entryTime);
+		flowLog.info(
+				"节点=车道入场登记完成 event=LANE_ENTRY_REGISTERED laneId={} laneName={} plate={} vehicleType={} source={} entryTime={} previousCount={} currentCount={} ticketMatched={}",
+				lane.getId(),
+				lane.getName(),
+				plate,
+				vehicleType,
+				source,
+				entryTime,
+				previousVehicleCount,
+				lane.getVehicleCount(),
+				ticket != null);
 		refreshLaneRuntime(entryTime);
 		invalidateRuntimeViews("vehicle_entry_captured");
 		return entryLog;
@@ -814,9 +926,19 @@ public class OperationsService {
 		validateSensorStatus(sensorStatus);
 		Lane lane = requireLane(laneId);
 		OffsetDateTime referenceTime = resolveTime(observedAt);
+		String previousSensorStatus = lane.getSensorStatus();
 		lane.setSensorStatus(sensorStatus);
 		lane.setLastSensorAt(referenceTime);
 		lane.setLastActionAt(referenceTime);
+		flowLog.info(
+				"节点=车道设备状态更新 event=LANE_DEVICE_STATUS laneId={} laneName={} previousSensorStatus={} nextSensorStatus={} message={} impact={} observedAt={}",
+				lane.getId(),
+				lane.getName(),
+				nullToEmpty(previousSensorStatus),
+				sensorStatus,
+				nullToEmpty(ledMessage),
+				"DEGRADED".equals(sensorStatus) ? "按满车/异常保护处理，入口自动调度会跳过该车道" : "设备状态恢复或更新",
+				referenceTime);
 		if (!isBlank(ledMessage)) {
 			laneRuntimeStateService.recordDeviceMessage(laneId, ledMessage, referenceTime);
 		}
@@ -833,7 +955,15 @@ public class OperationsService {
 		requireLane(laneId);
 		validateOptionalSignal(entrySignal);
 		validateOptionalSignal(exitSignal);
-		laneRuntimeStateService.recordDeviceFeedback(laneId, entrySignal, exitSignal, resolveTime(observedAt), message);
+		OffsetDateTime referenceTime = resolveTime(observedAt);
+		flowLog.info(
+				"节点=设备灯态反馈入库 event=SIGNAL_DEVICE_FEEDBACK laneId={} entrySignal={} exitSignal={} observedAt={} message={}",
+				laneId,
+				nullToEmpty(entrySignal),
+				nullToEmpty(exitSignal),
+				referenceTime,
+				message);
+		laneRuntimeStateService.recordDeviceFeedback(laneId, entrySignal, exitSignal, referenceTime, message);
 		invalidateRuntimeViews("signal_feedback_updated");
 	}
 
@@ -860,14 +990,19 @@ public class OperationsService {
 			lane.setVehicleCount(Math.max(0, previousVehicleCount - exitCount));
 			updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
 			closeExitedVehicles(lane, exitCount, referenceTime);
-			if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-				advanceExitLane(referenceTime, lane.getId());
-			}
+			advanceExitSignalIfCurrentCleared(lane, referenceTime);
 		} else {
 			lane.setVehicleCount(Math.min(lane.getCapacity(), previousVehicleCount + delta));
 			updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
 		}
 
+		flowLog.info(
+				"节点=车道计数变更 event=PASS_COUNT_DELTA laneId={} delta={} observedAt={} previousCount={} currentCount={}",
+				laneId,
+				delta,
+				referenceTime,
+				previousVehicleCount,
+				lane.getVehicleCount());
 		return persistLaneRuntime(laneId, referenceTime, "pass_count_delta");
 	}
 
@@ -897,10 +1032,16 @@ public class OperationsService {
 		entryLogRepository.save(matchedLog);
 		closeDispatchTicketForExit(matchedLog, referenceTime);
 		refreshLaneHeadAfterVehicleExit(lane, activeLogs, matchedLog);
+		advanceExitSignalIfCurrentCleared(lane, referenceTime);
 
-		if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			advanceExitLane(referenceTime, lane.getId());
-		}
+		flowLog.info(
+				"节点=车辆出场登记完成 event=LANE_EXIT_REGISTERED laneId={} laneName={} plate={} observedAt={} previousCount={} currentCount={} source=MANUAL_OR_API",
+				lane.getId(),
+				lane.getName(),
+				normalizedPlate,
+				referenceTime,
+				previousVehicleCount,
+				lane.getVehicleCount());
 		persistLaneRuntime(laneId, referenceTime, "vehicle_exit_captured");
 		return matchedLog;
 	}
@@ -913,23 +1054,40 @@ public class OperationsService {
 	@Transactional
 	public Lane clearLaneRemainingVehicles(String laneId, OffsetDateTime observedAt, String reason) {
 		Lane lane = requireLane(laneId);
+		OffsetDateTime referenceTime = resolveTime(observedAt);
 		List<DispatchTicket> openTickets = dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(lane.getId());
-		if (Math.max(lane.getVehicleCount(), openTickets.size()) > 3) {
+		List<EntryLog> activeLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(lane.getId());
+		int remainingCount = Stream.of(lane.getVehicleCount(), openTickets.size(), activeLogs.size())
+				.max(Integer::compareTo)
+				.orElse(0);
+		flowLog.info(
+				"节点=车道兜底清空请求 event=LANE_REMAINING_CLEAR_REQUEST laneId={} laneName={} observedAt={} vehicleCount={} openTickets={} activeLogs={} remainingCount={} reason={}",
+				lane.getId(),
+				lane.getName(),
+				referenceTime,
+				lane.getVehicleCount(),
+				openTickets.size(),
+				activeLogs.size(),
+				remainingCount,
+				reason);
+		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车道剩余车辆超过 3 辆，不能使用兜底清空");
 		}
 
-		OffsetDateTime referenceTime = resolveTime(observedAt);
+		String activeExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		if (!lane.getId().equals(activeExitLaneId)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能对当前出口开放车道使用兜底清空");
+		}
+		long pendingCount = pendingAssignmentCounts(referenceTime).getOrDefault(lane.getId(), 0L);
+		boolean entryStillOpen = lane.getId().equals(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))
+				&& canReserveEntrySlot(lane, pendingCount);
+		if (entryStillOpen) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "该车道入口仍在开放，不能使用兜底清空");
+		}
+
 		String clearReason = firstNonBlank(reason, "现场确认车道剩余车辆已全部驶出");
 		int previousVehicleCount = lane.getVehicleCount();
-		List<EntryLog> activeLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(lane.getId());
-		List<EntryLog> logsToClose = activeLogs.stream()
-				.filter(log -> openTickets.stream().anyMatch(ticket -> matchesActiveEntryLog(ticket, log)))
-				.toList();
-		if (openTickets.isEmpty()) {
-			logsToClose = activeLogs.stream()
-					.limit(Math.max(0, previousVehicleCount))
-					.toList();
-		}
+		List<EntryLog> logsToClose = activeLogs;
 
 		for (EntryLog log : logsToClose) {
 			log.setExitTime(referenceTime);
@@ -945,27 +1103,94 @@ public class OperationsService {
 			closeDispatchTicket(ticket, referenceTime);
 		}
 
+		if ("MANUAL".equals(lane.getMode())) {
+			lane.setMode("AUTO");
+			laneRuntimeStateService.clearManualTarget(lane.getId());
+		}
 		lane.setVehicleCount(0);
 		lane.setCurrentPlate(null);
 		lane.setQueueHeadAt(null);
 		lane.setPriority(false);
 		lane.setLastActionAt(referenceTime);
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
-		if (lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			advanceExitLane(referenceTime, lane.getId());
-		}
+		advanceExitSignalAfterCleared(referenceTime, lane.getId());
+		flowLog.info(
+				"节点=车道兜底清空完成 event=LANE_REMAINING_CLEARED laneId={} laneName={} observedAt={} previousCount={} closedLogs={} closedTickets={} reason={}",
+				lane.getId(),
+				lane.getName(),
+				referenceTime,
+				previousVehicleCount,
+				logsToClose.size(),
+				openTickets.size(),
+				clearReason);
 		return persistLaneRuntime(laneId, referenceTime, "lane_remaining_cleared");
 	}
 
 	@Transactional
 	public Lane applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
-		return exitLaneByLoopTrigger(laneId, observedAt, "lane_exit_triggered");
+		Lane lane = requireLane(laneId);
+		OffsetDateTime referenceTime = resolveTime(observedAt);
+		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
+		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
+		boolean exitDispatchEnabled = currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled);
+		String activeExitLaneId = exitDispatchEnabled
+				? currentStringConfig(ACTIVE_EXIT_LANE_KEY, null)
+				: null;
+		if (laneId.equals(activeExitLaneId)) {
+			return exitLaneByLoopTrigger(laneId, referenceTime, "lane_exit_triggered");
+		}
+
+		Lane updatedLane = exitLaneByLoopTrigger(laneId, referenceTime, "lane_exit_triggered_non_active");
+		if (isBlank(activeExitLaneId)) {
+			flowLog.info(
+					"节点=非出口放行地感已扣减 event=EXIT_LOOP_NON_ACTIVE_PROCESSED laneId={} laneName={} observedAt={} activeExitLane={} reason=NO_ACTIVE_EXIT",
+					lane.getId(),
+					lane.getName(),
+					referenceTime,
+					"");
+			return updatedLane;
+		}
+
+		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
+		String nextHandoffLaneId = nextExitHandoffLaneId(orderedLanes, activeExitLaneId);
+		if (!laneId.equals(nextHandoffLaneId)) {
+			flowLog.info(
+					"节点=非相邻出口地感已扣减 event=EXIT_LOOP_NON_ACTIVE_PROCESSED laneId={} laneName={} observedAt={} activeExitLane={} nextHandoffLane={} reason=NOT_CURRENT_OR_NEXT",
+					lane.getId(),
+					lane.getName(),
+					referenceTime,
+					activeExitLaneId,
+					nullToEmpty(nextHandoffLaneId));
+			return updatedLane;
+		}
+
+		int handoffCount = incrementExitHandoffCount(activeExitLaneId, laneId);
+		flowLog.info(
+				"节点=出口相邻车道交接计数 event=EXIT_HANDOFF_PROGRESS fromLane={} toLane={} observedAt={} count={} threshold={}",
+				activeExitLaneId,
+				laneId,
+				referenceTime,
+				handoffCount,
+				EXIT_HANDOFF_TRIGGER_THRESHOLD);
+		if (handoffCount >= EXIT_HANDOFF_TRIGGER_THRESHOLD) {
+			completeExitHandoff(activeExitLaneId, laneId, referenceTime);
+			return persistLaneRuntime(laneId, referenceTime, "exit_handoff_completed");
+		}
+		return updatedLane;
 	}
 
 	private Lane exitLaneByLoopTrigger(String laneId, OffsetDateTime observedAt, String action) {
 		Lane lane = requireLane(laneId);
 		OffsetDateTime referenceTime = resolveTime(observedAt);
 		List<DispatchTicket> visibleTickets = dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(lane.getId());
+		flowLog.info(
+				"节点=出口地感处理车辆 event=EXIT_LOOP_PROCESS laneId={} laneName={} observedAt={} action={} vehicleCount={} visibleTickets={}",
+				lane.getId(),
+				lane.getName(),
+				referenceTime,
+				action,
+				lane.getVehicleCount(),
+				visibleTickets.size());
 		if (!visibleTickets.isEmpty()) {
 			return closeScreenExitTicket(visibleTickets.getFirst(), referenceTime, action);
 		}
@@ -1020,9 +1245,18 @@ public class OperationsService {
 			lane.setCurrentPlate(nextInLane.getPlate());
 			lane.setQueueHeadAt(firstNonNull(nextInLane.getLaneEntryTime(), nextInLane.getYardEntryTime()));
 		}
-		if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			advanceExitLane(referenceTime, lane.getId());
-		}
+		advanceExitSignalIfCurrentCleared(lane, referenceTime);
+		flowLog.info(
+				"节点=出口地感扣减车辆 event=LANE_EXIT_BY_LOOP laneId={} laneName={} plate={} ticketId={} observedAt={} action={} previousCount={} currentCount={} remainingTickets={}",
+				lane.getId(),
+				lane.getName(),
+				ticket.getPlate(),
+				ticket.getId(),
+				referenceTime,
+				action,
+				previousVehicleCount,
+				lane.getVehicleCount(),
+				remainingTickets.size());
 		return persistLaneRuntime(lane.getId(), referenceTime, action);
 	}
 
@@ -1040,9 +1274,17 @@ public class OperationsService {
 		lane.setVehicleCount(Math.max(0, previousVehicleCount - 1));
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
 		refreshLaneHeadAfterVehicleExit(lane, activeLogs, log);
-		if (lane.getVehicleCount() == 0 && lane.getId().equals(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))) {
-			advanceExitLane(referenceTime, lane.getId());
-		}
+		advanceExitSignalIfCurrentCleared(lane, referenceTime);
+		flowLog.info(
+				"节点=出口地感扣减车辆 event=LANE_EXIT_BY_LOOP laneId={} laneName={} plate={} observedAt={} action={} previousCount={} currentCount={} remainingLogs={}",
+				lane.getId(),
+				lane.getName(),
+				log.getPlate(),
+				referenceTime,
+				action,
+				previousVehicleCount,
+				lane.getVehicleCount(),
+				Math.max(0, activeLogs.size() - 1));
 		return persistLaneRuntime(lane.getId(), referenceTime, action);
 	}
 
@@ -1054,10 +1296,18 @@ public class OperationsService {
 		lane.setLastSensorAt(referenceTime);
 		lane.setLastActionAt(referenceTime);
 		if (!haveCar && entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(laneId).isEmpty()) {
+			int previousVehicleCount = lane.getVehicleCount();
 			lane.setVehicleCount(0);
 			lane.setCurrentPlate(null);
 			lane.setQueueHeadAt(null);
 			lane.setPriority(false);
+			flowLog.info(
+					"节点=在位为空清空车道 event=LANE_PRESENCE_CLEARED laneId={} laneName={} observedAt={} previousCount={} haveCar={}",
+					lane.getId(),
+					lane.getName(),
+					referenceTime,
+					previousVehicleCount,
+					haveCar);
 		}
 		return persistLaneRuntime(laneId, referenceTime, "lane_presence_polled");
 	}
@@ -1084,16 +1334,30 @@ public class OperationsService {
 				.limit(12)
 				.toList();
 		logScreenBoardDiagnosticIfNeeded(waitingAssignments, recentDispatches, currentCycleStart);
-		String activeEntryLaneId = resolveOpenEntryLaneId(lanes, referenceTime);
-		String activeExitLaneId = resolveOpenExitLaneId(lanes, referenceTime, activeEntryLaneId);
+		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
+		Map<String, Long> pendingCounts = pendingAssignmentCounts(referenceTime);
+		boolean entryDispatchEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
+		boolean exitDispatchEnabled = currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled);
+		String activeEntryLaneId = entryDispatchEnabled
+				? resolveAndPersistActiveEntryLaneId(lanes, laneOrder, pendingCounts, referenceTime)
+				: null;
+		String activeExitLaneId = exitDispatchEnabled
+				? resolveAndPersistActiveExitLaneId(lanes, laneOrder, referenceTime, activeEntryLaneId)
+				: null;
+		if (!entryDispatchEnabled) {
+			saveActiveEntrySignalConfig(null, referenceTime);
+		}
+		if (!exitDispatchEnabled) {
+			saveActiveExitSignalConfig(null, referenceTime);
+		}
 		return new DispatchBoardView(
 				referenceTime,
 				activeEntryLaneId,
 				activeExitLaneId,
 				laneName(lanes, activeEntryLaneId),
 				laneName(lanes, activeExitLaneId),
-				currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled),
-				currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled),
+				entryDispatchEnabled,
+				exitDispatchEnabled,
 				waitingAssignments,
 				recentDispatches);
 	}
@@ -1228,12 +1492,18 @@ public class OperationsService {
 		Map<String, Long> pendingCounts = pendingAssignmentCounts(referenceTime);
 		boolean entryDispatchEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
 		boolean exitDispatchEnabled = currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled);
-		String activeAutoEntryLaneId = entryDispatchEnabled
+		String activeEntryLaneId = entryDispatchEnabled
 				? resolveAndPersistActiveEntryLaneId(lanes, laneOrder, pendingCounts, referenceTime)
 				: null;
-		String activeAutoExitLaneId = exitDispatchEnabled
-				? resolveAndPersistActiveExitLaneId(lanes, laneOrder, referenceTime, activeAutoEntryLaneId)
+		String activeExitLaneId = exitDispatchEnabled
+				? resolveAndPersistActiveExitLaneId(lanes, laneOrder, referenceTime, activeEntryLaneId)
 				: null;
+		if (!entryDispatchEnabled) {
+			saveActiveEntrySignalConfig(null, referenceTime);
+		}
+		if (!exitDispatchEnabled) {
+			saveActiveExitSignalConfig(null, referenceTime);
+		}
 
 		for (Lane lane : lanes) {
 			long reservedCount = pendingCounts.getOrDefault(lane.getId(), 0L);
@@ -1246,18 +1516,52 @@ public class OperationsService {
 				lane.setCurrentPlate(null);
 			}
 			lane.setStatus(resolveStatusForLane(lane, reservedCount));
-			if ("AUTO".equals(lane.getMode())) {
-				applyAutomaticSignals(
-						lane,
-						entryDispatchEnabled && lane.getId().equals(activeAutoEntryLaneId) && canReserveEntrySlot(lane, reservedCount),
-						exitDispatchEnabled && lane.getId().equals(activeAutoExitLaneId));
-				laneRuntimeStateService.recordRenderedState(lane.getId(), lane.getEntrySignal(), lane.getExitSignal(), resolveLedMessage(lane), referenceTime);
-			} else if ("MANUAL".equals(lane.getMode())) {
-				applyManualSignals(lane, referenceTime);
-			} else {
+			String previousEntrySignal = lane.getEntrySignal();
+			String previousExitSignal = lane.getExitSignal();
+			if ("OFFLINE".equals(lane.getMode())) {
 				lane.setEntrySignal("OFFLINE");
 				lane.setExitSignal("OFFLINE");
 				laneRuntimeStateService.recordRenderedState(lane.getId(), "OFFLINE", "OFFLINE", "车道已设为离线", referenceTime);
+				logSignalDecisionIfChanged(
+						lane,
+						previousEntrySignal,
+						previousExitSignal,
+						"OFFLINE",
+						false,
+						false,
+						activeEntryLaneId,
+						activeExitLaneId,
+						reservedCount,
+						entryDispatchEnabled,
+						exitDispatchEnabled,
+						referenceTime);
+			} else {
+				if ("MANUAL".equals(lane.getMode())) {
+					lane.setMode("AUTO");
+					laneRuntimeStateService.clearManualTarget(lane.getId());
+				}
+				boolean entryOpenNow = entryDispatchEnabled
+						&& lane.getId().equals(activeEntryLaneId)
+						&& canReserveEntrySlot(lane, reservedCount);
+				boolean exitOpenNow = exitDispatchEnabled && lane.getId().equals(activeExitLaneId);
+				applyAutomaticSignals(
+						lane,
+						entryOpenNow,
+						exitOpenNow);
+				laneRuntimeStateService.recordRenderedState(lane.getId(), lane.getEntrySignal(), lane.getExitSignal(), resolveLedMessage(lane), referenceTime);
+				logSignalDecisionIfChanged(
+						lane,
+						previousEntrySignal,
+						previousExitSignal,
+						"ACTIVE_SIGNAL",
+						entryOpenNow,
+						exitOpenNow,
+						activeEntryLaneId,
+						activeExitLaneId,
+						reservedCount,
+						entryDispatchEnabled,
+						exitDispatchEnabled,
+						referenceTime);
 			}
 			if (lane.getLastActionAt() == null) {
 				lane.setLastActionAt(referenceTime);
@@ -1280,21 +1584,93 @@ public class OperationsService {
 		lane.setExitSignal(exitOpenNow ? "GREEN" : "RED");
 	}
 
-	private void applyManualSignals(Lane lane, OffsetDateTime referenceTime) {
-		String targetEntrySignal = laneRuntimeStateService.targetEntrySignal(lane.getId(), "RED");
-		String targetExitSignal = laneRuntimeStateService.targetExitSignal(lane.getId(), "RED");
-		if ("GREEN".equals(targetEntrySignal) && lane.getAvailableSlots() <= 0) {
-			targetEntrySignal = "RED";
-			laneRuntimeStateService.recordTarget(
-					lane.getId(),
-					"RED",
-					targetExitSignal,
-					"车道已满，手动入口绿灯已转红保护",
-					referenceTime);
+	private void logSignalDecisionIfChanged(
+			Lane lane,
+			String previousEntrySignal,
+			String previousExitSignal,
+			String decisionMode,
+			boolean entryOpenNow,
+			boolean exitOpenNow,
+			String activeEntryLaneId,
+			String activeExitLaneId,
+			long reservedCount,
+			boolean entryDispatchEnabled,
+			boolean exitDispatchEnabled,
+			OffsetDateTime referenceTime) {
+		if (Objects.equals(previousEntrySignal, lane.getEntrySignal())
+				&& Objects.equals(previousExitSignal, lane.getExitSignal())) {
+			return;
 		}
-		lane.setEntrySignal(targetEntrySignal);
-		lane.setExitSignal(targetExitSignal);
-		laneRuntimeStateService.recordRenderedState(lane.getId(), lane.getEntrySignal(), lane.getExitSignal(), resolveLedMessage(lane), referenceTime);
+		flowLog.info(
+				"节点=红绿灯切换原因 event=SIGNAL_DECISION laneId={} laneName={} decisionMode={} laneMode={} status={} previousEntry={} previousExit={} nextEntry={} nextExit={} entryOpenNow={} exitOpenNow={} activeEntryLane={} activeExitLane={} vehicleCount={} reservedCount={} availableSlots={} entryReason={} exitReason={} at={}",
+				lane.getId(),
+				lane.getName(),
+				decisionMode,
+				lane.getMode(),
+				lane.getStatus(),
+				nullToEmpty(previousEntrySignal),
+				nullToEmpty(previousExitSignal),
+				lane.getEntrySignal(),
+				lane.getExitSignal(),
+				entryOpenNow,
+				exitOpenNow,
+				nullToEmpty(activeEntryLaneId),
+				nullToEmpty(activeExitLaneId),
+				lane.getVehicleCount(),
+				reservedCount,
+				lane.getAvailableSlots(),
+				entrySignalReason(lane, decisionMode, entryOpenNow, activeEntryLaneId, entryDispatchEnabled, reservedCount),
+				exitSignalReason(lane, decisionMode, exitOpenNow, activeExitLaneId, exitDispatchEnabled),
+				referenceTime);
+	}
+
+	private String entrySignalReason(
+			Lane lane,
+			String decisionMode,
+			boolean entryOpenNow,
+			String activeEntryLaneId,
+			boolean entryDispatchEnabled,
+			long reservedCount) {
+		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+			return "车道离线，入口灯置为离线/关闭";
+		}
+		if (!entryDispatchEnabled) {
+			return "入口自动调度关闭，入口灯保持红灯";
+		}
+		if (entryOpenNow) {
+			return "该车道是当前入口开放车道，且仍有可用名额，入口灯切为绿灯";
+		}
+		if (!canReserveEntrySlot(lane, reservedCount)) {
+			return entryBlockReason(lane, reservedCount);
+		}
+		if (isBlank(activeEntryLaneId)) {
+			return "没有选出入口开放车道，入口灯保持红灯";
+		}
+		return "该车道不是当前入口开放车道，当前入口开放车道为 " + activeEntryLaneId;
+	}
+
+	private String exitSignalReason(
+			Lane lane,
+			String decisionMode,
+			boolean exitOpenNow,
+			String activeExitLaneId,
+			boolean exitDispatchEnabled) {
+		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+			return "车道离线，出口灯置为离线/关闭";
+		}
+		if (!exitDispatchEnabled) {
+			return "出口自动调度关闭，出口灯保持红灯";
+		}
+		if (exitOpenNow) {
+			return "该车道是当前出口开放车道，出口灯切为绿灯";
+		}
+		if (lane.getVehicleCount() <= 0) {
+			return "车道当前车辆数为 0，无待出场车辆，出口灯保持红灯";
+		}
+		if (isBlank(activeExitLaneId)) {
+			return "没有选出出口开放车道，出口灯保持红灯";
+		}
+		return "该车道不是当前出口开放车道，当前出口开放车道为 " + activeExitLaneId;
 	}
 
 	private String resolveLedMessage(Lane lane) {
@@ -1337,6 +1713,104 @@ public class OperationsService {
 		return resolveAndPersistActiveExitLaneId(lanes, laneOrder, referenceTime, activeEntryLaneId);
 	}
 
+	private ActiveSignal resolveAndPersistActiveSignal(
+			List<Lane> lanes,
+			List<String> laneOrder,
+			Map<String, Long> pendingCounts,
+			OffsetDateTime referenceTime) {
+		boolean entryEnabled = currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled);
+		boolean exitEnabled = currentBooleanConfig(EXIT_DISPATCH_ENABLED_KEY, defaultExitDispatchEnabled);
+		if (!entryEnabled && !exitEnabled) {
+			saveActiveSignalConfig(null, null, referenceTime);
+			return null;
+		}
+		ActiveSignal currentSignal = currentActiveSignal();
+		ActiveSignal resolvedSignal = resolveActiveSignal(lanes, laneOrder, pendingCounts, currentSignal, entryEnabled, exitEnabled);
+		saveActiveSignalConfig(
+				resolvedSignal == null ? null : resolvedSignal.laneId(),
+				resolvedSignal == null ? null : resolvedSignal.direction(),
+				referenceTime);
+		return resolvedSignal;
+	}
+
+	private ActiveSignal resolveActiveSignal(
+			List<Lane> lanes,
+			List<String> laneOrder,
+			Map<String, Long> pendingCounts,
+			ActiveSignal currentSignal,
+			boolean entryEnabled,
+			boolean exitEnabled) {
+		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
+		if (currentSignal != null && "ENTRY".equals(currentSignal.direction())) {
+			Lane currentLane = laneById(orderedLanes, currentSignal.laneId());
+			if (entryEnabled
+					&& currentLane != null
+					&& canReserveEntrySlot(currentLane, pendingCounts.getOrDefault(currentLane.getId(), 0L))) {
+				return currentSignal;
+			}
+			if (entryEnabled) {
+				String nextEntryLaneId = nextEligibleEntryLaneId(orderedLanes, currentSignal.laneId(), pendingCounts);
+				if (!isBlank(nextEntryLaneId)) {
+					return new ActiveSignal(nextEntryLaneId, "ENTRY");
+				}
+			}
+			if (exitEnabled) {
+				String nextExitLaneId = nextEligibleExitLaneId(orderedLanes, currentSignal.laneId(), null);
+				if (!isBlank(nextExitLaneId)) {
+					return new ActiveSignal(nextExitLaneId, "EXIT");
+				}
+			}
+		}
+		if (currentSignal != null && "EXIT".equals(currentSignal.direction())) {
+			Lane currentLane = laneById(orderedLanes, currentSignal.laneId());
+			if (exitEnabled && currentLane != null && canActivateLane(currentLane) && hasExitEvidence(currentLane)) {
+				return currentSignal;
+			}
+			if (exitEnabled) {
+				String nextExitLaneId = nextEligibleExitLaneId(orderedLanes, currentSignal.laneId(), null);
+				if (!isBlank(nextExitLaneId)) {
+					return new ActiveSignal(nextExitLaneId, "EXIT");
+				}
+			}
+			if (entryEnabled) {
+				String nextEntryLaneId = nextEligibleEntryLaneId(orderedLanes, currentSignal.laneId(), pendingCounts);
+				if (!isBlank(nextEntryLaneId)) {
+					return new ActiveSignal(nextEntryLaneId, "ENTRY");
+				}
+			}
+		}
+		if (entryEnabled) {
+			String entryLaneId = nextEligibleEntryLaneId(orderedLanes, null, pendingCounts);
+			if (!isBlank(entryLaneId)) {
+				return new ActiveSignal(entryLaneId, "ENTRY");
+			}
+		}
+		if (exitEnabled) {
+			String exitLaneId = nextEligibleExitLaneId(orderedLanes, null, null);
+			if (!isBlank(exitLaneId)) {
+				return new ActiveSignal(exitLaneId, "EXIT");
+			}
+		}
+		return null;
+	}
+
+	private ActiveSignal currentActiveSignal() {
+		String laneId = currentStringConfig(ACTIVE_SIGNAL_LANE_KEY, null);
+		String direction = currentStringConfig(ACTIVE_SIGNAL_DIRECTION_KEY, null);
+		if (!isBlank(laneId) && VALID_SIGNAL_DIRECTIONS.contains(direction)) {
+			return new ActiveSignal(laneId, direction);
+		}
+		String activeEntryLaneId = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
+		if (!isBlank(activeEntryLaneId)) {
+			return new ActiveSignal(activeEntryLaneId, "ENTRY");
+		}
+		String activeExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		if (!isBlank(activeExitLaneId)) {
+			return new ActiveSignal(activeExitLaneId, "EXIT");
+		}
+		return null;
+	}
+
 	private String resolveAndPersistActiveEntryLaneId(
 			List<Lane> lanes,
 			List<String> laneOrder,
@@ -1344,14 +1818,16 @@ public class OperationsService {
 			OffsetDateTime referenceTime) {
 		String currentLaneId = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
 		String resolvedLaneId = resolveActiveEntryLaneId(lanes, laneOrder, pendingCounts, currentLaneId);
-		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, resolvedLaneId, referenceTime);
+		logEntryActiveLaneSwitch(lanes, laneOrder, pendingCounts, currentLaneId, resolvedLaneId, referenceTime);
+		saveActiveEntrySignalConfig(resolvedLaneId, referenceTime);
 		return resolvedLaneId;
 	}
 
 	private String resolveAndPersistActiveExitLaneId(List<Lane> lanes, List<String> laneOrder, OffsetDateTime referenceTime, String activeEntryLaneId) {
 		String currentLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
 		String resolvedLaneId = resolveActiveExitLaneId(lanes, laneOrder, activeEntryLaneId, currentLaneId);
-		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, resolvedLaneId, referenceTime);
+		logExitActiveLaneSwitch(lanes, laneOrder, currentLaneId, resolvedLaneId, activeEntryLaneId, referenceTime);
+		saveActiveExitSignalConfig(resolvedLaneId, referenceTime);
 		return resolvedLaneId;
 	}
 
@@ -1389,77 +1865,317 @@ public class OperationsService {
 				&& lane.getCapacity() > 0;
 	}
 
-	private void advanceEntryLane(
+	private boolean hasExitEvidence(Lane lane) {
+		if (lane == null) {
+			return false;
+		}
+		if (lane.getVehicleCount() > 0) {
+			return true;
+		}
+		if (!entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(lane.getId()).isEmpty()) {
+			return true;
+		}
+		return !dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(lane.getId()).isEmpty();
+	}
+
+	private void logEntryActiveLaneSwitch(
+			List<Lane> lanes,
+			List<String> laneOrder,
+			Map<String, Long> pendingCounts,
+			String currentLaneId,
+			String resolvedLaneId,
+			OffsetDateTime referenceTime) {
+		if (Objects.equals(currentLaneId, resolvedLaneId)) {
+			return;
+		}
+		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
+		Lane previousLane = laneById(orderedLanes, currentLaneId);
+		Lane nextLane = laneById(orderedLanes, resolvedLaneId);
+		flowLog.info(
+				"节点=入口开放车道切换 event=ENTRY_ACTIVE_LANE_SWITCH previous={} previousName={} next={} nextName={} switchReason={} selectReason={} laneOrder={} at={}",
+				nullToEmpty(currentLaneId),
+				previousLane == null ? "" : previousLane.getName(),
+				nullToEmpty(resolvedLaneId),
+				nextLane == null ? "" : nextLane.getName(),
+				entrySwitchReason(previousLane, currentLaneId, pendingCounts),
+				entrySelectReason(orderedLanes, laneOrder, currentLaneId, nextLane, pendingCounts),
+				laneOrderDescription(orderedLanes, laneOrder),
+				referenceTime);
+	}
+
+	private void logExitActiveLaneSwitch(
+			List<Lane> lanes,
+			List<String> laneOrder,
+			String currentLaneId,
+			String resolvedLaneId,
+			String activeEntryLaneId,
+			OffsetDateTime referenceTime) {
+		if (Objects.equals(currentLaneId, resolvedLaneId)) {
+			return;
+		}
+		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
+		Lane previousLane = laneById(orderedLanes, currentLaneId);
+		Lane nextLane = laneById(orderedLanes, resolvedLaneId);
+		flowLog.info(
+				"节点=出口开放车道切换 event=EXIT_ACTIVE_LANE_SWITCH previous={} previousName={} next={} nextName={} activeEntryLane={} switchReason={} selectReason={} laneOrder={} at={}",
+				nullToEmpty(currentLaneId),
+				previousLane == null ? "" : previousLane.getName(),
+				nullToEmpty(resolvedLaneId),
+				nextLane == null ? "" : nextLane.getName(),
+				nullToEmpty(activeEntryLaneId),
+				exitSwitchReason(orderedLanes, previousLane, currentLaneId, activeEntryLaneId),
+				exitSelectReason(orderedLanes, laneOrder, currentLaneId, nextLane, activeEntryLaneId),
+				laneOrderDescription(orderedLanes, laneOrder),
+				referenceTime);
+	}
+
+	private String entrySwitchReason(Lane previousLane, String currentLaneId, Map<String, Long> pendingCounts) {
+		if (isBlank(currentLaneId)) {
+			return "当前没有入口开放车道，需要按入口顺序选择一条可进车车道";
+		}
+		if (previousLane == null) {
+			return "原入口开放车道 " + currentLaneId + " 不在当前车道配置中";
+		}
+		return entryBlockReason(previousLane, pendingCounts.getOrDefault(previousLane.getId(), 0L));
+	}
+
+	private String entrySelectReason(
+			List<Lane> orderedLanes,
+			List<String> laneOrder,
+			String currentLaneId,
+			Lane nextLane,
+			Map<String, Long> pendingCounts) {
+		if (nextLane == null) {
+			return "按入口顺序配置 " + laneOrderDescription(orderedLanes, laneOrder) + " 查找后，没有可开放入口的车道";
+		}
+		return "按入口顺序配置 " + laneOrderDescription(orderedLanes, laneOrder)
+				+ " 从 " + firstNonBlank(currentLaneId, "起点") + " 后查找，选择 "
+				+ nextLane.getName() + "；" + laneEntryStateSummary(nextLane, pendingCounts.getOrDefault(nextLane.getId(), 0L));
+	}
+
+	private String exitSwitchReason(List<Lane> orderedLanes, Lane previousLane, String currentLaneId, String activeEntryLaneId) {
+		if (isBlank(currentLaneId)) {
+			return "当前没有出口开放车道，需要按出口队列选择";
+		}
+		if (previousLane == null) {
+			return "原出口开放车道 " + currentLaneId + " 不在当前车道配置中";
+		}
+		if (!canActivateLane(previousLane)) {
+			return "原出口开放车道不可用：" + laneActivationBlockReason(previousLane);
+		}
+		return "当前出口车道已由人工确认、相邻车道地感交接或设备状态变化触发重新选择";
+	}
+
+	private String exitSelectReason(
+			List<Lane> orderedLanes,
+			List<String> laneOrder,
+			String currentLaneId,
+			Lane nextLane,
+			String activeEntryLaneId) {
+		if (nextLane == null) {
+			return "按入口顺序配置 " + laneOrderDescription(orderedLanes, laneOrder) + " 查找后，没有可开放出口的车道";
+		}
+		if (nextLane.getVehicleCount() > 0) {
+			return "从 " + firstNonBlank(currentLaneId, "起点") + " 后查找，选择下一条有车的 "
+					+ nextLane.getName() + "，当前车辆数=" + nextLane.getVehicleCount();
+		}
+		return "从 " + firstNonBlank(currentLaneId, "起点") + " 后查找，选择下一条有出场证据的 " + nextLane.getName();
+	}
+
+	private String entryBlockReason(Lane lane, long pendingCount) {
+		if (lane == null) {
+			return "车道不存在";
+		}
+		String activationBlockReason = laneActivationBlockReason(lane);
+		if (!isBlank(activationBlockReason)) {
+			return activationBlockReason;
+		}
+		if ("DEGRADED".equals(lane.getSensorStatus())) {
+			return "车道传感状态为 DEGRADED，通常来自尾部滞留/异常告警，系统按车道已满保护处理，入口灯转红并切换下一车道";
+		}
+		int occupied = lane.getVehicleCount() + Math.toIntExact(Math.min(Integer.MAX_VALUE, pendingCount));
+		if (occupied >= lane.getCapacity()) {
+			return "车道停满：当前车辆数 " + lane.getVehicleCount()
+					+ " + 预分配 " + pendingCount
+					+ " >= 容量 " + lane.getCapacity()
+					+ "，入口灯转红并切换下一车道";
+		}
+		return "车道不满足入口开放条件：" + laneEntryStateSummary(lane, pendingCount);
+	}
+
+	private String laneActivationBlockReason(Lane lane) {
+		if (lane == null) {
+			return "车道不存在";
+		}
+		if ("OFFLINE".equals(lane.getMode())) {
+			return "车道模式为 OFFLINE";
+		}
+		if ("OFFLINE".equals(lane.getSensorStatus())) {
+			return "设备状态为 OFFLINE";
+		}
+		if (lane.getCapacity() <= 0) {
+			return "车道容量未配置或为 0";
+		}
+		return "";
+	}
+
+	private String laneEntryStateSummary(Lane lane, long pendingCount) {
+		return "车辆数=" + lane.getVehicleCount()
+				+ "，预分配=" + pendingCount
+				+ "，容量=" + lane.getCapacity()
+				+ "，设备状态=" + nullToEmpty(lane.getSensorStatus())
+				+ "，模式=" + nullToEmpty(lane.getMode());
+	}
+
+	private String laneOrderDescription(List<Lane> orderedLanes, List<String> laneOrder) {
+		String orderedNames = orderedLanes.stream()
+				.map(lane -> lane.getName() + "(" + lane.getId() + ")")
+				.collect(Collectors.joining("->"));
+		if (laneOrder.isEmpty()) {
+			return "未单独配置，按车道编号自然顺序 " + orderedNames;
+		}
+		return "配置=" + laneOrder + "，排序结果 " + orderedNames;
+	}
+
+	private void advanceEntrySignal(
 			OffsetDateTime referenceTime,
 			String currentLaneId,
 			List<Lane> lanes,
 			List<String> laneOrder,
 			Map<String, Long> pendingCounts) {
-		saveActiveLaneConfig(
-				ACTIVE_ENTRY_LANE_KEY,
-				nextEligibleEntryLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, pendingCounts),
-				referenceTime);
+		String nextLaneId = nextEligibleEntryLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, pendingCounts);
+		logEntryActiveLaneSwitch(lanes, laneOrder, pendingCounts, currentLaneId, nextLaneId, referenceTime);
+		saveActiveEntrySignalConfig(nextLaneId, referenceTime);
 	}
 
-	private void advanceExitLane(OffsetDateTime referenceTime, String currentLaneId) {
+	private void advanceExitSignalAfterCleared(OffsetDateTime referenceTime, String currentLaneId) {
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
-		String activeEntryLaneId = resolveOpenEntryLaneId(lanes, referenceTime);
-		saveActiveLaneConfig(
-				ACTIVE_EXIT_LANE_KEY,
-				nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, activeEntryLaneId),
-				referenceTime);
+		String nextLaneId = nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, null);
+		logExitActiveLaneSwitch(lanes, laneOrder, currentLaneId, nextLaneId, null, referenceTime);
+		saveActiveExitSignalConfig(nextLaneId, referenceTime);
+	}
+
+	private void advanceExitSignalIfCurrentCleared(Lane lane, OffsetDateTime referenceTime) {
+		String activeExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		if (!lane.getId().equals(activeExitLaneId)) {
+			return;
+		}
+		if (hasExitEvidence(lane)) {
+			return;
+		}
+		advanceExitSignalAfterCleared(referenceTime, lane.getId());
 	}
 
 	private String nextEligibleEntryLaneId(List<Lane> orderedLanes, String currentLaneId, Map<String, Long> pendingCounts) {
-		boolean accept = isBlank(currentLaneId);
-		for (Lane lane : orderedLanes) {
-			if (accept && canReserveEntrySlot(lane, pendingCounts.getOrDefault(lane.getId(), 0L))) {
+		if (orderedLanes.isEmpty()) {
+			return null;
+		}
+		int currentIndex = laneIndex(orderedLanes, currentLaneId);
+		int startIndex = currentIndex >= 0 ? (currentIndex + 1) % orderedLanes.size() : 0;
+		for (int offset = 0; offset < orderedLanes.size(); offset++) {
+			Lane lane = orderedLanes.get((startIndex + offset) % orderedLanes.size());
+			if (canReserveEntrySlot(lane, pendingCounts.getOrDefault(lane.getId(), 0L))) {
 				return lane.getId();
-			}
-			if (lane.getId().equals(currentLaneId)) {
-				accept = true;
 			}
 		}
 		return null;
 	}
 
-	private String nextEligibleExitLaneId(List<Lane> orderedLanes, String currentLaneId, String activeEntryLaneId) {
-		int limitIndex = exitSearchLimitIndex(orderedLanes, activeEntryLaneId);
-		if (limitIndex < 0) {
+	private String nextEligibleExitLaneId(List<Lane> orderedLanes, String currentLaneId, String ignoredActiveEntryLaneId) {
+		if (orderedLanes.isEmpty()) {
 			return null;
 		}
-
-		String activeEntryFallback = null;
 		int currentIndex = laneIndex(orderedLanes, currentLaneId);
-		int startIndex = currentIndex >= 0 && currentIndex < limitIndex ? currentIndex + 1 : 0;
-		for (int index = startIndex; index <= limitIndex; index++) {
-			Lane lane = orderedLanes.get(index);
+		int startIndex = currentIndex >= 0 ? (currentIndex + 1) % orderedLanes.size() : 0;
+		for (int offset = 0; offset < orderedLanes.size(); offset++) {
+			Lane lane = orderedLanes.get((startIndex + offset) % orderedLanes.size());
 			if (!canActivateLane(lane)) {
 				continue;
 			}
-			if (lane.getVehicleCount() > 0) {
+			if (hasExitEvidence(lane)) {
 				return lane.getId();
 			}
-			if (lane.getId().equals(activeEntryLaneId)) {
-				activeEntryFallback = lane.getId();
-			}
 		}
-		return activeEntryFallback;
+		return null;
 	}
 
 	private boolean isEligibleCurrentExitLane(List<Lane> orderedLanes, Lane currentLane, String activeEntryLaneId) {
-		if (currentLane == null || !canActivateLane(currentLane) || currentLane.getVehicleCount() <= 0) {
-			return false;
-		}
-		int currentIndex = laneIndex(orderedLanes, currentLane.getId());
-		int limitIndex = exitSearchLimitIndex(orderedLanes, activeEntryLaneId);
-		return currentIndex >= 0 && currentIndex <= limitIndex;
+		return currentLane != null && canActivateLane(currentLane);
 	}
 
-	private int exitSearchLimitIndex(List<Lane> orderedLanes, String activeEntryLaneId) {
-		int activeEntryIndex = laneIndex(orderedLanes, activeEntryLaneId);
-		return activeEntryIndex >= 0 ? activeEntryIndex : orderedLanes.size() - 1;
+	private String nextExitHandoffLaneId(List<Lane> orderedLanes, String currentLaneId) {
+		if (orderedLanes.isEmpty()) {
+			return null;
+		}
+		int currentIndex = laneIndex(orderedLanes, currentLaneId);
+		if (currentIndex < 0) {
+			return null;
+		}
+		for (int offset = 1; offset < orderedLanes.size(); offset++) {
+			Lane lane = orderedLanes.get((currentIndex + offset) % orderedLanes.size());
+			if (canActivateLane(lane)) {
+				return lane.getId();
+			}
+		}
+		return null;
+	}
+
+	private int incrementExitHandoffCount(String fromLaneId, String toLaneId) {
+		String key = exitHandoffKey(fromLaneId, toLaneId);
+		return exitHandoffTriggerCounts.merge(key, 1, Integer::sum);
+	}
+
+	private String exitHandoffKey(String fromLaneId, String toLaneId) {
+		return firstNonBlank(fromLaneId, "") + "->" + firstNonBlank(toLaneId, "");
+	}
+
+	private void completeExitHandoff(String fromLaneId, String toLaneId, OffsetDateTime referenceTime) {
+		Lane fromLane = requireLane(fromLaneId);
+		List<DispatchTicket> openTickets = dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc(fromLane.getId());
+		List<EntryLog> activeLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(fromLane.getId());
+		int remainingCount = Stream.of(fromLane.getVehicleCount(), openTickets.size(), activeLogs.size())
+				.max(Integer::compareTo)
+				.orElse(0);
+		String reason = "相邻车道 " + toLaneId + " 出口地感连续 " + EXIT_HANDOFF_TRIGGER_THRESHOLD + " 次确认交接";
+		for (EntryLog log : activeLogs) {
+			log.setExitTime(referenceTime);
+		}
+		if (!activeLogs.isEmpty()) {
+			entryLogRepository.saveAll(activeLogs);
+		}
+		for (DispatchTicket ticket : openTickets) {
+			if (isBlank(ticket.getNotes())) {
+				ticket.setNotes(reason);
+			}
+			closeDispatchTicket(ticket, referenceTime);
+		}
+		int previousVehicleCount = fromLane.getVehicleCount();
+		fromLane.setVehicleCount(0);
+		fromLane.setCurrentPlate(null);
+		fromLane.setQueueHeadAt(null);
+		fromLane.setPriority(false);
+		fromLane.setLastActionAt(referenceTime);
+		updateQueueHeadAtForObservedCountChange(fromLane, previousVehicleCount, fromLane.getVehicleCount(), referenceTime);
+		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
+			flowLog.warn(
+					"节点=出口交接数据不一致 event=EXIT_HANDOFF_INCONSISTENT fromLane={} toLane={} remainingCount={} threshold={} observedAt={}",
+					fromLaneId,
+					toLaneId,
+					remainingCount,
+					LANE_REMAINING_CLEAR_THRESHOLD,
+					referenceTime);
+		}
+		flowLog.info(
+				"节点=出口交接完成 event=EXIT_HANDOFF_COMPLETED fromLane={} toLane={} triggerCount={} previousCount={} closedLogs={} closedTickets={} observedAt={}",
+				fromLaneId,
+				toLaneId,
+				EXIT_HANDOFF_TRIGGER_THRESHOLD,
+				previousVehicleCount,
+				activeLogs.size(),
+				openTickets.size(),
+				referenceTime);
+		saveActiveExitSignalConfig(toLaneId, referenceTime);
 	}
 
 	private int laneIndex(List<Lane> orderedLanes, String laneId) {
@@ -1528,6 +2244,10 @@ public class OperationsService {
 		}
 		if (!currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled)) {
 			log.warn("Auto enabling entry dispatch for yard capture source={} referenceTime={}", source, referenceTime);
+			flowLog.info(
+					"节点=总入口抓拍启动入口调度 event=ENTRY_DISPATCH_AUTO_START source={} at={} reason=YARD_CAPTURE",
+					source,
+					referenceTime);
 			saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		}
 		if (isBlank(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))) {
@@ -1535,7 +2255,7 @@ public class OperationsService {
 			if (isBlank(firstLaneId)) {
 				log.warn("Cannot select active entry lane for yard capture source={} referenceTime={} lanes={} laneOrder={}", source, referenceTime, lanes.size(), laneOrder);
 			}
-			saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, firstLaneId, referenceTime);
+			saveActiveEntrySignalConfig(firstLaneId, referenceTime);
 		}
 	}
 
@@ -1794,7 +2514,17 @@ public class OperationsService {
 						.configKey(configKey)
 						.updatedBy("控制台")
 						.build());
-		config.setConfigValue(configValue.trim());
+		String previousValue = config.getConfigValue();
+		String nextValue = configValue.trim();
+		if (!Objects.equals(previousValue, nextValue) && isFlowRelevantConfig(configKey)) {
+			flowLog.info(
+					"节点=调度配置变更 event=DISPATCH_CONFIG_CHANGED key={} previous={} next={} at={}",
+					configKey,
+					nullToEmpty(previousValue),
+					nextValue,
+					updatedAt);
+		}
+		config.setConfigValue(nextValue);
 		config.setUpdatedAt(updatedAt);
 		config.setUpdatedBy("控制台");
 		dispatchConfigRepository.save(config);
@@ -1811,11 +2541,77 @@ public class OperationsService {
 		if (Objects.equals(currentValue, laneId)) {
 			return;
 		}
+		flowLog.info(
+				"节点=当前开放车道变更 event=ACTIVE_LANE_CHANGED key={} previous={} next={} at={}",
+				configKey,
+				nullToEmpty(currentValue),
+				nullToEmpty(laneId),
+				updatedAt);
 		if (isBlank(laneId)) {
 			clearDispatchConfig(configKey);
 			return;
 		}
 		saveDispatchConfig(configKey, laneId, updatedAt);
+	}
+
+	private void saveActiveEntrySignalConfig(String laneId, OffsetDateTime updatedAt) {
+		clearLegacyActiveSignalConfig();
+		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, laneId, updatedAt);
+	}
+
+	private void saveActiveExitSignalConfig(String laneId, OffsetDateTime updatedAt) {
+		clearLegacyActiveSignalConfig();
+		String currentValue = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, laneId, updatedAt);
+		if (!Objects.equals(currentValue, laneId)) {
+			exitHandoffTriggerCounts.clear();
+		}
+	}
+
+	private void clearActiveSignalConfig(OffsetDateTime updatedAt) {
+		boolean changed = !isBlank(currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null))
+				|| !isBlank(currentStringConfig(ACTIVE_EXIT_LANE_KEY, null))
+				|| !isBlank(currentStringConfig(ACTIVE_SIGNAL_LANE_KEY, null))
+				|| !isBlank(currentStringConfig(ACTIVE_SIGNAL_DIRECTION_KEY, null));
+		clearLegacyActiveSignalConfig();
+		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, null, updatedAt);
+		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, null, updatedAt);
+		if (changed) {
+			exitHandoffTriggerCounts.clear();
+			flowLog.info("节点=入口出口放行游标清空 event=ACTIVE_SIGNAL_CHANGED at={}", updatedAt);
+		}
+	}
+
+	private void clearLegacyActiveSignalConfig() {
+		clearDispatchConfig(ACTIVE_SIGNAL_LANE_KEY);
+		clearDispatchConfig(ACTIVE_SIGNAL_DIRECTION_KEY);
+	}
+
+	private void saveActiveSignalConfig(String laneId, String direction, OffsetDateTime updatedAt) {
+		String normalizedDirection = direction == null ? null : direction.trim().toUpperCase(Locale.ROOT);
+		if (isBlank(laneId) || isBlank(normalizedDirection)) {
+			clearActiveSignalConfig(updatedAt);
+			return;
+		}
+		if (!VALID_SIGNAL_DIRECTIONS.contains(normalizedDirection)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "放行方向仅支持 ENTRY 或 EXIT");
+		}
+		if ("ENTRY".equals(normalizedDirection)) {
+			saveActiveEntrySignalConfig(laneId, updatedAt);
+		} else {
+			saveActiveExitSignalConfig(laneId, updatedAt);
+		}
+	}
+
+	private boolean isFlowRelevantConfig(String configKey) {
+		return ENTRY_LANE_ORDER_KEY.equals(configKey)
+				|| ENTRY_DISPATCH_ENABLED_KEY.equals(configKey)
+				|| EXIT_DISPATCH_ENABLED_KEY.equals(configKey)
+				|| ACTIVE_ENTRY_LANE_KEY.equals(configKey)
+				|| ACTIVE_EXIT_LANE_KEY.equals(configKey)
+				|| ACTIVE_SIGNAL_LANE_KEY.equals(configKey)
+				|| ACTIVE_SIGNAL_DIRECTION_KEY.equals(configKey)
+				|| ASSIGNMENT_RESERVE_MINUTES_KEY.equals(configKey);
 	}
 
 	private List<String> parseLaneOrder(String configuredOrder) {
@@ -2077,12 +2873,6 @@ public class OperationsService {
 		}
 	}
 
-	private void validateLaneMode(String mode) {
-		if (!VALID_LANE_MODES.contains(mode)) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车道模式非法");
-		}
-	}
-
 	private void validateBlacklistPayload(BlacklistPayload payload) {
 		if (!VALID_BLACKLIST_LEVELS.contains(payload.level())) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "风险等级非法");
@@ -2212,5 +3002,8 @@ public class OperationsService {
 
 	private boolean isBlank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	private record ActiveSignal(String laneId, String direction) {
 	}
 }

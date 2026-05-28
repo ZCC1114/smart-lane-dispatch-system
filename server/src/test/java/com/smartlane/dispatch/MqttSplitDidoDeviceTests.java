@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.smartlane.dispatch.device.MqttDeviceGateway;
+import com.smartlane.dispatch.dto.SignalOverrideRequest;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
@@ -73,6 +74,7 @@ class MqttSplitDidoDeviceTests {
 	void exitTriggerShouldOnlyBeHandledFromExitDidoDevice() {
 		laneRepository.save(buildLane("L08", "L08", "8号车道"));
 		operationsService.registerVehicleEntryFromDevice("L08", "苏A11111", at("2026-05-06T22:30:00+08:00"), "出租车", "SMART_CAMERA");
+		openExitSignal("L08");
 
 		ingestDidoStatus("DIDO-ENTRY-01", 0);
 		ingestDidoStatus("DIDO-ENTRY-01", 1);
@@ -91,6 +93,17 @@ class MqttSplitDidoDeviceTests {
 				.findFirst()
 				.orElseThrow()
 				.getExitTime()).isNotNull();
+	}
+
+	private void openExitSignal(String laneId) {
+		String entrySignal = operationsService.getLanes().stream()
+				.filter(lane -> laneId.equals(lane.getId()))
+				.findFirst()
+				.map(Lane::getEntrySignal)
+				.orElse("OFFLINE");
+		operationsService.overrideSignal(
+				laneId,
+				new SignalOverrideRequest(laneId, entrySignal, "GREEN", null, "测试切换出口放行游标"));
 	}
 
 	private void ingestDidoStatus(String deviceId, int inputState) {

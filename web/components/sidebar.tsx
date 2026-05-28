@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
-  Bug,
   ClipboardPenLine,
   ChevronRight,
   History,
@@ -42,7 +41,6 @@ const navItems = [
   { href: "/entries", label: "车辆流水", icon: History, visible: () => true },
   { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
   { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
-  { href: "/debug", label: "硬件调试", icon: Bug, visible: () => true },
 ];
 
 export function Sidebar() {

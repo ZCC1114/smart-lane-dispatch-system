@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.smartlane.dispatch.device.MqttDeviceGateway;
+import com.smartlane.dispatch.dto.SignalOverrideRequest;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
@@ -72,6 +73,7 @@ class MqttDidoExitTriggerTests {
 		laneRepository.save(buildLane("L08", "L08", "8号车道"));
 		operationsService.registerVehicleEntryFromDevice("L08", "苏A11111", at("2026-05-06T22:30:00+08:00"), "出租车", "SMART_CAMERA");
 		operationsService.registerVehicleEntryFromDevice("L08", "苏A22222", at("2026-05-06T22:31:00+08:00"), "出租车", "SMART_CAMERA");
+		openExitSignal("L08");
 
 		ingestDidoStatus(0, "2026-05-06T22:36:40+08:00");
 		ingestDidoStatus(1, "2026-05-06T22:36:49+08:00");
@@ -92,6 +94,7 @@ class MqttDidoExitTriggerTests {
 	void didoInitialHighStateShouldNotBeCountedAsExit() {
 		laneRepository.save(buildLane("L08", "L08", "8号车道"));
 		operationsService.registerVehicleEntryFromDevice("L08", "苏A33333", at("2026-05-06T22:30:00+08:00"), "出租车", "SMART_CAMERA");
+		openExitSignal("L08");
 
 		ingestDidoStatus(1, "2026-05-06T22:36:49+08:00");
 
@@ -99,6 +102,17 @@ class MqttDidoExitTriggerTests {
 		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L08"))
 				.extracting(EntryLog::getPlate)
 				.containsExactly("苏A33333");
+	}
+
+	private void openExitSignal(String laneId) {
+		String entrySignal = operationsService.getLanes().stream()
+				.filter(lane -> laneId.equals(lane.getId()))
+				.findFirst()
+				.map(Lane::getEntrySignal)
+				.orElse("OFFLINE");
+		operationsService.overrideSignal(
+				laneId,
+				new SignalOverrideRequest(laneId, entrySignal, "GREEN", null, "测试切换出口放行游标"));
 	}
 
 	private void ingestDidoStatus(int inputState, String observedAt) {
