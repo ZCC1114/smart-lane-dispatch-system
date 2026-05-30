@@ -79,18 +79,17 @@ function sampleSegments() {
 
 function businessListSegments() {
   return [
-    { id: nextId++, text: "苏B00001 驶入 1车道", fontSize: 14, color: "RED" },
-    { id: nextId++, text: "苏B00002 驶入 2车道", fontSize: 14, color: "RED" },
-    { id: nextId++, text: "苏B00003 驶入 3车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "苏B00001 请驶入 1车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "苏B00002 请驶入 2车道", fontSize: 14, color: "RED" },
+    { id: nextId++, text: "苏B00003 请驶入 3车道", fontSize: 14, color: "RED" },
     { id: nextId++, text: "请按照车道指示进行停车等待！", fontSize: 11, color: "RED" },
   ];
 }
 
 function businessHighlightSegments() {
   return [
-    { id: nextId++, text: "苏B00001", fontSize: 22, color: "RED" },
-    { id: nextId++, text: "驶入", fontSize: 12, color: "RED" },
-    { id: nextId++, text: "1车道", fontSize: 22, color: "RED" },
+    { id: nextId++, text: "苏B00001", fontSize: 28, color: "RED" },
+    { id: nextId++, text: "请驶入1车道", fontSize: 22, color: "RED" },
     { id: nextId++, text: "请按照车道指示进行停车等待！", fontSize: 11, color: "RED" },
   ];
 }
@@ -102,7 +101,7 @@ function laneText(ticket: DispatchTicket) {
 }
 
 function guideText(ticket: DispatchTicket) {
-  return `${ticket.plate}-${laneText(ticket)}`;
+  return `${ticket.plate} 请驶入 ${laneText(ticket)}`;
 }
 
 function uniqueTickets(tickets: DispatchTicket[]) {
@@ -250,7 +249,8 @@ export default function LedTestPage() {
     setResult(null);
     setStatus("idle");
     try {
-      const payloadSegments = sendMode === "dynamic" ? validSegments.slice(0, BUSINESS_ROWS) : validSegments;
+      const dynamicRows = Math.max(1, Math.min(BUSINESS_ROWS, validSegments.length));
+      const payloadSegments = sendMode === "dynamic" ? validSegments.slice(0, dynamicRows) : validSegments;
       const requestPayload: LedSendRequest = {
         ip: ip.trim(),
         port: Number.parseInt(port, 10) || 5005,
@@ -259,7 +259,7 @@ export default function LedTestPage() {
         screenWidth: Number.parseInt(screenWidth, 10) || SITE_SCREEN_WIDTH,
         screenHeight: Number.parseInt(screenHeight, 10) || SITE_SCREEN_HEIGHT,
         columns: sendMode === "dynamic" ? 1 : Number.parseInt(columns, 10) || SITE_COLUMNS,
-        rows: sendMode === "dynamic" ? BUSINESS_ROWS : Number.parseInt(rows, 10) || SITE_ROWS,
+        rows: sendMode === "dynamic" ? dynamicRows : Number.parseInt(rows, 10) || SITE_ROWS,
         segments: payloadSegments.map((s) => ({
           text: s.text.trim(),
           fontSize: s.fontSize,
@@ -286,7 +286,8 @@ export default function LedTestPage() {
   }
 
   const previewColumns = sendMode === "dynamic" ? 1 : Math.max(1, Number.parseInt(columns, 10) || SITE_COLUMNS);
-  const previewRows = sendMode === "dynamic" ? BUSINESS_ROWS : Math.max(1, Number.parseInt(rows, 10) || SITE_ROWS);
+  const dynamicPreviewRows = Math.max(1, Math.min(BUSINESS_ROWS, segments.filter((s) => s.text.trim()).length || BUSINESS_ROWS));
+  const previewRows = sendMode === "dynamic" ? dynamicPreviewRows : Math.max(1, Number.parseInt(rows, 10) || SITE_ROWS);
   const previewCapacity = previewColumns * previewRows;
 
   return (
@@ -456,7 +457,7 @@ export default function LedTestPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100"
               >
                 <Monitor className="size-3.5" />
-                高亮引导 1x4
+                高亮引导 2+底
               </button>
               <button
                 type="button"

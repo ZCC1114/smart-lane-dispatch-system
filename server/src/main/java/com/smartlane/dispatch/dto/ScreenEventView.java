@@ -10,6 +10,8 @@ public record ScreenEventView(
 		OffsetDateTime occurredAt,
 		String sourceId,
 		String sourceName,
+		boolean acknowledged,
+		OffsetDateTime acknowledgedAt,
 		boolean handled,
 		OffsetDateTime handledAt) {
 }

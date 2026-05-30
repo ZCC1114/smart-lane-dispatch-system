@@ -1,12 +1,12 @@
 ARG DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
 
-FROM ${DOCKER_IMAGE_REGISTRY}/node:23-alpine AS deps
+FROM ${DOCKER_IMAGE_REGISTRY}/node:22-slim AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM ${DOCKER_IMAGE_REGISTRY}/node:23-alpine AS build
+FROM ${DOCKER_IMAGE_REGISTRY}/node:22-slim AS build
 WORKDIR /app
 
 ARG NEXT_PUBLIC_API_BASE_URL=/api
@@ -23,16 +23,18 @@ ENV NEXT_PUBLIC_MQTT_WS_HOST=${NEXT_PUBLIC_MQTT_WS_HOST}
 ENV NEXT_PUBLIC_MQTT_USERNAME=${NEXT_PUBLIC_MQTT_USERNAME}
 ENV NEXT_PUBLIC_MQTT_PASSWORD=${NEXT_PUBLIC_MQTT_PASSWORD}
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 RUN npm run build -- --webpack
 
-FROM ${DOCKER_IMAGE_REGISTRY}/node:23-alpine AS runtime
+FROM ${DOCKER_IMAGE_REGISTRY}/node:22-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 
 COPY --from=build /app/public ./public

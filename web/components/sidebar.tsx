@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
-import { canAccessBlacklist, canDispatch } from "@/lib/permissions";
+import { canDispatch } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 function normalizeProfileText(value?: string) {
@@ -36,11 +36,11 @@ function normalizeProfileText(value?: string) {
 
 const navItems = [
   { href: "/", label: "车道总览", icon: LayoutDashboard, visible: () => true },
-  { href: "/signals", label: "信号灯控制", icon: Settings2, visible: canDispatch },
-  { href: "/blacklist", label: "黑名单管理", icon: Shield, visible: canAccessBlacklist },
   { href: "/entries", label: "车辆流水", icon: History, visible: () => true },
-  { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
   { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
+  { href: "/signals", label: "信号灯控制", icon: Settings2, visible: () => true },
+  { href: "/blacklist", label: "黑名单管理", icon: Shield, visible: () => true },
+  { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
 ];
 
 export function Sidebar() {
@@ -64,7 +64,9 @@ export function Sidebar() {
       <div className="flex h-16 items-center border-b border-[var(--border-soft)] px-6">
         <Activity className="mr-3 size-6 text-blue-500" />
         <div>
-          <h1 className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">出租车智能调度系统</h1>
+          <h1 className="max-w-[178px] text-[13px] font-semibold leading-5 tracking-tight text-[var(--text-primary)]">
+            无锡硕放机场出租车蓄车池排队管理系统
+          </h1>
           <p className="mt-0.5 text-xs text-[var(--text-muted)]">调度控制台</p>
         </div>
       </div>

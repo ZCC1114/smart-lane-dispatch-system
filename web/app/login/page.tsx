@@ -49,7 +49,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-6 flex size-16 items-center justify-center rounded-sm bg-blue-600 shadow-lg shadow-blue-500/20">
             <Activity className="size-10 text-white" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">出租车智能调度系统</h1>
+          <h1 className="text-2xl font-bold leading-9 tracking-tight text-slate-900">无锡硕放机场出租车蓄车池排队管理系统</h1>
           <p className="mt-2 text-sm text-slate-500">登录后进入调度控制台</p>
         </div>
 

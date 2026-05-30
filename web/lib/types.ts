@@ -62,8 +62,10 @@ export interface LaneSnapshot {
 export interface EntryLog {
   id: string;
   plate: string;
-  laneId: string;
-  laneName: string;
+  laneId: string | null;
+  laneName: string | null;
+  assignedLaneId: string | null;
+  assignedLaneName: string | null;
   entryTime: string;
   exitTime: string | null;
   vehicleType: string;
@@ -82,6 +84,8 @@ export interface ScreenEvent {
   occurredAt: string;
   sourceId: string | null;
   sourceName: string | null;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
   handled: boolean;
   handledAt: string | null;
 }

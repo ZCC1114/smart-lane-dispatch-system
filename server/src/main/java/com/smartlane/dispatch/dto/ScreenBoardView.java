@@ -21,8 +21,10 @@ public record ScreenBoardView(
 		List<DispatchTicket> recentDispatches,
 		List<EntryLog> recentEntryLogs,
 		Map<String, List<DispatchTicket>> laneVehicles,
+		List<ScreenEventView> pendingEvents,
 		List<ScreenEventView> events,
-		List<Lane> lanes) {
+		List<Lane> lanes,
+		OffsetDateTime lastDailyResetAt) {
 
 	public static ScreenBoardView from(
 			DispatchBoardView board,
@@ -30,8 +32,10 @@ public record ScreenBoardView(
 			List<DispatchTicket> recentDispatches,
 			List<DispatchTicket> guideAssignments,
 			Map<String, List<DispatchTicket>> laneVehicles,
+			List<ScreenEventView> pendingEvents,
 			List<ScreenEventView> events,
-			List<Lane> lanes) {
+			List<Lane> lanes,
+			OffsetDateTime lastDailyResetAt) {
 		return new ScreenBoardView(
 				board.generatedAt(),
 				board.activeEntryLaneId(),
@@ -45,7 +49,9 @@ public record ScreenBoardView(
 				recentDispatches,
 				recentEntryLogs,
 				laneVehicles,
+				pendingEvents,
 				events,
-				lanes);
+				lanes,
+				lastDailyResetAt);
 	}
 }

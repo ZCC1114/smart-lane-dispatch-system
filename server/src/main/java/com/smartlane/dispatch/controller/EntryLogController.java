@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.smartlane.dispatch.entity.EntryLog;
+import com.smartlane.dispatch.dto.EntryLogView;
 import com.smartlane.dispatch.service.OperationsService;
 
 @RestController
@@ -23,7 +23,7 @@ public class EntryLogController {
 	}
 
 	@GetMapping
-	public List<EntryLog> getLogs(
+	public List<EntryLogView> getLogs(
 			@RequestParam(required = false) String query,
 			@RequestParam(required = false) String status,
 			@RequestParam(required = false) String laneId,

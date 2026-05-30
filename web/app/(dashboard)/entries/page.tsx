@@ -29,7 +29,6 @@ function todayRange() {
 export default function EntriesPage() {
   const defaultTimeRange = todayRange();
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
   const [laneId, setLaneId] = useState("");
   const [entryTimeFrom, setEntryTimeFrom] = useState(defaultTimeRange.from);
   const [entryTimeTo, setEntryTimeTo] = useState(defaultTimeRange.to);
@@ -37,7 +36,6 @@ export default function EntriesPage() {
   const [pageSize, setPageSize] = useState(10);
   const [filters, setFilters] = useState({
     query: "",
-    status: "",
     laneId: "",
     entryTimeFrom: defaultTimeRange.from,
     entryTimeTo: defaultTimeRange.to,
@@ -53,7 +51,6 @@ export default function EntriesPage() {
     queryFn: () =>
       api.getLogs({
         query: filters.query,
-        status: filters.status,
         laneId: filters.laneId,
         entryTimeFrom: toApiDateTime(filters.entryTimeFrom),
         entryTimeTo: toApiDateTime(filters.entryTimeTo),
@@ -65,12 +62,6 @@ export default function EntriesPage() {
   const currentPage = Math.min(page, pageCount);
   const pageStartIndex = (currentPage - 1) * pageSize;
   const pagedLogs = logs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const statusOptions = [
-    { value: "", label: "全部状态" },
-    { value: "PASSED", label: "正常放行" },
-    { value: "REJECTED", label: "拦截拒绝" },
-    { value: "MANUAL", label: "人工处理" },
-  ];
   const laneOptions = [
     { value: "", label: "全部车道" },
     ...lanes.map((lane) => ({
@@ -82,7 +73,7 @@ export default function EntriesPage() {
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPage(1);
-    setFilters({ query, status, laneId, entryTimeFrom, entryTimeTo });
+    setFilters({ query, laneId, entryTimeFrom, entryTimeTo });
   }
 
   return (
@@ -97,12 +88,14 @@ export default function EntriesPage() {
               downloadCsv(
                 "traffic-logs.csv",
                 [
-                  ["序号", "车牌号码", "车道编号", "车道名称", "入场时间", "离场时间", "车辆类型", "通行状态", "操作员"],
+                  ["序号", "车牌号码", "实际入道车道编号", "实际入道车道", "分配车道编号", "分配车道", "入场时间", "离场时间", "车辆类型", "通行状态", "操作员"],
                   ...logs.map((log, index) => [
                     String(index + 1),
                     log.plate,
-                    log.laneId,
-                    log.laneName,
+                    log.laneId ?? "",
+                    log.laneName ?? "",
+                    log.assignedLaneId ?? "",
+                    log.assignedLaneName ?? "",
                     log.entryTime,
                     log.exitTime ?? "",
                     log.vehicleType,
@@ -119,18 +112,16 @@ export default function EntriesPage() {
           </button>
         }
       >
-        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_180px_220px_220px_120px]">
+        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_220px_220px_220px_120px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               className="w-full rounded-sm border border-[var(--border-soft)] bg-white py-3 pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
-              placeholder="搜索车牌或车道"
+              placeholder="模糊搜索车牌号"
             />
           </label>
-
-          <FilterSelect value={status} options={statusOptions} onChange={setStatus} />
 
           <FilterSelect value={laneId} options={laneOptions} onChange={setLaneId} />
 
@@ -163,10 +154,11 @@ export default function EntriesPage() {
 
         <div className="mt-5 rounded-sm border border-[var(--border-soft)]">
           <div className="overflow-hidden rounded-t-sm">
-            <div className="grid grid-cols-[0.45fr_0.95fr_0.95fr_1fr_1fr_0.7fr_0.8fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
+            <div className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
               <span>序号</span>
               <span>车牌号码</span>
               <span>实际入道车道</span>
+              <span>分配车道</span>
               <span>入场时间</span>
               <span>出场时间</span>
               <span>车辆类型</span>
@@ -174,12 +166,16 @@ export default function EntriesPage() {
             </div>
             <div className="divide-y divide-[var(--border-soft)]">
               {pagedLogs.map((log, index) => (
-                <div key={log.id} className="grid grid-cols-[0.45fr_0.95fr_0.95fr_1fr_1fr_0.7fr_0.8fr] gap-3 px-5 py-4 text-sm">
+                <div key={log.id} className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr] gap-3 px-5 py-4 text-sm">
                   <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                   <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(log.plate) || log.plate}</span>
                   <span className="inline-flex items-center gap-2 text-[var(--text-primary)]">
-                    <span>{log.laneName}</span>
-                    <span className="text-xs text-[var(--text-secondary)]">{log.laneId}</span>
+                    <span>{log.laneName ?? "--"}</span>
+                    {log.laneId ? <span className="text-xs text-[var(--text-secondary)]">{log.laneId}</span> : null}
+                  </span>
+                  <span className="inline-flex items-center gap-2 text-[var(--text-primary)]">
+                    <span>{log.assignedLaneName ?? "--"}</span>
+                    {log.assignedLaneId ? <span className="text-xs text-[var(--text-secondary)]">{log.assignedLaneId}</span> : null}
                   </span>
                   <span className="text-[var(--text-secondary)]">{formatDateTime(log.entryTime)}</span>
                   <span className="text-[var(--text-secondary)]">{log.exitTime ? formatDateTime(log.exitTime) : "在场"}</span>

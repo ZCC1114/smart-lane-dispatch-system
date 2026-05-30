@@ -70,9 +70,9 @@ class LedGuideDisplayWriterTests {
 		return new LedGuideDisplayFrame(
 				LedGuideDisplayFrame.Mode.LIST,
 				List.of(
-						new LedGuideDisplayFrame.Line("苏B11111 驶入 1车道", 10, "RED"),
-						new LedGuideDisplayFrame.Line("苏B22222 驶入 11车道", 10, "RED"),
-						new LedGuideDisplayFrame.Line("苏B33333 驶入 3车道", 10, "RED"),
+						new LedGuideDisplayFrame.Line("苏B11111 请驶入 1车道", 10, "RED"),
+						new LedGuideDisplayFrame.Line("苏B22222 请驶入 11车道", 10, "RED"),
+						new LedGuideDisplayFrame.Line("苏B33333 请驶入 3车道", 10, "RED"),
 						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 10, "RED")));
 	}
 }

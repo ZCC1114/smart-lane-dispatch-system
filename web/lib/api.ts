@@ -56,7 +56,12 @@ async function request<T>(path: string, init?: RequestInit) {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  const responseText = await response.text();
+  if (!responseText) {
+    return undefined as T;
+  }
+
+  return JSON.parse(responseText) as T;
 }
 
 function normalizeErrorMessage(errorText: string, status: number) {
@@ -103,11 +108,22 @@ export const api = {
   getLanes() {
     return request<LaneSnapshot[]>("/lanes");
   },
-  getLogs(filters: { query?: string; status?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string }) {
+  getLogs(filters: { query?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string }) {
     return request<EntryLog[]>(`/logs${buildQuery(filters)}`);
   },
   getScreenEvents(filters: { type?: string; occurredAtFrom?: string; occurredAtTo?: string; includeHandled?: string }) {
     return request<ScreenEvent[]>(`/screen/events${buildQuery(filters)}`);
+  },
+  handleScreenEvent(id: string) {
+    return request<void>(`/screen/events/${encodeURIComponent(id)}/handle`, {
+      method: "POST",
+    });
+  },
+  handleScreenEvents(ids: string[]) {
+    return request<void>("/screen/events/handle", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    });
   },
   getBlacklist(query?: string) {
     return request<BlacklistRecord[]>(`/blacklist${buildQuery({ query })}`);

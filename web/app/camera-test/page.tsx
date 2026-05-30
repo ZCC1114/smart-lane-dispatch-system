@@ -109,6 +109,10 @@ function isHeartbeatPayload(payload: string) {
   return mqttCommandFromPayload(payload).includes("heartbeat");
 }
 
+function isPassCountPayload(payload: string) {
+  return mqttCommandFromPayload(payload) === "passcount";
+}
+
 function deviceIdFromTopic(topic: string) {
   const match = /^\/device\/([^/]+)\/(?:get|update|will)$/.exec(topic);
   return match?.[1] ?? "";
@@ -260,6 +264,9 @@ export default function CameraTestPage() {
         return;
       }
       if (isHeartbeatPayload(payloadText)) {
+        return;
+      }
+      if (isPassCountPayload(payloadText)) {
         return;
       }
       addLog({

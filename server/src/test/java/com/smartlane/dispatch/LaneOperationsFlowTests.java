@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartlane.dispatch.dto.YardEntryPayload;
+import com.smartlane.dispatch.dto.ScreenEventView;
 import com.smartlane.dispatch.entity.BlacklistRecord;
 import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.DispatchTicket;
@@ -32,6 +33,8 @@ import com.smartlane.dispatch.repository.DispatchConfigRepository;
 import com.smartlane.dispatch.repository.DispatchTicketRepository;
 import com.smartlane.dispatch.repository.EntryLogRepository;
 import com.smartlane.dispatch.repository.LaneRepository;
+import com.smartlane.dispatch.repository.ScreenAcknowledgedEventRepository;
+import com.smartlane.dispatch.repository.ScreenHandledEventRepository;
 import com.smartlane.dispatch.service.LaneRuntimeStateService;
 import com.smartlane.dispatch.service.OperationsService;
 
@@ -70,6 +73,12 @@ class LaneOperationsFlowTests {
 	private DispatchConfigRepository dispatchConfigRepository;
 
 	@Autowired
+	private ScreenAcknowledgedEventRepository screenAcknowledgedEventRepository;
+
+	@Autowired
+	private ScreenHandledEventRepository screenHandledEventRepository;
+
+	@Autowired
 	private OperationsService operationsService;
 
 	@Autowired
@@ -81,6 +90,8 @@ class LaneOperationsFlowTests {
 		dispatchTicketRepository.deleteAll();
 		blacklistRecordRepository.deleteAll();
 		dispatchConfigRepository.deleteAll();
+		screenAcknowledgedEventRepository.deleteAll();
+		screenHandledEventRepository.deleteAll();
 		laneRepository.deleteAll();
 		laneRuntimeStateService.clearAll();
 	}
@@ -123,10 +134,33 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].status").value("FULL"))
 			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("RED"))
 			.andExpect(jsonPath("$[?(@.id=='L02')].entrySignal").value("GREEN"));
-		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
+	}
+
+	@Test
+	void duplicateYardEntryPlateShouldNotIncreaseReservedCount() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(3);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A12345", "2026-04-20T08:00:00+08:00");
+		postYardEntry(token, "沪A12345", "2026-04-20T08:00:03+08:00");
+
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc())
 				.singleElement()
-				.extracting(EntryLog::getPlate, EntryLog::getLaneId, EntryLog::getExitTime)
-				.containsExactly("沪A12345", "L01", null);
+				.extracting(DispatchTicket::getPlate, DispatchTicket::getAssignedLaneId, DispatchTicket::getStatus)
+				.containsExactly("沪A12345", "L01", "ASSIGNED");
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
+
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
+			.andExpect(jsonPath("$[?(@.id=='L01')].reservedCount").value(1))
+			.andExpect(jsonPath("$[?(@.id=='L01')].availableSlots").value(2));
 	}
 
 	@Test
@@ -148,10 +182,7 @@ class LaneOperationsFlowTests {
 		assertThat(operationsService.getDispatchBoard().waitingAssignments())
 				.extracting(DispatchTicket::getPlate)
 				.contains("苏B2T119");
-		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
-				.singleElement()
-				.extracting(EntryLog::getPlate, EntryLog::getLaneId, EntryLog::getExitTime)
-				.containsExactly("苏B2T119", "L01", null);
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
 	}
 
 	@Test
@@ -791,6 +822,63 @@ class LaneOperationsFlowTests {
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[?(@.type=='wrong_lane' && @.plate=='沪A30001')]").exists());
+	}
+
+	@Test
+	void screenEventsShouldRequireAcknowledgementBeforeLeftBoardAndSupportBatchHandling() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		blacklistRecordRepository.save(BlacklistRecord.builder()
+				.id("BL-ACK-1")
+				.plate("沪A44556")
+				.reason("重点关注车辆")
+				.level("HIGH")
+				.effectiveDate(now())
+				.operator("ops")
+				.active(true)
+				.build());
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A44556", "2026-04-20T08:00:00+08:00");
+
+		List<ScreenEventView> pendingEvents = operationsService.getPendingScreenBoardEvents(10);
+		ScreenEventView event = pendingEvents.stream()
+				.filter(item -> "blacklist".equals(item.type()) && "沪A44556".equals(item.plate()))
+				.findFirst()
+				.orElseThrow();
+		assertThat(event.acknowledged()).isFalse();
+		assertThat(operationsService.getScreenBoardEvents(10))
+				.noneMatch(item -> event.id().equals(item.id()));
+
+		mockMvc.perform(post("/api/screen/events/" + event.id() + "/acknowledge"))
+			.andExpect(status().isOk());
+
+		assertThat(operationsService.getPendingScreenBoardEvents(10))
+				.noneMatch(item -> event.id().equals(item.id()));
+		assertThat(operationsService.getScreenBoardEvents(10))
+				.anySatisfy(item -> {
+					assertThat(item.id()).isEqualTo(event.id());
+					assertThat(item.acknowledged()).isTrue();
+					assertThat(item.handled()).isFalse();
+				});
+
+		mockMvc.perform(post("/api/screen/events/handle")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "ids": ["%s"]
+					}
+					""".formatted(event.id())))
+			.andExpect(status().isOk());
+
+		assertThat(operationsService.getScreenBoardEvents(10))
+				.noneMatch(item -> event.id().equals(item.id()));
+		assertThat(operationsService.getScreenEvents(null, null, null, true))
+				.filteredOn(item -> event.id().equals(item.id()))
+				.singleElement()
+				.satisfies(item -> {
+					assertThat(item.acknowledged()).isTrue();
+					assertThat(item.handled()).isTrue();
+				});
 	}
 
 	@Test

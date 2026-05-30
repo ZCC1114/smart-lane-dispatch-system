@@ -6,5 +6,8 @@ public interface LedGuideDynamicAreaClient {
 
 	void write(LedGuideDynamicAreaRequest request) throws Exception;
 
+	default void delete(LedGuideDynamicAreaRequest request, int... areaIds) throws Exception {
+	}
+
 	void disconnect();
 }

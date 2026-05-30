@@ -1,6 +1,7 @@
 package com.smartlane.dispatch.device.led;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
@@ -35,25 +36,26 @@ class LedGuideDynamicAreaWriterTests {
 	}
 
 	@Test
-	void writesHighlightDynamicAreasWithImportantRowsFirst() throws Exception {
+	void writesHighlightDynamicAreasAcrossTwoGuideRowsAndPrompt() throws Exception {
 		LedGuideDisplayFrame frame = frame();
 
 		LedGuideDisplayWriteResult result = writer.write(frame, false);
 
 		assertThat(result.success()).isTrue();
 		ArgumentCaptor<LedGuideDynamicAreaRequest> requestCaptor = ArgumentCaptor.captor();
-		verify(client, org.mockito.Mockito.times(4)).write(requestCaptor.capture());
-		assertThat(requestCaptor.getAllValues())
-				.extracting(LedGuideDynamicAreaRequest::areaId)
-				.containsExactly(2, 4, 3, 5);
-		assertThat(requestCaptor.getAllValues())
-				.extracting(LedGuideDynamicAreaRequest::y)
-				.containsExactly(0, 48, 24, 72);
-		assertThat(requestCaptor.getAllValues())
-				.extracting(LedGuideDynamicAreaRequest::height)
-				.containsExactly(24, 24, 24, 24);
-		assertThat(requestCaptor.getAllValues().get(1).text()).isEqualTo("11车道");
-		assertThat(requestCaptor.getAllValues().get(1).fontSize()).isEqualTo(22);
+		verify(client).write(requestCaptor.capture());
+		verify(client).delete(any(), aryEq(new int[] { 3, 4, 5 }));
+		LedGuideDynamicAreaRequest request = requestCaptor.getValue();
+		assertThat(request.areaId()).isEqualTo(2);
+		assertThat(request.x()).isZero();
+		assertThat(request.y()).isZero();
+		assertThat(request.width()).isEqualTo(192);
+		assertThat(request.height()).isEqualTo(96);
+		assertThat(request.hasImage()).isTrue();
+		assertThat(request.image().getWidth()).isEqualTo(192);
+		assertThat(request.image().getHeight()).isEqualTo(96);
+		assertThat(request.cacheKey()).contains("苏B11111");
+		assertThat(request.cacheKey()).contains("请驶入11车道");
 	}
 
 	@Test
@@ -67,7 +69,8 @@ class LedGuideDynamicAreaWriterTests {
 
 		assertThat(skipped.success()).isTrue();
 		assertThat(forced.success()).isTrue();
-		verify(client, org.mockito.Mockito.times(4)).write(any());
+		verify(client).write(any());
+		verify(client).delete(any(), aryEq(new int[] { 3, 4, 5 }));
 	}
 
 	@Test
@@ -94,16 +97,15 @@ class LedGuideDynamicAreaWriterTests {
 		LedGuideDisplayWriteResult retry = writer.write(frame, false);
 
 		assertThat(retry.success()).isTrue();
-		verify(client, org.mockito.Mockito.times(4)).write(any());
+		verify(client).write(any());
 	}
 
 	private LedGuideDisplayFrame frame() {
 		return new LedGuideDisplayFrame(
 				LedGuideDisplayFrame.Mode.HIGHLIGHT,
 				List.of(
-						new LedGuideDisplayFrame.Line("苏B11111", 22, "RED"),
-						new LedGuideDisplayFrame.Line("驶入", 12, "RED"),
-						new LedGuideDisplayFrame.Line("11车道", 22, "RED"),
-						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 11, "RED")));
+						new LedGuideDisplayFrame.Line("苏B11111", 28, "RED", 3),
+						new LedGuideDisplayFrame.Line("请驶入11车道", 22, "RED", 3),
+						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 11, "RED", 2)));
 	}
 }

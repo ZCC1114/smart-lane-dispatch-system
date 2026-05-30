@@ -60,13 +60,12 @@ public class LedTestController {
 		int screenWidth = positive(request.screenWidth(), 192);
 		int screenHeight = positive(request.screenHeight(), 96);
 		int rowCount = Math.min(4, request.segments().size());
-		int rowHeight = Math.max(1, screenHeight / rowCount);
+		int layoutRows = positive(request.rows(), rowCount);
 		long startNanos = System.nanoTime();
 		try {
 			for (int index = 0; index < rowCount; index++) {
 				LedTestRequest.Segment segment = request.segments().get(index);
-				int y = index * rowHeight;
-				int height = index == rowCount - 1 ? screenHeight - y : rowHeight;
+				DynamicCell cell = dynamicCell(index, rowCount, layoutRows, screenHeight);
 				dynamicAreaClient.write(new LedGuideDynamicAreaRequest(
 						request.ip().trim(),
 						positive(request.port(), 5005),
@@ -75,9 +74,9 @@ public class LedTestController {
 						screenHeight,
 						index,
 						0,
-						y,
+						cell.y(),
 						screenWidth,
-						Math.max(1, height),
+						cell.height(),
 						segment.text(),
 						segment.fontSize(),
 						segment.color()));
@@ -95,6 +94,22 @@ public class LedTestController {
 		return value > 0 ? value : defaultValue;
 	}
 
+	private DynamicCell dynamicCell(int index, int rowCount, int layoutRows, int screenHeight) {
+		if (rowCount == 3 && layoutRows == 4) {
+			int guideHeight = Math.max(1, (int) Math.round(screenHeight * 3.0 / 8.0));
+			int promptY = guideHeight * 2;
+			return switch (index) {
+				case 0 -> new DynamicCell(0, guideHeight);
+				case 1 -> new DynamicCell(guideHeight, guideHeight);
+				default -> new DynamicCell(promptY, Math.max(1, screenHeight - promptY));
+			};
+		}
+		int rowHeight = Math.max(1, screenHeight / rowCount);
+		int y = index * rowHeight;
+		int height = index == rowCount - 1 ? screenHeight - y : rowHeight;
+		return new DynamicCell(y, Math.max(1, height));
+	}
+
 	public record LedTestRequest(
 		String ip,
 		int port,
@@ -108,4 +123,6 @@ public class LedTestController {
 	) {
 		public record Segment(String text, int fontSize, String color) {}
 	}
+
+	private record DynamicCell(int y, int height) {}
 }

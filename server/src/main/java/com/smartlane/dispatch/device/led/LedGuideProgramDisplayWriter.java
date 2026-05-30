@@ -16,19 +16,23 @@ public class LedGuideProgramDisplayWriter {
 	}
 
 	public LedGuideDisplayWriteResult write(LedGuideDisplayFrame frame) {
-		String result = ledScreenService.sendText(
+		int screenWidth = positive(properties.getScreenWidth(), 192);
+		int screenHeight = positive(properties.getScreenHeight(), 96);
+		String result = ledScreenService.sendTextRegions(
 				properties.getIp(),
 				properties.getPort(),
 				properties.getGeneration(),
 				properties.getModel(),
-				frame.toSegments(),
-				properties.getScreenWidth(),
-				properties.getScreenHeight(),
-				1,
-				LedGuideDisplayFrame.ROW_COUNT);
+				frame.toRegions(screenWidth, screenHeight),
+				screenWidth,
+				screenHeight);
 		if (result.startsWith("发送成功")) {
 			return LedGuideDisplayWriteResult.success("完整节目发送成功: " + result);
 		}
 		return LedGuideDisplayWriteResult.failure("完整节目发送失败: " + result);
+	}
+
+	private int positive(int value, int defaultValue) {
+		return value > 0 ? value : defaultValue;
 	}
 }

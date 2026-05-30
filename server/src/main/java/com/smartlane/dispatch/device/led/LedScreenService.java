@@ -104,6 +104,32 @@ public class LedScreenService {
 		}
 	}
 
+	public String sendTextRegions(
+			String ip,
+			int port,
+			String generation,
+			String model,
+			List<LedGuideDisplayFrame.Region> regions,
+			int screenWidth,
+			int screenHeight) {
+		if (regions == null || regions.isEmpty()) {
+			return "错误：文本内容不能为空";
+		}
+		if (ip == null || ip.trim().isEmpty()) {
+			return "错误：IP 地址不能为空";
+		}
+
+		try {
+			if ("5".equals(generation)) {
+				return sendTextRegionsG5(ip, port, regions, screenWidth, screenHeight);
+			}
+			return sendTextRegionsG6(ip, port, model, regions, screenWidth, screenHeight);
+		} catch (Exception e) {
+			log.error("LED send failed", e);
+			return "发送失败: " + e.getMessage();
+		}
+	}
+
 	private String sendTextG5(
 			String ip,
 			int port,
@@ -147,6 +173,48 @@ public class LedScreenService {
 			return "发送成功（五代）: 屏幕尺寸 " + profile.getWidth()
 					+ "x" + profile.getHeight() + "，布局 " + layout.columns()
 					+ "列x" + layout.rows() + "行，共 " + count + " 段文本";
+		} finally {
+			screen.disconnect();
+		}
+	}
+
+	private String sendTextRegionsG5(
+			String ip,
+			int port,
+			List<LedGuideDisplayFrame.Region> regions,
+			int screenWidth,
+			int screenHeight) throws Exception {
+		if (!bx5Initialized) {
+			return "错误：五代 SDK 未初始化";
+		}
+
+		Bx5GScreenClient screen = new Bx5GScreenClient("LedTest");
+		try {
+			if (!screen.connect(ip, port)) {
+				return "错误：连接显示屏失败（五代）";
+			}
+
+			var profile = resolveG5Profile(screen.getProfile(), screenWidth, screenHeight);
+			var program = new onbon.bx05.file.ProgramBxFile(0, profile);
+			for (LedGuideDisplayFrame.Region region : regions) {
+				Cell cell = boundedCell(region, profile.getWidth(), profile.getHeight());
+				var area = new onbon.bx05.area.TextCaptionBxArea(
+						cell.x(), cell.y(), cell.width(), cell.height(), profile);
+				var page = new onbon.bx05.area.page.TextBxPage(region.text());
+				page.setBackground(Color.BLACK);
+				page.setForeground(parseColor(region.color()));
+				page.setFont(LedFonts.textFont(Font.BOLD,
+						clamp(region.fontSize(), 8, MAX_FONT_SIZE)));
+				page.setHorizontalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
+				page.setVerticalAlignment(onbon.bx05.utils.TextBinary.Alignment.CENTER);
+				page.setDisplayStyle(onbon.bx05.utils.DisplayStyleFactory.getStyle(2));
+				area.addPage(page);
+				program.addArea(area);
+			}
+
+			screen.writeProgram(program);
+			return "发送成功（五代）: 屏幕尺寸 " + profile.getWidth()
+					+ "x" + profile.getHeight() + "，自定义区域 " + regions.size() + " 段文本";
 		} finally {
 			screen.disconnect();
 		}
@@ -203,6 +271,51 @@ public class LedScreenService {
 		}
 	}
 
+	private String sendTextRegionsG6(
+			String ip,
+			int port,
+			String model,
+			List<LedGuideDisplayFrame.Region> regions,
+			int screenWidth,
+			int screenHeight) throws Exception {
+		if (!bx6Initialized) {
+			return "错误：六代 SDK 未初始化";
+		}
+
+		String resolvedModel = normalizeG6Model(model);
+		Bx6Card card = createG6Card(resolvedModel);
+		Bx6GScreenClient screen = new Bx6GScreenClient("LedTest", card);
+		try {
+			if (!screen.connect(ip, port)) {
+				return "错误：连接显示屏失败（六代）";
+			}
+
+			var profile = resolveG6Profile(screen.getProfile(), card, screenWidth, screenHeight);
+			var program = new onbon.bx06.file.ProgramBxFile(0, profile);
+			for (LedGuideDisplayFrame.Region region : regions) {
+				Cell cell = boundedCell(region, profile.getWidth(), profile.getHeight());
+				var area = new onbon.bx06.area.TextCaptionBxArea(
+						cell.x(), cell.y(), cell.width(), cell.height(), profile);
+				var page = new onbon.bx06.area.page.TextBxPage(region.text());
+				page.setBackground(Color.BLACK);
+				page.setForeground(parseColor(region.color()));
+				page.setFont(LedFonts.textFont(Font.BOLD,
+						clamp(region.fontSize(), 8, MAX_FONT_SIZE)));
+				page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
+				page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
+				page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
+				area.addPage(page);
+				program.addArea(area);
+			}
+
+			screen.writeProgram(program);
+			return "发送成功（六代 " + resolvedModel + "）: 屏幕尺寸 " + profile.getWidth()
+					+ "x" + profile.getHeight() + "，自定义区域 " + regions.size() + " 段文本";
+		} finally {
+			screen.disconnect();
+		}
+	}
+
 	private Color parseColor(String color) {
 		if (color == null || color.isBlank()) {
 			return Color.RED;
@@ -240,6 +353,14 @@ public class LedScreenService {
 
 	private int clamp(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	private Cell boundedCell(LedGuideDisplayFrame.Region region, int screenWidth, int screenHeight) {
+		int x = clamp(region.x(), 0, Math.max(0, screenWidth - 1));
+		int y = clamp(region.y(), 0, Math.max(0, screenHeight - 1));
+		int width = Math.max(1, Math.min(region.width(), screenWidth - x));
+		int height = Math.max(1, Math.min(region.height(), screenHeight - y));
+		return new Cell(x, y, width, height);
 	}
 
 	private Bx6Card createG6Card(String model) {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,6 +96,26 @@ class MqttSplitDidoDeviceTests {
 				.getExitTime()).isNotNull();
 	}
 
+	@Test
+	void didoSignalMismatchShouldClearCachedSyncStateForRepublish() {
+		laneRepository.save(buildLane("L08", "L08", "8号车道"));
+		Lane target = operationsService.getLanes().stream()
+				.filter(lane -> "L08".equals(lane.getId()))
+				.findFirst()
+				.orElseThrow();
+		String oppositeRelayValue = "GREEN".equals(target.getEntrySignal()) ? "100000" : "110000";
+		@SuppressWarnings("unchecked")
+		Map<String, String> syncStates = (Map<String, String>) ReflectionTestUtils.getField(
+				mqttDeviceGateway,
+				"lastDidoDeviceSyncStates");
+		assertThat(syncStates).isNotNull();
+		syncStates.put("DIDO-ENTRY-01", "cached");
+
+		ingestDidoStatus("DIDO-ENTRY-01", oppositeRelayValue, 0);
+
+		assertThat(syncStates).doesNotContainKey("DIDO-ENTRY-01");
+	}
+
 	private void openExitSignal(String laneId) {
 		String entrySignal = operationsService.getLanes().stream()
 				.filter(lane -> laneId.equals(lane.getId()))
@@ -107,13 +128,17 @@ class MqttSplitDidoDeviceTests {
 	}
 
 	private void ingestDidoStatus(String deviceId, int inputState) {
+		ingestDidoStatus(deviceId, "110000", inputState);
+	}
+
+	private void ingestDidoStatus(String deviceId, String relayValue, int inputState) {
 		String payload = """
 				{
 				  "ID": "%s",
-				  "A08": 110000,
+				  "A08": %s,
 				  "B08": %d
 				}
-				""".formatted(deviceId, inputState);
+				""".formatted(deviceId, relayValue, inputState);
 		ReflectionTestUtils.invokeMethod(
 				mqttDeviceGateway,
 				"handleRawMqttMessage",

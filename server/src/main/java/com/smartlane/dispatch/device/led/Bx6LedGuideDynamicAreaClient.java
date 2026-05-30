@@ -3,6 +3,7 @@ package com.smartlane.dispatch.device.led;
 import java.awt.Color;
 import java.awt.Font;
 import java.io.IOException;
+import java.util.Arrays;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import onbon.bx06.Bx6GScreen.Result;
 import onbon.bx06.Bx6GScreenClient;
 import onbon.bx06.Bx6GScreenProfile;
 import onbon.bx06.area.DynamicBxArea;
+import onbon.bx06.area.page.ImageBxPage;
 import onbon.bx06.area.page.TextBxPage;
 import onbon.bx06.cmd.dyn.DynamicBxAreaRule;
 import onbon.bx06.message.global.ACK;
@@ -74,6 +76,21 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 	}
 
 	@Override
+	public void delete(LedGuideDynamicAreaRequest request, int... areaIds) throws Exception {
+		if (areaIds == null || areaIds.length == 0) {
+			return;
+		}
+		synchronized (monitor) {
+			ensureConnected(request);
+			Result<ACK> result = screen.deleteDynamic(areaIds);
+			if (result == null || !result.isOK()) {
+				throw new IOException("动态区删除未返回成功: " + result);
+			}
+			log.info("LED guide dynamic areas deleted: {}", Arrays.toString(areaIds));
+		}
+	}
+
+	@Override
 	@PreDestroy
 	public void disconnect() {
 		synchronized (monitor) {
@@ -112,14 +129,21 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 		rule.setTimeout(0);
 
 		DynamicBxArea area = new DynamicBxArea(request.x(), request.y(), request.width(), request.height(), profile);
-		TextBxPage page = new TextBxPage(displayText(request.text()));
-		page.setBackground(Color.BLACK);
-		page.setForeground(parseColor(request.color()));
-		page.setFont(LedFonts.textFont(Font.BOLD, clamp(request.fontSize(), 8, MAX_FONT_SIZE)));
-		page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
-		page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
-		page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
-		area.addPage(page);
+		if (request.hasImage()) {
+			ImageBxPage page = new ImageBxPage();
+			page.addImage(request.image());
+			page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
+			area.addPage(page);
+		} else {
+			TextBxPage page = new TextBxPage(displayText(request.text()));
+			page.setBackground(Color.BLACK);
+			page.setForeground(parseColor(request.color()));
+			page.setFont(LedFonts.textFont(Font.BOLD, clamp(request.fontSize(), 8, MAX_FONT_SIZE)));
+			page.setHorizontalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
+			page.setVerticalAlignment(onbon.bx06.utils.TextBinary.Alignment.CENTER);
+			page.setDisplayStyle(onbon.bx06.utils.DisplayStyleFactory.getStyle(2));
+			area.addPage(page);
+		}
 
 		Result<ACK> result = screen.writeDynamic(rule, area);
 		if (result == null || !result.isOK()) {

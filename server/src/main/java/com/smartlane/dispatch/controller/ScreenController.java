@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.smartlane.dispatch.dto.DispatchRuntimeRequest;
+import com.smartlane.dispatch.dto.DispatchConfigView;
 import com.smartlane.dispatch.dto.ScreenBoardView;
+import com.smartlane.dispatch.dto.ScreenEventIdsRequest;
 import com.smartlane.dispatch.dto.ScreenEventView;
 import com.smartlane.dispatch.dto.ScreenLaneEntrySimulationRequest;
 import com.smartlane.dispatch.dto.ScreenLaneExitSimulationRequest;
@@ -43,8 +45,10 @@ public class ScreenController {
 				operationsService.getRecentYardEntries(10),
 				operationsService.getRecentGuideAssignments(12),
 				operationsService.getScreenLaneVehicles(),
+				operationsService.getPendingScreenBoardEvents(10),
 				operationsService.getScreenBoardEvents(10),
-				operationsService.getLanes());
+				operationsService.getLanes(),
+				operationsService.getLastDailyResetAt());
 	}
 
 	@GetMapping("/events")
@@ -59,6 +63,26 @@ public class ScreenController {
 	@PostMapping("/events/{eventId}/handle")
 	public void handleEvent(@PathVariable String eventId) {
 		operationsService.handleScreenEvent(eventId);
+	}
+
+	@PostMapping("/events/handle")
+	public void handleEvents(@Valid @org.springframework.web.bind.annotation.RequestBody ScreenEventIdsRequest request) {
+		operationsService.handleScreenEvents(request.ids());
+	}
+
+	@PostMapping("/events/{eventId}/acknowledge")
+	public void acknowledgeEvent(@PathVariable String eventId) {
+		operationsService.acknowledgeScreenEvent(eventId);
+	}
+
+	@PostMapping("/events/acknowledge")
+	public void acknowledgeEvents(@Valid @org.springframework.web.bind.annotation.RequestBody ScreenEventIdsRequest request) {
+		operationsService.acknowledgeScreenEvents(request.ids());
+	}
+
+	@PostMapping("/daily-reset")
+	public DispatchConfigView dailyReset() {
+		return operationsService.dailyReset();
 	}
 
 	@PostMapping("/simulate/yard-entry")

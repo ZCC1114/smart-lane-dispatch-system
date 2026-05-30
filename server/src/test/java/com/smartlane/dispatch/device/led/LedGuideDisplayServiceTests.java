@@ -56,15 +56,15 @@ class LedGuideDisplayServiceTests {
 		List<Segment> segments = service.buildGuideSegments();
 
 		assertThat(segments).extracting(Segment::text).containsExactly(
-				"苏B11111 驶入 1车道",
-				"苏B22222 驶入 11车道",
-				"苏B33333 驶入 3车道",
+				"苏B11111 请驶入 1车道",
+				"苏B22222 请驶入 11车道",
+				"苏B33333 请驶入 3车道",
 				PROMPT_TEXT);
 		assertThat(segments).extracting(Segment::fontSize).containsExactly(14, 14, 14, 11);
 	}
 
 	@Test
-	void highlightsLatestAssignedYardEntryAcrossTopThreeRows() {
+	void highlightsLatestAssignedYardEntryAcrossTwoGuideRowsWithPrompt() {
 		when(operationsService.getRecentYardEntries(1)).thenReturn(List.of(
 				ticket("DSP-1", "苏B11111", "11号车道")));
 
@@ -73,10 +73,9 @@ class LedGuideDisplayServiceTests {
 
 		assertThat(segments).extracting(Segment::text).containsExactly(
 				"苏B11111",
-				"驶入",
-				"11车道",
+				"请驶入11车道",
 				PROMPT_TEXT);
-		assertThat(segments).extracting(Segment::fontSize).containsExactly(22, 12, 22, 11);
+		assertThat(segments).extracting(Segment::fontSize).containsExactly(28, 22, 11);
 	}
 
 	@Test
@@ -90,7 +89,7 @@ class LedGuideDisplayServiceTests {
 		List<Segment> segments = service.buildGuideSegments();
 
 		assertThat(segments).extracting(Segment::text).containsExactly(
-				"苏B11111 驶入 1车道",
+				"苏B11111 请驶入 1车道",
 				"",
 				"",
 				PROMPT_TEXT);

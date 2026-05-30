@@ -3,8 +3,8 @@ import { AppProviders } from "@/providers/app-providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "出租车智能调度系统",
-  description: "出租车蓄车道与放行调度管理系统",
+  title: "无锡硕放机场出租车蓄车池排队管理系统",
+  description: "无锡硕放机场出租车蓄车池排队与放行调度管理系统",
 };
 
 export default function RootLayout({

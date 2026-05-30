@@ -30,9 +30,12 @@ public class LedGuideDisplayService {
 
 	private static final Logger log = LoggerFactory.getLogger(LedGuideDisplayService.class);
 	private static final Pattern FIRST_NUMBER = Pattern.compile("\\d+");
-	private static final int DISPLAY_ROWS = 4;
+	private static final int LIST_ROWS = 4;
 	private static final int LIST_LIMIT = 3;
-	private static final String ACTION_TEXT = "驶入";
+	private static final int HIGHLIGHT_TOTAL_UNITS = 8;
+	private static final int HIGHLIGHT_GUIDE_LINE_UNITS = 3;
+	private static final int HIGHLIGHT_PROMPT_LINE_UNITS = 2;
+	private static final String ACTION_TEXT = "请驶入";
 
 	private final LedGuideDisplayProperties properties;
 	private final OperationsService operationsService;
@@ -143,15 +146,14 @@ public class LedGuideDisplayService {
 		return new LedGuideDisplayFrame(
 				LedGuideDisplayFrame.Mode.HIGHLIGHT,
 				List.of(
-						new LedGuideDisplayFrame.Line(state.plate(), highlightPlateFontSize(), properties.getColor()),
-						new LedGuideDisplayFrame.Line(ACTION_TEXT, highlightActionFontSize(), properties.getColor()),
-						new LedGuideDisplayFrame.Line(state.laneText(), highlightLaneFontSize(), properties.getColor()),
-						new LedGuideDisplayFrame.Line(promptText(), promptFontSize(), properties.getColor())));
+						new LedGuideDisplayFrame.Line(state.plate(), highlightPlateFontSize(), properties.getColor(), HIGHLIGHT_GUIDE_LINE_UNITS),
+						new LedGuideDisplayFrame.Line(ACTION_TEXT + state.laneText(), highlightInstructionFontSize(), properties.getColor(), HIGHLIGHT_GUIDE_LINE_UNITS),
+						new LedGuideDisplayFrame.Line(promptText(), promptFontSize(), properties.getColor(), HIGHLIGHT_PROMPT_LINE_UNITS)));
 	}
 
 	private LedGuideDisplayFrame buildListFrame() {
 		List<DispatchTicket> tickets = operationsService.getRecentGuideAssignments(LIST_LIMIT);
-		List<LedGuideDisplayFrame.Line> rows = new ArrayList<>(DISPLAY_ROWS);
+		List<LedGuideDisplayFrame.Line> rows = new ArrayList<>(LIST_ROWS);
 		for (int index = 0; index < LIST_LIMIT; index++) {
 			String text = index < tickets.size() ? guideText(tickets.get(index)) : "";
 			rows.add(new LedGuideDisplayFrame.Line(text, listFontSize(), properties.getColor()));
@@ -210,15 +212,11 @@ public class LedGuideDisplayService {
 	}
 
 	private int highlightPlateFontSize() {
-		return scaledFontSize(22, 0.95);
+		return scaledFontSizeForHeightUnits(28, 0.8, HIGHLIGHT_GUIDE_LINE_UNITS, HIGHLIGHT_TOTAL_UNITS);
 	}
 
-	private int highlightActionFontSize() {
-		return scaledFontSize(12, 0.65);
-	}
-
-	private int highlightLaneFontSize() {
-		return scaledFontSize(22, 0.95);
+	private int highlightInstructionFontSize() {
+		return scaledFontSizeForHeightUnits(22, 0.7, HIGHLIGHT_GUIDE_LINE_UNITS, HIGHLIGHT_TOTAL_UNITS);
 	}
 
 	private int promptFontSize() {
@@ -226,10 +224,24 @@ public class LedGuideDisplayService {
 	}
 
 	private int scaledFontSize(int baseSizeAt192x96, double maxRowRatio) {
+		return scaledFontSize(baseSizeAt192x96, maxRowRatio, LIST_ROWS);
+	}
+
+	private int scaledFontSize(int baseSizeAt192x96, double maxRowRatio, int rowCount) {
 		int screenWidth = properties.getScreenWidth() > 0 ? properties.getScreenWidth() : 192;
 		int screenHeight = properties.getScreenHeight() > 0 ? properties.getScreenHeight() : 96;
 		double scale = Math.max(1.0, Math.min(screenWidth / 192.0, screenHeight / 96.0));
-		int rowHeight = Math.max(1, screenHeight / DISPLAY_ROWS);
+		int rowHeight = Math.max(1, screenHeight / Math.max(1, rowCount));
+		int size = (int) Math.round(baseSizeAt192x96 * scale);
+		int maxSize = Math.max(8, (int) Math.floor(rowHeight * maxRowRatio));
+		return Math.max(8, Math.min(size, maxSize));
+	}
+
+	private int scaledFontSizeForHeightUnits(int baseSizeAt192x96, double maxRowRatio, int rowUnits, int totalUnits) {
+		int screenWidth = properties.getScreenWidth() > 0 ? properties.getScreenWidth() : 192;
+		int screenHeight = properties.getScreenHeight() > 0 ? properties.getScreenHeight() : 96;
+		double scale = Math.max(1.0, Math.min(screenWidth / 192.0, screenHeight / 96.0));
+		int rowHeight = Math.max(1, (int) Math.round((double) screenHeight * rowUnits / Math.max(1, totalUnits)));
 		int size = (int) Math.round(baseSizeAt192x96 * scale);
 		int maxSize = Math.max(8, (int) Math.floor(rowHeight * maxRowRatio));
 		return Math.max(8, Math.min(size, maxSize));

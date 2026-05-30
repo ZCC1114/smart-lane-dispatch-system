@@ -36,6 +36,7 @@ import com.smartlane.dispatch.dto.DispatchBoardView;
 import com.smartlane.dispatch.dto.DispatchConfigRequest;
 import com.smartlane.dispatch.dto.DispatchConfigView;
 import com.smartlane.dispatch.dto.DispatchRuntimeRequest;
+import com.smartlane.dispatch.dto.EntryLogView;
 import com.smartlane.dispatch.dto.LaneSensorPayload;
 import com.smartlane.dispatch.dto.ManualDispatchRequest;
 import com.smartlane.dispatch.dto.RelayControlRequest;
@@ -49,12 +50,14 @@ import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
+import com.smartlane.dispatch.entity.ScreenAcknowledgedEvent;
 import com.smartlane.dispatch.entity.ScreenHandledEvent;
 import com.smartlane.dispatch.repository.BlacklistRecordRepository;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
 import com.smartlane.dispatch.repository.DispatchTicketRepository;
 import com.smartlane.dispatch.repository.EntryLogRepository;
 import com.smartlane.dispatch.repository.LaneRepository;
+import com.smartlane.dispatch.repository.ScreenAcknowledgedEventRepository;
 import com.smartlane.dispatch.repository.ScreenHandledEventRepository;
 
 import jakarta.annotation.PostConstruct;
@@ -108,6 +111,7 @@ public class OperationsService {
 	private final DashboardCacheService dashboardCacheService;
 	private final LaneDeviceGateway laneDeviceGateway;
 	private final LaneRuntimeStateService laneRuntimeStateService;
+	private final ScreenAcknowledgedEventRepository screenAcknowledgedEventRepository;
 	private final ScreenHandledEventRepository screenHandledEventRepository;
 	private final List<String> defaultEntryLaneOrder;
 	private final boolean defaultEntryDispatchEnabled;
@@ -127,6 +131,7 @@ public class OperationsService {
 			DashboardCacheService dashboardCacheService,
 			LaneDeviceGateway laneDeviceGateway,
 			LaneRuntimeStateService laneRuntimeStateService,
+			ScreenAcknowledgedEventRepository screenAcknowledgedEventRepository,
 			ScreenHandledEventRepository screenHandledEventRepository,
 			@Value("${app.dispatch.entry-lane-order:}") String entryLaneOrder,
 			@Value("${app.dispatch.entry-enabled-default:false}") boolean entryDispatchEnabled,
@@ -142,6 +147,7 @@ public class OperationsService {
 		this.dashboardCacheService = dashboardCacheService;
 		this.laneDeviceGateway = laneDeviceGateway;
 		this.laneRuntimeStateService = laneRuntimeStateService;
+		this.screenAcknowledgedEventRepository = screenAcknowledgedEventRepository;
 		this.screenHandledEventRepository = screenHandledEventRepository;
 		this.defaultEntryLaneOrder = parseLaneOrder(entryLaneOrder);
 		this.defaultEntryDispatchEnabled = entryDispatchEnabled;
@@ -173,6 +179,10 @@ public class OperationsService {
 		return refreshLaneRuntime(now());
 	}
 
+	public List<Lane> getLaneSignalTargets() {
+		return laneRepository.findAllByOrderByCodeAsc();
+	}
+
 	@Transactional
 	public DispatchBoardView getDispatchBoard() {
 		OffsetDateTime referenceTime = now();
@@ -187,16 +197,20 @@ public class OperationsService {
 		return resolveOpenEntryLaneId(lanes, resolvedTime);
 	}
 
+	@Transactional
 	public List<ScreenEventView> getScreenEvents() {
 		return getScreenEvents(null, null, null);
 	}
 
+	@Transactional
 	public List<ScreenEventView> getScreenEvents(String type, OffsetDateTime occurredAtFrom, OffsetDateTime occurredAtTo) {
 		return getScreenEvents(type, occurredAtFrom, occurredAtTo, false);
 	}
 
+	@Transactional
 	public List<ScreenEventView> getScreenEvents(String type, OffsetDateTime occurredAtFrom, OffsetDateTime occurredAtTo, boolean includeHandled) {
 		OffsetDateTime referenceTime = now();
+		expireStaleDispatchTickets(referenceTime);
 		OffsetDateTime currentCycleStart = includeHandled ? null : currentDailyResetAt();
 		List<DispatchTicket> tickets = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc();
 		List<ScreenEventView> events = new ArrayList<>();
@@ -253,12 +267,14 @@ public class OperationsService {
 			}
 		}
 
+		Map<String, OffsetDateTime> acknowledgedEventTimes = screenAcknowledgedEventRepository.findAll().stream()
+				.collect(Collectors.toMap(ScreenAcknowledgedEvent::getId, ScreenAcknowledgedEvent::getAcknowledgedAt, (first, second) -> first));
 		Map<String, OffsetDateTime> handledEventTimes = screenHandledEventRepository.findAll().stream()
 				.collect(Collectors.toMap(ScreenHandledEvent::getId, ScreenHandledEvent::getHandledAt, (first, second) -> first));
 		Set<String> handledEventIds = handledEventTimes.keySet();
 
 		return events.stream()
-				.map(event -> withHandledState(event, handledEventTimes.get(event.id())))
+				.map(event -> withEventState(event, acknowledgedEventTimes.get(event.id()), handledEventTimes.get(event.id())))
 				.filter(event -> includeHandled || !handledEventIds.contains(event.id()))
 				.filter(event -> isBlank(type) || type.equalsIgnoreCase(event.type()))
 				.filter(event -> occurredAtFrom == null || event.occurredAt() == null || !event.occurredAt().isBefore(occurredAtFrom))
@@ -295,12 +311,26 @@ public class OperationsService {
 				.toList();
 	}
 
+	@Transactional
 	public List<ScreenEventView> getScreenBoardEvents(int perTypeLimit) {
 		int limit = Math.max(1, perTypeLimit);
 		OffsetDateTime currentCycleStart = currentDailyResetAt();
 		Map<String, Integer> typeCounts = new HashMap<>();
-		return getScreenEvents(null, null, null, true).stream()
+		return getScreenEvents(null, null, null, false).stream()
 				.filter(event -> currentCycleStart == null || event.occurredAt() == null || !event.occurredAt().isBefore(currentCycleStart))
+				.filter(ScreenEventView::acknowledged)
+				.filter(event -> typeCounts.merge(event.type(), 1, Integer::sum) <= limit)
+				.toList();
+	}
+
+	@Transactional
+	public List<ScreenEventView> getPendingScreenBoardEvents(int perTypeLimit) {
+		int limit = Math.max(1, perTypeLimit);
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		Map<String, Integer> typeCounts = new HashMap<>();
+		return getScreenEvents(null, null, null, false).stream()
+				.filter(event -> currentCycleStart == null || event.occurredAt() == null || !event.occurredAt().isBefore(currentCycleStart))
+				.filter(event -> !event.acknowledged())
 				.filter(event -> typeCounts.merge(event.type(), 1, Integer::sum) <= limit)
 				.toList();
 	}
@@ -316,12 +346,55 @@ public class OperationsService {
 
 	@Transactional
 	public void handleScreenEvent(String eventId) {
-		if (!isBlank(eventId)) {
-			screenHandledEventRepository.findById(eventId).orElseGet(() -> screenHandledEventRepository.save(ScreenHandledEvent.builder()
-					.id(eventId)
-					.handledAt(now())
-					.operator("大屏")
-					.build()));
+		handleScreenEvents(eventId == null ? List.of() : List.of(eventId));
+	}
+
+	@Transactional
+	public void handleScreenEvents(List<String> eventIds) {
+		if (eventIds == null || eventIds.isEmpty()) {
+			return;
+		}
+		OffsetDateTime referenceTime = now();
+		boolean changed = false;
+		for (String eventId : normalizedEventIds(eventIds)) {
+			if (!screenHandledEventRepository.existsById(eventId)) {
+				screenHandledEventRepository.save(ScreenHandledEvent.builder()
+						.id(eventId)
+						.handledAt(referenceTime)
+						.operator("大屏")
+						.build());
+				changed = true;
+			}
+		}
+		if (changed) {
+			invalidateRuntimeViews("screen_events_handled");
+		}
+	}
+
+	@Transactional
+	public void acknowledgeScreenEvent(String eventId) {
+		acknowledgeScreenEvents(eventId == null ? List.of() : List.of(eventId));
+	}
+
+	@Transactional
+	public void acknowledgeScreenEvents(List<String> eventIds) {
+		if (eventIds == null || eventIds.isEmpty()) {
+			return;
+		}
+		OffsetDateTime referenceTime = now();
+		boolean changed = false;
+		for (String eventId : normalizedEventIds(eventIds)) {
+			if (!screenAcknowledgedEventRepository.existsById(eventId)) {
+				screenAcknowledgedEventRepository.save(ScreenAcknowledgedEvent.builder()
+						.id(eventId)
+						.acknowledgedAt(referenceTime)
+						.operator("大屏")
+						.build());
+				changed = true;
+			}
+		}
+		if (changed) {
+			invalidateRuntimeViews("screen_events_acknowledged");
 		}
 	}
 
@@ -333,6 +406,19 @@ public class OperationsService {
 				currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null),
 				currentStringConfig(ACTIVE_EXIT_LANE_KEY, null),
 				currentAssignmentReserveMinutes());
+	}
+
+	public OffsetDateTime getLastDailyResetAt() {
+		String value = currentStringConfig(LAST_DAILY_RESET_AT_KEY, null);
+		if (isBlank(value)) {
+			return null;
+		}
+		try {
+			OffsetDateTime resetAt = OffsetDateTime.parse(value.trim());
+			return resetAt.isAfter(now().plusMinutes(1)) ? null : resetAt;
+		} catch (RuntimeException ignored) {
+			return null;
+		}
 	}
 
 	@Transactional
@@ -434,19 +520,15 @@ public class OperationsService {
 		return getDispatchConfig();
 	}
 
-	public List<EntryLog> getLogs(String query, String status, String laneId, OffsetDateTime entryTimeFrom, OffsetDateTime entryTimeTo) {
+	public List<EntryLogView> getLogs(String query, String status, String laneId, OffsetDateTime entryTimeFrom, OffsetDateTime entryTimeTo) {
+		List<DispatchTicket> tickets = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc();
 		return entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
-				.filter(log -> isBlank(query)
-						|| containsIgnoreCase(log.getId(), query)
-						|| containsIgnoreCase(log.getPlate(), query)
-						|| containsIgnoreCase(log.getLaneId(), query)
-						|| containsIgnoreCase(log.getLaneName(), query)
-						|| containsIgnoreCase(log.getSource(), query)
-						|| containsIgnoreCase(log.getOperator(), query))
+				.filter(log -> isBlank(query) || containsIgnoreCase(log.getPlate(), query))
 				.filter(log -> isBlank(status) || status.equalsIgnoreCase(log.getStatus()))
 				.filter(log -> isBlank(laneId) || laneId.equalsIgnoreCase(log.getLaneId()))
 				.filter(log -> entryTimeFrom == null || !log.getEntryTime().isBefore(entryTimeFrom))
 				.filter(log -> entryTimeTo == null || !log.getEntryTime().isAfter(entryTimeTo))
+				.map(log -> EntryLogView.from(log, findDispatchTicketForLog(log, tickets)))
 				.toList();
 	}
 
@@ -700,6 +782,20 @@ public class OperationsService {
 		}
 
 		expireStaleDispatchTickets(capturedAt);
+		DispatchTicket duplicateOpenTicket = findLatestOpenTicketByPlate(normalizedPlate);
+		if (duplicateOpenTicket != null) {
+			flowLog.info(
+					"节点=总入口重复抓拍忽略 event=YARD_ENTRY_DUPLICATE_IGNORED plate={} plateColor={} source={} capturedAt={} existingTicketId={} existingStatus={} assignedLane={} actualLane={} reason=OPEN_TICKET_EXISTS",
+					normalizedPlate,
+					payload.plateColor(),
+					normalizedSource,
+					capturedAt,
+					duplicateOpenTicket.getId(),
+					duplicateOpenTicket.getStatus(),
+					nullToEmpty(duplicateOpenTicket.getAssignedLaneId()),
+					nullToEmpty(duplicateOpenTicket.getActualLaneId()));
+			return duplicateOpenTicket;
+		}
 
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
@@ -758,23 +854,15 @@ public class OperationsService {
 			ticket.setStatus("ASSIGNED");
 			ticket.setNotes("大屏指引前往 " + targetLane.getName());
 			dispatchTicketRepository.save(ticket);
-			entryLogRepository.save(newEntryLog(
-					ticket.getPlate(),
-					targetLane,
-					ticket.getVehicleType(),
-					"PASSED",
-					ticket.getSource(),
-					ticket.getOperator(),
-					capturedAt));
 			log.info(
-					"Yard entry assigned plate={} ticketId={} laneId={} laneName={} capturedAt={} entryLogCreated=true",
+					"Yard entry assigned plate={} ticketId={} laneId={} laneName={} capturedAt={} entryLogCreated=false",
 					ticket.getPlate(),
 					ticket.getId(),
 					targetLane.getId(),
 					targetLane.getName(),
 					capturedAt);
 			flowLog.info(
-					"节点=总入口分配车道 event=YARD_ENTRY_ASSIGNED plate={} ticketId={} laneId={} laneName={} capturedAt={} pendingForLane={} vehicleCount={} capacity={} entryLogCreated=true",
+					"节点=总入口分配车道 event=YARD_ENTRY_ASSIGNED plate={} ticketId={} laneId={} laneName={} capturedAt={} pendingForLane={} vehicleCount={} capacity={} entryLogCreated=false",
 					ticket.getPlate(),
 					ticket.getId(),
 					targetLane.getId(),
@@ -1319,6 +1407,7 @@ public class OperationsService {
 	}
 
 	private DispatchBoardView buildDispatchBoard(OffsetDateTime referenceTime, List<Lane> lanes) {
+		expireStaleDispatchTickets(referenceTime);
 		recoverActiveYardAssignmentsFromEntryLogs(referenceTime);
 		List<DispatchTicket> activeTickets = dispatchTicketRepository.findByClosedAtIsNullOrderByYardEntryTimeAsc();
 		List<DispatchTicket> waitingAssignments = activeTickets.stream()
@@ -1395,8 +1484,10 @@ public class OperationsService {
 	}
 
 	private void recoverActiveYardAssignmentsFromEntryLogs(OffsetDateTime referenceTime) {
+		OffsetDateTime recoverAfter = referenceTime.minusMinutes(currentAssignmentReserveMinutes());
 		List<EntryLog> activeYardLogs = entryLogRepository.findByExitTimeIsNullOrderByEntryTimeAsc().stream()
 				.filter(log -> "ALPR_YARD".equalsIgnoreCase(log.getSource()))
+				.filter(log -> log.getEntryTime() != null && log.getEntryTime().isAfter(recoverAfter))
 				.sorted(Comparator.comparing(EntryLog::getEntryTime, Comparator.nullsLast(Comparator.reverseOrder())))
 				.limit(12)
 				.toList();
@@ -2220,6 +2311,7 @@ public class OperationsService {
 			ticket.setStatus("EXPIRED");
 			ticket.setClosedAt(referenceTime);
 			ticket.setNotes("总入口入场后 " + reserveMinutes + " 分钟内未被任何车道入口摄像头识别，生成未进车道告警并释放预分配");
+			closeProvisionalEntryLogForExpiredTicket(ticket, referenceTime);
 			log.warn(
 					"Yard entry assignment expired plate={} ticketId={} assignedLane={} yardEntryTime={} referenceTime={} reserveMinutes={}",
 					ticket.getPlate(),
@@ -2790,6 +2882,45 @@ public class OperationsService {
 				|| (ticket.getYardEntryTime() != null && ticket.getYardEntryTime().isEqual(log.getEntryTime()));
 	}
 
+	private DispatchTicket findDispatchTicketForLog(EntryLog log, List<DispatchTicket> tickets) {
+		if (log == null || isBlank(log.getPlate())) {
+			return null;
+		}
+		String plate = normalizePlate(log.getPlate());
+		List<DispatchTicket> plateTickets = tickets.stream()
+				.filter(ticket -> plate.equals(normalizePlate(ticket.getPlate())))
+				.toList();
+
+		DispatchTicket exactTimeMatch = plateTickets.stream()
+				.filter(ticket -> entryLogTimeMatchesTicket(ticket, log))
+				.findFirst()
+				.orElse(null);
+		if (exactTimeMatch != null) {
+			return exactTimeMatch;
+		}
+
+		return plateTickets.stream()
+				.filter(ticket -> entryLogLaneMatchesTicket(ticket, log))
+				.filter(ticket -> entryLogFallsWithinTicketWindow(ticket, log))
+				.findFirst()
+				.orElse(null);
+	}
+
+	private boolean entryLogLaneMatchesTicket(DispatchTicket ticket, EntryLog log) {
+		String ticketLaneId = firstNonBlank(ticket.getActualLaneId(), ticket.getAssignedLaneId());
+		String ticketLaneName = firstNonBlank(ticket.getActualLaneName(), ticket.getAssignedLaneName());
+		return (!isBlank(ticketLaneId) && ticketLaneId.equalsIgnoreCase(log.getLaneId()))
+				|| (!isBlank(ticketLaneName) && ticketLaneName.equalsIgnoreCase(log.getLaneName()));
+	}
+
+	private boolean entryLogFallsWithinTicketWindow(DispatchTicket ticket, EntryLog log) {
+		OffsetDateTime logTime = log.getEntryTime();
+		OffsetDateTime start = firstNonNull(ticket.getYardEntryTime(), ticket.getAssignedAt(), ticket.getLaneEntryTime());
+		OffsetDateTime end = firstNonNull(ticket.getClosedAt(), ticket.getExitTime(), now());
+		return (start == null || !logTime.isBefore(start.minusMinutes(2)))
+				&& (end == null || !logTime.isAfter(end.plusMinutes(2)));
+	}
+
 	private EntryLog findActiveEntryLogForTicket(DispatchTicket ticket, String plate) {
 		if (ticket == null || isBlank(plate)) {
 			return null;
@@ -2937,6 +3068,13 @@ public class OperationsService {
 		return value == null ? now() : value;
 	}
 
+	private Set<String> normalizedEventIds(List<String> eventIds) {
+		return eventIds.stream()
+				.filter(id -> !isBlank(id))
+				.map(String::trim)
+				.collect(Collectors.toSet());
+	}
+
 	private ScreenEventView screenEvent(
 			String type,
 			String id,
@@ -2945,10 +3083,10 @@ public class OperationsService {
 			OffsetDateTime occurredAt,
 			String sourceId,
 			String sourceName) {
-		return new ScreenEventView(id, type, plate, message, occurredAt, sourceId, sourceName, false, null);
+		return new ScreenEventView(id, type, plate, message, occurredAt, sourceId, sourceName, false, null, false, null);
 	}
 
-	private ScreenEventView withHandledState(ScreenEventView event, OffsetDateTime handledAt) {
+	private ScreenEventView withEventState(ScreenEventView event, OffsetDateTime acknowledgedAt, OffsetDateTime handledAt) {
 		return new ScreenEventView(
 				event.id(),
 				event.type(),
@@ -2957,6 +3095,8 @@ public class OperationsService {
 				event.occurredAt(),
 				event.sourceId(),
 				event.sourceName(),
+				acknowledgedAt != null,
+				acknowledgedAt,
 				handledAt != null,
 				handledAt);
 	}

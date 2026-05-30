@@ -122,14 +122,11 @@ class MqttParkingMfYardEntryTests {
 		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
 		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
-		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
-				.singleElement()
-				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
-				.containsExactly("苏B3T530", "L01", null);
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
 	}
 
 	@Test
-	void parkingMfPlateResultFromYardEntryCameraShouldSendLedControlWithPlateOnly() throws Exception {
+	void parkingMfPlateResultFromYardEntryCameraShouldSendLedControlWithLaneGuideText() throws Exception {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 		SimpleMqttClient client = mock(SimpleMqttClient.class);
 		when(client.isConnected()).thenReturn(true);
@@ -176,11 +173,11 @@ class MqttParkingMfYardEntryTests {
 
 		JsonNode data = downlink.path("data");
 		assertThat(data.path("groupId").asText()).isEqualTo("9QHZNII");
-		assertThat(data.path("voice").asText()).isEqualTo("苏B6T728");
+		assertThat(data.path("voice").asText()).isEqualTo("苏B6T728 请驶入1车道");
 		assertThat(data.has("qrCode")).isFalse();
 		assertThat(data.path("show").isArray()).isTrue();
 		assertThat(data.path("show")).hasSize(1);
-		assertThat(data.path("show").get(0).path("text").asText()).isEqualTo("苏B6T728");
+		assertThat(data.path("show").get(0).path("text").asText()).isEqualTo("苏B6T728 请驶入1车道");
 	}
 
 	@Test
@@ -295,10 +292,7 @@ class MqttParkingMfYardEntryTests {
 		assertThat(ticket.getPlate()).isEqualTo("苏BD12345");
 		assertThat(ticket.getStatus()).isEqualTo("ASSIGNED");
 		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
-		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc())
-				.singleElement()
-				.extracting(log -> log.getPlate(), log -> log.getLaneId(), log -> log.getExitTime())
-				.containsExactly("苏BD12345", "L01", null);
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
 	}
 
 	@Test

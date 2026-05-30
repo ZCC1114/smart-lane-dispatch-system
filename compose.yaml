@@ -43,6 +43,7 @@ services:
       - mqtt-log:/mosquitto/log
 
   server:
+    image: smart-lane-dispatch-system-server:latest
     build:
       context: ./server
       args:
@@ -109,6 +110,7 @@ services:
       retries: 10
 
   web:
+    image: smart-lane-dispatch-system-web:latest
     build:
       context: ./web
       args:

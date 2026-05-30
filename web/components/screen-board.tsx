@@ -2,8 +2,9 @@
 "use client";
 
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import { Maximize2, Minimize2 } from "lucide-react";
-import { formatPlateDisplay } from "@/lib/utils";
+import { RotateCcw, Settings2, Shield, TriangleAlert, Maximize2, Minimize2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
 import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 
 const DESIGN_WIDTH = 1920;
@@ -27,6 +28,11 @@ const ALERT_BUTTON_ORANGE_CLASS = "border-[#ff9366] bg-[linear-gradient(180deg,#
 const LANE_EMPTY_CONFIRMATION_THRESHOLD = 3;
 const LANE_EMPTY_CONFIRMATION_INTERVAL_MS = 10 * 60 * 1000;
 const ACTION_MESSAGE_TIMEOUT_MS = 6500;
+const ALERT_POPUP_WIDTH = 500;
+const ALERT_POPUP_HEIGHT = 270;
+const ALERT_POPUP_STABLE_POLLS = 2;
+const MAX_VISIBLE_ALERT_POPUPS = 4;
+const DAILY_RESET_DISMISS_STORAGE_KEY = "smart-lane-screen-daily-reset-dismissed-v1";
 
 interface DispatchTicket {
   id: string;
@@ -46,8 +52,8 @@ interface DispatchTicket {
 interface EntryLog {
   id: string;
   plate: string;
-  laneId: string;
-  laneName: string;
+  laneId: string | null;
+  laneName: string | null;
   entryTime: string;
   exitTime: string | null;
   vehicleType: string;
@@ -88,6 +94,8 @@ interface ScreenEvent {
   occurredAt: string;
   sourceId: string | null;
   sourceName: string | null;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
   handled: boolean;
   handledAt: string | null;
 }
@@ -103,9 +111,17 @@ interface ScreenBoardData {
   recentDispatches: DispatchTicket[];
   recentEntryLogs: EntryLog[];
   laneVehicles: Record<string, DispatchTicket[]>;
+  pendingEvents: ScreenEvent[];
   events: ScreenEvent[];
   lanes: LaneSnapshot[];
+  lastDailyResetAt: string | null;
 }
+
+type PopupPosition = { x: number; y: number };
+
+type DailyResetDialog =
+  | { source: "manual" }
+  | { source: "scheduled"; slotKey: string; label: string };
 
 async function fetchScreenBoard() {
   const response = await fetch(`${API_BASE_URL}/screen/board`);
@@ -202,6 +218,11 @@ function formatScreenTime(value?: string | null) {
   });
 }
 
+function eventTimeMs(event: ScreenEvent) {
+  const timestamp = event.occurredAt ? Date.parse(event.occurredAt) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function formatBeijingDateTime(value: Date) {
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -215,6 +236,80 @@ function formatBeijingDateTime(value: Date) {
   }).formatToParts(value);
   const mapped = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   return `${mapped.year}-${mapped.month}-${mapped.day}  ${mapped.hour}:${mapped.minute}:${mapped.second}`;
+}
+
+function shanghaiDateParts(value: Date) {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(value);
+  return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+}
+
+function shanghaiDateKey(value: Date) {
+  const parts = shanghaiDateParts(value);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function dateKeyFromIso(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return shanghaiDateKey(date);
+}
+
+function loadDismissedDailyResetSlots() {
+  if (typeof window === "undefined") {
+    return {} as Record<string, true>;
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(DAILY_RESET_DISMISS_STORAGE_KEY) ?? "{}") as Record<string, true>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDismissedDailyResetSlots(slots: Record<string, true>) {
+  try {
+    window.localStorage.setItem(DAILY_RESET_DISMISS_STORAGE_KEY, JSON.stringify(slots));
+  } catch {
+    // localStorage can be unavailable on locked-down display browsers.
+  }
+}
+
+function currentDailyResetSlot(value: Date, lastDailyResetAt?: string | null, dismissedSlots: Record<string, true> = {}) {
+  const todayKey = shanghaiDateKey(value);
+  if (dateKeyFromIso(lastDailyResetAt) === todayKey) {
+    return null;
+  }
+
+  const parts = shanghaiDateParts(value);
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 3 || hour > 5 || (hour === 5 && minute >= 30)) {
+    return null;
+  }
+
+  const slotHour = hour === 5 ? 5 : hour;
+  const slotMinute = hour === 5 ? 0 : minute >= 30 ? 30 : 0;
+  const slotKey = `${todayKey}-${String(slotHour).padStart(2, "0")}${String(slotMinute).padStart(2, "0")}`;
+  if (dismissedSlots[slotKey]) {
+    return null;
+  }
+  return {
+    slotKey,
+    label: `${String(slotHour).padStart(2, "0")}:${String(slotMinute).padStart(2, "0")}`,
+  };
 }
 
 function laneNumber(label?: string | null) {
@@ -309,6 +404,20 @@ function screenScrollStyle(rowCount: number, rowHeight: number): CSSProperties {
     "--screen-scroll-distance": `${rowCount * rowHeight}px`,
     "--screen-scroll-duration": `${Math.max(14, rowCount * 2.4)}s`,
   } as CSSProperties;
+}
+
+function clampPopupPosition(position: PopupPosition) {
+  return {
+    x: Math.max(390, Math.min(DESIGN_WIDTH - ALERT_POPUP_WIDTH - 330, position.x)),
+    y: Math.max(130, Math.min(DESIGN_HEIGHT - ALERT_POPUP_HEIGHT - 90, position.y)),
+  };
+}
+
+function defaultAlertPopupPosition(index: number) {
+  return clampPopupPosition({
+    x: 690 + index * 38,
+    y: 315 + index * 34,
+  });
 }
 
 function Asset({
@@ -736,6 +845,198 @@ function MovingGuidePlates({ tickets, lanes }: { tickets: DispatchTicket[]; lane
   );
 }
 
+function DraggableAlertPopup({
+  screenEvent,
+  index,
+  scale,
+  position,
+  busy,
+  onPositionChange,
+  onConfirm,
+}: {
+  screenEvent: ScreenEvent;
+  index: number;
+  scale: number;
+  position?: PopupPosition;
+  busy: boolean;
+  onPositionChange: (eventId: string, position: PopupPosition) => void;
+  onConfirm: (event: ScreenEvent) => void;
+}) {
+  const currentPosition = position ?? defaultAlertPopupPosition(index);
+  const [drag, setDrag] = useState<{ startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
+
+  useEffect(() => {
+    if (!drag) {
+      return undefined;
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      if (!drag) {
+        return;
+      }
+      const nextPosition = clampPopupPosition({
+        x: drag.startX + (event.clientX - drag.startClientX) / Math.max(scale, 0.1),
+        y: drag.startY + (event.clientY - drag.startClientY) / Math.max(scale, 0.1),
+      });
+      onPositionChange(screenEvent.id, nextPosition);
+    }
+
+    function handlePointerUp() {
+      setDrag(null);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [drag, onPositionChange, scale, screenEvent.id]);
+
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDrag({
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: currentPosition.x,
+      startY: currentPosition.y,
+    });
+  }
+
+  return (
+    <div
+      className="absolute flex flex-col border border-[#39e8ff] bg-[#061b32]/96 text-white shadow-[0_0_28px_rgba(57,232,255,0.45)]"
+      style={{
+        left: currentPosition.x,
+        top: currentPosition.y,
+        width: ALERT_POPUP_WIDTH,
+        height: ALERT_POPUP_HEIGHT,
+        zIndex: 84 + index,
+      }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onPointerDown={handlePointerDown}
+        className="h-[58px] cursor-move border-b border-[#2ebdda]/70 bg-[linear-gradient(90deg,#0d5aa2_0%,#0d315d_100%)] px-7 text-[25px] font-black leading-[58px] text-white [text-shadow:0_0_8px_rgba(102,221,255,0.8)]"
+      >
+        新增告警
+      </div>
+      <div className="px-7 pt-5 text-[17px] leading-[31px]">
+        <p>
+          类型：
+          <span className="font-black text-[#ffdf8a]">{screenEventTypeLabel(screenEvent.type)}</span>
+        </p>
+        <p>
+          车牌：
+          <span className="font-mono font-black text-[#9fffc2]">{formatPlateDisplay(screenEvent.plate) || screenEvent.plate || "-"}</span>
+        </p>
+        <p className="truncate">内容：{screenEvent.message}</p>
+        <p>时间：{formatScreenTime(screenEvent.occurredAt)}</p>
+      </div>
+      <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
+        <button
+          type="button"
+          onClick={() => onConfirm(screenEvent)}
+          disabled={busy}
+          className="h-[36px] w-[104px] border border-[#ffb53d] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
+        >
+          {busy ? "确认中" : "确认"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ScreenBottomActions({ onDailyReset }: { onDailyReset: () => void }) {
+  const router = useRouter();
+  const actions = [
+    { label: "信号灯控制", icon: Settings2, onClick: () => router.push("/signals") },
+    { label: "黑名单管理", icon: Shield, onClick: () => router.push("/blacklist") },
+    { label: "车辆告警", icon: TriangleAlert, onClick: () => router.push("/vehicle-alerts") },
+    { label: "完成保障", icon: RotateCcw, onClick: onDailyReset },
+  ];
+
+  return (
+    <div className="absolute bottom-[2px] left-[684px] z-[65] flex h-[28px] items-center gap-[8px]">
+      {actions.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          onClick={action.onClick}
+          className="group flex h-[26px] min-w-[132px] items-center justify-center gap-1.5 border border-[#3ce9ff]/80 bg-[linear-gradient(180deg,rgba(15,102,174,0.86)_0%,rgba(5,42,88,0.9)_100%)] px-3 text-[13px] font-black text-[#e9fbff] shadow-[inset_0_0_10px_rgba(67,217,255,0.18),0_0_9px_rgba(21,177,255,0.14)] transition hover:border-[#ffcf66] hover:text-white hover:shadow-[inset_0_0_12px_rgba(255,203,92,0.2),0_0_12px_rgba(255,181,61,0.22)]"
+        >
+          <action.icon className="size-3.5 text-[#85f0ff] transition group-hover:text-[#ffdf8a]" />
+          <span>{action.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ScreenTitle() {
+  return (
+    <div className="pointer-events-none absolute left-[560px] top-[3px] z-[52] h-[58px] w-[850px]">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(5,33,69,0.88)_0%,rgba(5,33,69,0.7)_46%,rgba(5,33,69,0)_76%)]" />
+      <h1 className="relative text-center text-[34px] font-black leading-[58px] tracking-[0.03em] text-white [text-shadow:0_0_6px_rgba(110,224,255,0.9),0_0_16px_rgba(25,145,255,0.72)]">
+        无锡硕放机场出租车蓄车池排队管理系统
+      </h1>
+    </div>
+  );
+}
+
+function DailyResetConfirmDialog({
+  dialog,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  dialog: DailyResetDialog | null;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!dialog) {
+    return null;
+  }
+
+  const scheduled = dialog.source === "scheduled";
+
+  return (
+    <div className="absolute inset-0 z-[92] grid place-items-center bg-[#020b16]/68">
+      <div className="relative flex h-[292px] w-[560px] flex-col border border-[#ffb53d] bg-[#07182a]/96 shadow-[0_0_30px_rgba(255,181,61,0.42)]">
+        <div className="h-[58px] border-b border-[#b7791f]/70 bg-[linear-gradient(90deg,#9b4b08_0%,#23355c_100%)] px-7 text-[25px] font-black leading-[58px] text-white [text-shadow:0_0_8px_rgba(255,181,61,0.72)]">
+          完成保障
+        </div>
+        <div className="px-7 pt-6 text-[17px] leading-[31px] text-white">
+          <p className="font-black text-[#ffdf8a]">{scheduled ? `${dialog.label} 完成保障提醒` : "确认执行完成保障"}</p>
+          <p className="mt-3 text-[15px] leading-[27px] text-[#d8eefc]">
+            确认后将清空当前车道车辆信息并重启调度流程，首条入口车道会重新打开，出口放行等待重新计算。
+          </p>
+        </div>
+        <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="h-[36px] w-[96px] border border-[#5a8cad] bg-[#08223d] text-[16px] font-bold text-[#d8eefc] disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="h-[36px] w-[136px] border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
+          >
+            {busy ? "执行中" : "确认重置"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "embedded" }) {
   const { containerRef, scale } = useScreenScale(mode);
   const { board, error, setBoard } = useScreenBoard();
@@ -743,12 +1044,21 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const [actionMessage, setActionMessage] = useState("");
   const [pendingEvent, setPendingEvent] = useState<ScreenEvent | null>(null);
   const [handlingEventId, setHandlingEventId] = useState<string | null>(null);
+  const [acknowledgingEventId, setAcknowledgingEventId] = useState<string | null>(null);
+  const [alertPopupPositions, setAlertPopupPositions] = useState<Record<string, PopupPosition>>({});
+  const [visiblePendingAlerts, setVisiblePendingAlerts] = useState<ScreenEvent[]>([]);
   const [pendingClearLane, setPendingClearLane] = useState<LaneSnapshot | null>(null);
   const [clearingLaneId, setClearingLaneId] = useState<string | null>(null);
   const [laneClearReminderAt, setLaneClearReminderAt] = useState<Record<string, number>>({});
+  const [dailyResetDialog, setDailyResetDialog] = useState<DailyResetDialog | null>(null);
+  const [dailyResetBusy, setDailyResetBusy] = useState(false);
+  const [dismissedDailyResetSlots, setDismissedDailyResetSlots] = useState<Record<string, true>>(() => loadDismissedDailyResetSlots());
+  const pendingAlertSeenCountsRef = useRef<Record<string, number>>({});
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
-  const events = board?.events ?? [];
+  const events = useMemo(() => (board?.events ?? []).filter((event) => !event.handled), [board?.events]);
+  const pendingAlertEvents = useMemo(() => (board?.pendingEvents ?? []).filter((event) => !event.handled), [board?.pendingEvents]);
+  const visibleAlertPopups = useMemo(() => visiblePendingAlerts.slice(0, MAX_VISIBLE_ALERT_POPUPS), [visiblePendingAlerts]);
   const recentEntries = useMemo(() => buildEntryInfoItems(board), [board]);
   const pendingGuideEntries = board?.waitingAssignments ?? [];
   const guideEntries = pendingGuideEntries.length ? pendingGuideEntries : board?.guideAssignments ?? [];
@@ -775,6 +1085,50 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   }, [actionMessage]);
 
   useEffect(() => {
+    if (!board) {
+      return;
+    }
+
+    const incoming = (board.pendingEvents ?? []).filter((event) => !event.handled && !event.acknowledged);
+    const incomingById = new Map(incoming.map((event) => [event.id, event]));
+    const nextSeenCounts: Record<string, number> = {};
+    incoming.forEach((event) => {
+      nextSeenCounts[event.id] = Math.min((pendingAlertSeenCountsRef.current[event.id] ?? 0) + 1, ALERT_POPUP_STABLE_POLLS);
+    });
+    pendingAlertSeenCountsRef.current = nextSeenCounts;
+
+    const stableIncoming = incoming.filter((event) => nextSeenCounts[event.id] >= ALERT_POPUP_STABLE_POLLS);
+    const closedIds = new Set(
+      [...(board.events ?? []), ...(board.pendingEvents ?? [])]
+        .filter((event) => event.handled || event.acknowledged)
+        .map((event) => event.id),
+    );
+
+    setVisiblePendingAlerts((current) => {
+      const retained = current
+        .filter((event) => !closedIds.has(event.id))
+        .map((event) => incomingById.get(event.id) ?? event);
+      const retainedIds = new Set(retained.map((event) => event.id));
+      const additions = stableIncoming.filter((event) => !retainedIds.has(event.id));
+      if (!retained.length && !additions.length) {
+        return current.length ? [] : current;
+      }
+      return [...retained, ...additions.sort((left, right) => eventTimeMs(right) - eventTimeMs(left))];
+    });
+  }, [board]);
+
+  useEffect(() => {
+    if (!board || dailyResetDialog || dailyResetBusy) {
+      return;
+    }
+
+    const slot = currentDailyResetSlot(now, board.lastDailyResetAt, dismissedDailyResetSlots);
+    if (slot) {
+      setDailyResetDialog({ source: "scheduled", ...slot });
+    }
+  }, [board, board?.lastDailyResetAt, dailyResetBusy, dailyResetDialog, dismissedDailyResetSlots, now]);
+
+  useEffect(() => {
     if (!pendingClearLane || clearingLaneId || pendingClearLaneClearable) {
       return;
     }
@@ -783,7 +1137,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   }, [clearingLaneId, pendingClearLane, pendingClearLaneClearable]);
 
   useEffect(() => {
-    if (!board || pendingEvent || pendingClearLane || clearingLaneId) {
+    if (!board || pendingEvent || pendingAlertEvents.length > 0 || pendingClearLane || clearingLaneId || dailyResetDialog) {
       return;
     }
 
@@ -803,11 +1157,81 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       [candidate.id]: nowMs,
     }));
     setPendingClearLane(candidate);
-  }, [board, board?.activeExitLaneId, clearingLaneId, laneClearReminderAt, laneVehicles, lanes, pendingClearLane, pendingEvent]);
+  }, [board, board?.activeExitLaneId, clearingLaneId, dailyResetDialog, laneClearReminderAt, laneVehicles, lanes, pendingAlertEvents.length, pendingClearLane, pendingEvent]);
 
   function requestHandleEvent(event: ScreenEvent) {
     setActionMessage("");
     setPendingEvent(event);
+  }
+
+  function updateAlertPopupPosition(eventId: string, position: PopupPosition) {
+    setAlertPopupPositions((current) => ({
+      ...current,
+      [eventId]: position,
+    }));
+  }
+
+  async function confirmAcknowledgeEvent(event: ScreenEvent) {
+    setAcknowledgingEventId(event.id);
+    try {
+      const response = await fetch(`${API_BASE_URL}/screen/events/${encodeURIComponent(event.id)}/acknowledge`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const refreshedBoard = await fetchScreenBoard();
+      setBoard(refreshedBoard);
+      setVisiblePendingAlerts((current) => current.filter((item) => item.id !== event.id));
+      setAlertPopupPositions((current) => {
+        const next = { ...current };
+        delete next[event.id];
+        return next;
+      });
+      setActionMessage("");
+    } catch (acknowledgeError) {
+      setActionMessage(`告警确认失败: ${acknowledgeError instanceof Error ? acknowledgeError.message : "请求失败"}`);
+    } finally {
+      setAcknowledgingEventId(null);
+    }
+  }
+
+  function requestManualDailyReset() {
+    setDailyResetDialog({ source: "manual" });
+  }
+
+  function dismissDailyResetDialog() {
+    if (dailyResetDialog?.source === "scheduled") {
+      const activeSlot = currentDailyResetSlot(now, board?.lastDailyResetAt, {})?.slotKey;
+      const nextDismissed: Record<string, true> = {
+        ...dismissedDailyResetSlots,
+        [dailyResetDialog.slotKey]: true,
+      };
+      if (activeSlot) {
+        nextDismissed[activeSlot] = true;
+      }
+      setDismissedDailyResetSlots(nextDismissed);
+      saveDismissedDailyResetSlots(nextDismissed);
+    }
+    setDailyResetDialog(null);
+  }
+
+  async function confirmDailyReset() {
+    setDailyResetBusy(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/screen/daily-reset`, { method: "POST" });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+      const refreshedBoard = await fetchScreenBoard();
+      setBoard(refreshedBoard);
+      setPendingClearLane(null);
+      setDailyResetDialog(null);
+      setActionMessage("完成保障已执行，车道已清空并重新进入调度流程");
+    } catch (resetError) {
+      setActionMessage(`完成保障失败: ${resetError instanceof Error ? resetError.message : "请求失败"}`);
+    } finally {
+      setDailyResetBusy(false);
+    }
   }
 
   async function confirmHandleEvent() {
@@ -824,8 +1248,10 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       }
       setBoard((current) => current ? {
         ...current,
-        events: current.events.map((event) => event.id === eventId ? { ...event, handled: true, handledAt: new Date().toISOString() } : event),
+        pendingEvents: current.pendingEvents.filter((event) => event.id !== eventId),
+        events: current.events.filter((event) => event.id !== eventId),
       } : current);
+      setVisiblePendingAlerts((current) => current.filter((event) => event.id !== eventId));
       setPendingEvent(null);
       setActionMessage("");
     } catch (handleError) {
@@ -871,6 +1297,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         style={{ transform: `scale(${scale})` }}
       >
         <Asset name="背景.png" className="absolute inset-0 h-full w-full" />
+        <ScreenTitle />
         {error ? (
           <div className="absolute left-[730px] top-[78px] z-50 border border-red-400/70 bg-red-950/80 px-4 py-2 text-[16px] text-red-100">
             大屏接口异常：{error}
@@ -935,6 +1362,34 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <Panel title="引导牌" x={1610} y={663} size="large">
           <GuideRows tickets={guideEntries} />
         </Panel>
+
+        <ScreenBottomActions onDailyReset={requestManualDailyReset} />
+
+        {visiblePendingAlerts.length > MAX_VISIBLE_ALERT_POPUPS ? (
+          <div className="absolute left-[730px] top-[86px] z-[83] border border-[#39e8ff]/70 bg-[#061b32]/90 px-4 py-2 text-[15px] font-bold text-[#d8f6ff] shadow-[0_0_16px_rgba(57,232,255,0.28)]">
+            还有 {visiblePendingAlerts.length - MAX_VISIBLE_ALERT_POPUPS} 条告警等待确认
+          </div>
+        ) : null}
+
+        {visibleAlertPopups.map((event, index) => (
+          <DraggableAlertPopup
+            key={event.id}
+            screenEvent={event}
+            index={index}
+            scale={scale}
+            position={alertPopupPositions[event.id]}
+            busy={acknowledgingEventId === event.id}
+            onPositionChange={updateAlertPopupPosition}
+            onConfirm={confirmAcknowledgeEvent}
+          />
+        ))}
+
+        <DailyResetConfirmDialog
+          dialog={dailyResetDialog}
+          busy={dailyResetBusy}
+          onCancel={dismissDailyResetDialog}
+          onConfirm={confirmDailyReset}
+        />
 
         {pendingEvent ? (
           <div className="absolute inset-0 z-[80] grid place-items-center bg-[#020b16]/68">

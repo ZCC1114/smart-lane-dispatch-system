@@ -15,7 +15,7 @@ public class OpenApiConfig {
 	OpenAPI smartLaneOpenApi() {
 		return new OpenAPI()
 				.info(new Info()
-						.title("智行车道调度系统 API")
+						.title("无锡硕放机场出租车蓄车池排队管理系统 API")
 						.description("提供登录鉴权、车道调度、信号灯控制、黑名单与运行总览接口。")
 						.version("v1")
 						.contact(new Contact().name("Smart Lane Dispatch"))

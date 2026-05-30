@@ -111,7 +111,7 @@ class MqttSmartCameraAlarmTests {
 	}
 
 	@Test
-	void smartCameraDevAlarmType49665ShouldClearMotorStayFullProtection() {
+	void smartCameraDevAlarmType49665ShouldBeIgnoredAndKeepMotorStayProtection() {
 		Lane laneOne = buildLane("L01", "L01", "1号车道");
 		Lane laneTwo = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(laneOne, laneTwo));
@@ -121,8 +121,8 @@ class MqttSmartCameraAlarmTests {
 
 		operationsService.getLanes();
 		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
-		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("ONLINE");
-		assertThat(updatedLaneOne.getStatus()).isEqualTo("OPEN");
+		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("DEGRADED");
+		assertThat(updatedLaneOne.getStatus()).isEqualTo("FULL");
 		assertThat(updatedLaneOne.getVehicleCount()).isZero();
 		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
 	}
