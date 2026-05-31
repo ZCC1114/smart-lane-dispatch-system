@@ -47,21 +47,23 @@ export default function EntriesPage() {
   });
 
   const logsQuery = useQuery({
-    queryKey: ["logs", filters],
+    queryKey: ["logs", filters, page, pageSize],
     queryFn: () =>
       api.getLogs({
         query: filters.query,
         laneId: filters.laneId,
         entryTimeFrom: toApiDateTime(filters.entryTimeFrom),
         entryTimeTo: toApiDateTime(filters.entryTimeTo),
+        page,
+        pageSize,
       }),
   });
   const lanes = lanesQuery.data ?? [];
-  const logs = logsQuery.data ?? [];
-  const pageCount = Math.max(1, Math.ceil(logs.length / pageSize));
-  const currentPage = Math.min(page, pageCount);
+  const logsPage = logsQuery.data;
+  const logs = logsPage?.items ?? [];
+  const totalLogs = logsPage?.total ?? 0;
+  const currentPage = logsPage?.page ?? page;
   const pageStartIndex = (currentPage - 1) * pageSize;
-  const pagedLogs = logs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const laneOptions = [
     { value: "", label: "全部车道" },
     ...lanes.map((lane) => ({
@@ -90,7 +92,7 @@ export default function EntriesPage() {
                 [
                   ["序号", "车牌号码", "实际入道车道编号", "实际入道车道", "分配车道编号", "分配车道", "入场时间", "离场时间", "车辆类型", "通行状态", "操作员"],
                   ...logs.map((log, index) => [
-                    String(index + 1),
+                    String(pageStartIndex + index + 1),
                     log.plate,
                     log.laneId ?? "",
                     log.laneName ?? "",
@@ -108,7 +110,7 @@ export default function EntriesPage() {
             className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
           >
             <Download className="size-3.5" />
-            导出表格
+            导出当前页
           </button>
         }
       >
@@ -165,7 +167,7 @@ export default function EntriesPage() {
               <span>通行状态</span>
             </div>
             <div className="divide-y divide-[var(--border-soft)]">
-              {pagedLogs.map((log, index) => (
+              {logs.map((log, index) => (
                 <div key={log.id} className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr] gap-3 px-5 py-4 text-sm">
                   <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                   <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(log.plate) || log.plate}</span>
@@ -185,7 +187,10 @@ export default function EntriesPage() {
                   </div>
                 </div>
               ))}
-              {logs.length === 0 ? (
+              {logsQuery.isLoading ? (
+                <div className="px-5 py-10 text-center text-sm text-[var(--text-secondary)]">正在加载车辆流水...</div>
+              ) : null}
+              {!logsQuery.isLoading && logs.length === 0 ? (
                 <div className="px-5 py-10 text-center text-sm text-[var(--text-secondary)]">当前筛选条件下没有匹配到车辆流水。</div>
               ) : null}
             </div>
@@ -193,7 +198,7 @@ export default function EntriesPage() {
           <TablePagination
             page={currentPage}
             pageSize={pageSize}
-            total={logs.length}
+            total={totalLogs}
             onPageChange={setPage}
             onPageSizeChange={(nextPageSize) => {
               setPageSize(nextPageSize);

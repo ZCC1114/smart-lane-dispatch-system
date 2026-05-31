@@ -7,6 +7,7 @@ import { ConfirmModal } from "@/components/confirm-modal";
 import { FilterSelect } from "@/components/filter-select";
 import { Panel } from "@/components/panel";
 import { StatusBadge } from "@/components/status-badge";
+import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
 import { canAccessBlacklist } from "@/lib/permissions";
 import type { BlacklistPayload, BlacklistRecord } from "@/lib/types";
@@ -29,6 +30,8 @@ export default function BlacklistPage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [formState, setFormState] = useState<BlacklistFormState>(emptyForm);
   const [formErrors, setFormErrors] = useState<BlacklistFormErrors>({});
   const [editingRecord, setEditingRecord] = useState<BlacklistRecord | null>(null);
@@ -37,8 +40,8 @@ export default function BlacklistPage() {
   const operatorName = currentUser?.displayName || currentUser?.username || "系统管理员";
 
   const blacklistQuery = useQuery({
-    queryKey: ["blacklist", searchQuery],
-    queryFn: () => api.getBlacklist(searchQuery),
+    queryKey: ["blacklist", searchQuery, page, pageSize],
+    queryFn: () => api.getBlacklist({ query: searchQuery, page, pageSize }),
   });
 
   const saveMutation = useMutation({
@@ -75,10 +78,15 @@ export default function BlacklistPage() {
     },
   });
 
-  const records = blacklistQuery.data ?? [];
+  const recordsPage = blacklistQuery.data;
+  const records = recordsPage?.items ?? [];
+  const totalRecords = recordsPage?.total ?? 0;
+  const currentPage = recordsPage?.page ?? page;
+  const pageStartIndex = (currentPage - 1) * pageSize;
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setPage(1);
     setSearchQuery(query.trim());
   }
 
@@ -289,7 +297,7 @@ export default function BlacklistPage() {
             <div className="divide-y divide-[var(--border-soft)]">
               {records.map((record, index) => (
                 <div key={record.id} className="grid grid-cols-[0.45fr_0.95fr_0.7fr_1.2fr_0.8fr_0.8fr_1fr] gap-3 px-5 py-4 text-sm">
-                  <span className="font-mono text-[var(--text-secondary)]">{index + 1}</span>
+                  <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                   <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(record.plate) || record.plate}</span>
                   <div>
                     <StatusBadge value={record.level} kind="level" />
@@ -317,10 +325,23 @@ export default function BlacklistPage() {
                   <span className="text-[var(--text-secondary)]">{formatDateTime(record.effectiveDate)}</span>
                 </div>
               ))}
-              {records.length === 0 ? (
+              {blacklistQuery.isLoading ? (
+                <div className="px-5 py-10 text-center text-sm text-[var(--text-secondary)]">正在加载黑名单记录...</div>
+              ) : null}
+              {!blacklistQuery.isLoading && records.length === 0 ? (
                 <div className="px-5 py-10 text-center text-sm text-[var(--text-secondary)]">没有匹配到黑名单记录。</div>
               ) : null}
             </div>
+            <TablePagination
+              page={currentPage}
+              pageSize={pageSize}
+              total={totalRecords}
+              onPageChange={setPage}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize);
+                setPage(1);
+              }}
+            />
           </div>
         </Panel>
       </div>

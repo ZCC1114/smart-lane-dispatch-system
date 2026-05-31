@@ -100,6 +100,14 @@ export interface BlacklistRecord {
   active: boolean;
 }
 
+export interface PageResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface DashboardPayload {
   generatedAt: string;
   throughput: ThroughputPoint[];

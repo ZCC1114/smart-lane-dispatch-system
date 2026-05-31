@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS entry_logs (
   KEY idx_entry_logs_lane_fifo (lane_id, exit_time, entry_time),
   KEY idx_entry_logs_plate (plate),
   KEY idx_entry_logs_entry_time (entry_time),
-  KEY idx_entry_logs_status (status)
+  KEY idx_entry_logs_status (status),
+  KEY idx_entry_logs_time_lane_plate (entry_time, lane_id, plate)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='车辆入场与在场队列记录表';
 
 CREATE TABLE IF NOT EXISTS dispatch_tickets (
@@ -75,7 +76,9 @@ CREATE TABLE IF NOT EXISTS dispatch_tickets (
   KEY idx_dispatch_tickets_assigned_lane (assigned_lane_id, lane_entry_time, closed_at),
   KEY idx_dispatch_tickets_actual_lane (actual_lane_id, exit_time, closed_at),
   KEY idx_dispatch_tickets_yard_entry_time (yard_entry_time),
-  KEY idx_dispatch_tickets_status (status, closed_at)
+  KEY idx_dispatch_tickets_status (status, closed_at),
+  KEY idx_dispatch_tickets_plate_time (plate, yard_entry_time),
+  KEY idx_dispatch_tickets_event_window (yard_entry_time, status, plate)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='总入口抓拍、大屏预分配、实际入道和驶出闭环记录表';
 
 CREATE TABLE IF NOT EXISTS blacklist_records (
@@ -88,7 +91,8 @@ CREATE TABLE IF NOT EXISTS blacklist_records (
   active BIT(1) NOT NULL COMMENT '是否启用',
   PRIMARY KEY (id),
   KEY idx_blacklist_plate_active (plate, active),
-  KEY idx_blacklist_effective_date (effective_date)
+  KEY idx_blacklist_effective_date (effective_date),
+  KEY idx_blacklist_active_plate_effective (active, plate, effective_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='车辆黑名单记录表';
 
 CREATE TABLE IF NOT EXISTS screen_handled_events (

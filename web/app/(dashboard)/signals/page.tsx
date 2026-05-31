@@ -71,9 +71,9 @@ export default function SignalsPage() {
     onSuccess: async () => {
       setPendingAction(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["lanes"] }),
+        queryClient.refetchQueries({ queryKey: ["lanes"], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["dispatch-board"], type: "active" }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["dispatch-board"] }),
       ]);
     },
   });

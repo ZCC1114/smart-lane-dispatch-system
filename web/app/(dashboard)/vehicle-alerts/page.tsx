@@ -58,26 +58,28 @@ export default function VehicleAlertsPage() {
   });
 
   const alertsQuery = useQuery({
-    queryKey: ["screen-events", filters],
+    queryKey: ["screen-events", filters, page, pageSize],
     queryFn: () =>
       api.getScreenEvents({
         type: filters.type,
         occurredAtFrom: toApiDateTime(filters.occurredAtFrom),
         occurredAtTo: toApiDateTime(filters.occurredAtTo),
         includeHandled: "true",
+        page,
+        pageSize,
       }),
     refetchInterval: 5000,
   });
 
-  const alerts = useMemo(() => alertsQuery.data ?? [], [alertsQuery.data]);
+  const alertsPage = alertsQuery.data;
+  const alerts = useMemo(() => alertsPage?.items ?? [], [alertsPage?.items]);
+  const totalAlerts = alertsPage?.total ?? 0;
   const selectedAlertSet = useMemo(() => new Set(selectedAlertIds), [selectedAlertIds]);
   const unhandledAlertIds = useMemo(() => new Set(alerts.filter((alert) => !alert.handled).map((alert) => alert.id)), [alerts]);
   const selectedUnhandledAlertIds = selectedAlertIds.filter((id) => unhandledAlertIds.has(id));
-  const pageCount = Math.max(1, Math.ceil(alerts.length / pageSize));
-  const currentPage = Math.min(page, pageCount);
+  const currentPage = alertsPage?.page ?? page;
   const pageStartIndex = (currentPage - 1) * pageSize;
-  const pagedAlerts = alerts.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const pagedUnhandledAlertIds = pagedAlerts.filter((alert) => !alert.handled).map((alert) => alert.id);
+  const pagedUnhandledAlertIds = alerts.filter((alert) => !alert.handled).map((alert) => alert.id);
   const currentPageAllSelected = pagedUnhandledAlertIds.length > 0 && pagedUnhandledAlertIds.every((id) => selectedAlertSet.has(id));
 
   const handleAlertMutation = useMutation({
@@ -101,6 +103,17 @@ export default function VehicleAlertsPage() {
     setPage(1);
     setSelectedAlertIds([]);
     setFilters({ type, occurredAtFrom, occurredAtTo });
+  }
+
+  function handlePageChange(nextPage: number) {
+    setSelectedAlertIds([]);
+    setPage(nextPage);
+  }
+
+  function handlePageSizeChange(nextPageSize: number) {
+    setSelectedAlertIds([]);
+    setPageSize(nextPageSize);
+    setPage(1);
   }
 
   function toggleAlertSelection(alertId: string) {
@@ -148,7 +161,7 @@ export default function VehicleAlertsPage() {
                   [
                     ["序号", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
                     ...alerts.map((alert, index) => [
-                      String(index + 1),
+                      String(pageStartIndex + index + 1),
                       screenEventTypeLabel(alert.type),
                       alert.plate,
                       alert.handled ? "已处理" : "未处理",
@@ -164,7 +177,7 @@ export default function VehicleAlertsPage() {
               className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
             >
               <Download className="size-3.5" />
-              导出表格
+              导出当前页
             </button>
           </div>
         }
@@ -205,7 +218,7 @@ export default function VehicleAlertsPage() {
           </button>
 
           <div className="flex items-center justify-end text-sm text-[var(--text-secondary)]">
-            当前共 {alerts.length} 条告警，已选择 {selectedUnhandledAlertIds.length} 条
+            当前共 {totalAlerts} 条告警，已选择 {selectedUnhandledAlertIds.length} 条
           </div>
         </form>
 
@@ -231,7 +244,7 @@ export default function VehicleAlertsPage() {
             <span>操作</span>
           </div>
           <div className="divide-y divide-[var(--border-soft)]">
-            {pagedAlerts.map((alert, index) => (
+            {alerts.map((alert, index) => (
               <div key={alert.id} className="grid grid-cols-[42px_0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr_0.65fr] gap-3 px-5 py-4 text-sm">
                 <span>
                   <input
@@ -290,12 +303,9 @@ export default function VehicleAlertsPage() {
           <TablePagination
             page={currentPage}
             pageSize={pageSize}
-            total={alerts.length}
-            onPageChange={setPage}
-            onPageSizeChange={(nextPageSize) => {
-              setPageSize(nextPageSize);
-              setPage(1);
-            }}
+            total={totalAlerts}
+            onPageChange={handlePageChange}
+            onPageSizeChange={handlePageSizeChange}
           />
         </div>
       </Panel>

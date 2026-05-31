@@ -156,7 +156,7 @@ export default function DispatchPage() {
       ]);
       setSuccessNotice({
         title: "日清完成",
-        description: "上一班次数据已清空，首条入口车道已重新打开，出口放行等待切换。",
+        description: "上一班次数据已清空，首条车道的入口与出口绿灯已重新打开。",
       });
     },
   });

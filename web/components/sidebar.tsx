@@ -37,10 +37,10 @@ function normalizeProfileText(value?: string) {
 const navItems = [
   { href: "/", label: "车道总览", icon: LayoutDashboard, visible: () => true },
   { href: "/entries", label: "车辆流水", icon: History, visible: () => true },
-  { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
   { href: "/signals", label: "信号灯控制", icon: Settings2, visible: () => true },
   { href: "/blacklist", label: "黑名单管理", icon: Shield, visible: () => true },
   { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
+  { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
 ];
 
 export function Sidebar() {

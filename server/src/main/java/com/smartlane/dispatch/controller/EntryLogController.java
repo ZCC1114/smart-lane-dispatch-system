@@ -1,7 +1,6 @@
 package com.smartlane.dispatch.controller;
 
 import java.time.OffsetDateTime;
-import java.util.List;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.smartlane.dispatch.dto.EntryLogView;
+import com.smartlane.dispatch.dto.PageResult;
 import com.smartlane.dispatch.service.OperationsService;
 
 @RestController
@@ -23,12 +23,14 @@ public class EntryLogController {
 	}
 
 	@GetMapping
-	public List<EntryLogView> getLogs(
+	public PageResult<EntryLogView> getLogs(
 			@RequestParam(required = false) String query,
 			@RequestParam(required = false) String status,
 			@RequestParam(required = false) String laneId,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeFrom,
-			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeTo) {
-		return operationsService.getLogs(query, status, laneId, entryTimeFrom, entryTimeTo);
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeTo,
+			@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "10") int pageSize) {
+		return operationsService.getLogs(query, status, laneId, entryTimeFrom, entryTimeTo, page, pageSize);
 	}
 }

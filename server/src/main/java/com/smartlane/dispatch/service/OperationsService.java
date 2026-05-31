@@ -1,6 +1,8 @@
 package com.smartlane.dispatch.service;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
@@ -24,6 +26,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +43,7 @@ import com.smartlane.dispatch.dto.DispatchRuntimeRequest;
 import com.smartlane.dispatch.dto.EntryLogView;
 import com.smartlane.dispatch.dto.LaneSensorPayload;
 import com.smartlane.dispatch.dto.ManualDispatchRequest;
+import com.smartlane.dispatch.dto.PageResult;
 import com.smartlane.dispatch.dto.RelayControlRequest;
 import com.smartlane.dispatch.dto.SignalOverrideRequest;
 import com.smartlane.dispatch.dto.ScreenEventView;
@@ -100,6 +105,8 @@ public class OperationsService {
 			"SET_PRIORITY");
 	private static final int LANE_REMAINING_CLEAR_THRESHOLD = 3;
 	private static final int EXIT_HANDOFF_TRIGGER_THRESHOLD = 3;
+	private static final int DEFAULT_PAGE_SIZE = 10;
+	private static final int MAX_PAGE_SIZE = 200;
 
 	private final LaneRepository laneRepository;
 	private final DispatchConfigRepository dispatchConfigRepository;
@@ -212,22 +219,24 @@ public class OperationsService {
 		OffsetDateTime referenceTime = now();
 		expireStaleDispatchTickets(referenceTime);
 		OffsetDateTime currentCycleStart = includeHandled ? null : currentDailyResetAt();
-		List<DispatchTicket> tickets = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc();
+		List<DispatchTicket> tickets = screenEventCandidateTickets(occurredAtFrom, occurredAtTo);
+		Map<String, BlacklistRecord> activeBlacklistByPlate = activeBlacklistByPlate(tickets);
 		List<ScreenEventView> events = new ArrayList<>();
 
 		for (DispatchTicket ticket : tickets) {
 			if (currentCycleStart != null && ticketTime(ticket).isBefore(currentCycleStart)) {
 				continue;
 			}
-			blacklistRecordRepository.findFirstByPlateIgnoreCaseAndActiveTrue(ticket.getPlate())
-					.ifPresent(record -> events.add(screenEvent(
-							"blacklist",
-							"BL-" + ticket.getId(),
-							ticket.getPlate(),
-							"黑名单车辆，请及时处理",
-							ticketTime(ticket),
-							ticket.getId(),
-							ticket.getAssignedLaneName())));
+			if (activeBlacklistByPlate.containsKey(normalizePlate(ticket.getPlate()))) {
+				events.add(screenEvent(
+						"blacklist",
+						"BL-" + ticket.getId(),
+						ticket.getPlate(),
+						"黑名单车辆，请及时处理",
+						ticketTime(ticket),
+						ticket.getId(),
+						ticket.getAssignedLaneName()));
+			}
 
 			if ("ENTERED_MISMATCH".equals(ticket.getStatus())) {
 				events.add(screenEvent(
@@ -281,6 +290,50 @@ public class OperationsService {
 				.filter(event -> occurredAtTo == null || event.occurredAt() == null || !event.occurredAt().isAfter(occurredAtTo))
 				.sorted(Comparator.comparing(ScreenEventView::occurredAt, Comparator.nullsLast(Comparator.reverseOrder())))
 				.toList();
+	}
+
+	@Transactional
+	public PageResult<ScreenEventView> getScreenEvents(
+			String type,
+			OffsetDateTime occurredAtFrom,
+			OffsetDateTime occurredAtTo,
+			boolean includeHandled,
+			int page,
+			int pageSize) {
+		List<ScreenEventView> events = getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled);
+		return pageFromList(events, page, pageSize);
+	}
+
+	private List<DispatchTicket> screenEventCandidateTickets(OffsetDateTime occurredAtFrom, OffsetDateTime occurredAtTo) {
+		OffsetDateTime currentCycleStart = currentDailyResetAt();
+		OffsetDateTime from = occurredAtFrom == null && occurredAtTo == null ? currentCycleStart : occurredAtFrom;
+		OffsetDateTime to = occurredAtTo;
+		if (from != null && to != null) {
+			return dispatchTicketRepository.findByYardEntryTimeBetweenOrderByYardEntryTimeDesc(from.minusDays(1), to.plusDays(1));
+		}
+		if (from != null) {
+			return dispatchTicketRepository.findByYardEntryTimeGreaterThanEqualOrderByYardEntryTimeDesc(from.minusDays(1));
+		}
+		if (to != null) {
+			return dispatchTicketRepository.findByYardEntryTimeLessThanEqualOrderByYardEntryTimeDesc(to.plusDays(1));
+		}
+		return dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc();
+	}
+
+	private Map<String, BlacklistRecord> activeBlacklistByPlate(List<DispatchTicket> tickets) {
+		Set<String> plates = tickets.stream()
+				.map(DispatchTicket::getPlate)
+				.filter(plate -> !isBlank(plate))
+				.map(this::normalizePlate)
+				.collect(Collectors.toSet());
+		if (plates.isEmpty()) {
+			return Map.of();
+		}
+		return blacklistRecordRepository.findByActiveTrueAndPlateIn(plates).stream()
+				.collect(Collectors.toMap(
+						record -> normalizePlate(record.getPlate()),
+						record -> record,
+						(first, ignored) -> first));
 	}
 
 	public List<EntryLog> getRecentEntryLogs(int limit) {
@@ -421,6 +474,11 @@ public class OperationsService {
 		}
 	}
 
+	public boolean dailyResetCompletedOn(LocalDate date, ZoneId zoneId) {
+		OffsetDateTime resetAt = getLastDailyResetAt();
+		return resetAt != null && resetAt.atZoneSameInstant(zoneId).toLocalDate().equals(date);
+	}
+
 	@Transactional
 	public DispatchConfigView updateDispatchConfig(DispatchConfigRequest request) {
 		List<String> laneOrder = parseLaneOrder(request.entryLaneOrder());
@@ -511,8 +569,9 @@ public class OperationsService {
 
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
-		saveActiveEntrySignalConfig(firstOrderedLaneId(lanes, laneOrder), referenceTime);
-		saveActiveExitSignalConfig(null, referenceTime);
+		String resetEntryLaneId = firstOrderedLaneId(lanes, laneOrder);
+		saveActiveEntrySignalConfig(resetEntryLaneId, referenceTime);
+		saveActiveExitSignalConfig(resetEntryLaneId, referenceTime);
 		saveDispatchConfig(LAST_DAILY_RESET_AT_KEY, referenceTime.toString(), referenceTime);
 
 		refreshLaneRuntime(referenceTime);
@@ -520,25 +579,50 @@ public class OperationsService {
 		return getDispatchConfig();
 	}
 
-	public List<EntryLogView> getLogs(String query, String status, String laneId, OffsetDateTime entryTimeFrom, OffsetDateTime entryTimeTo) {
-		List<DispatchTicket> tickets = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc();
-		return entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
-				.filter(log -> isBlank(query) || containsIgnoreCase(log.getPlate(), query))
-				.filter(log -> isBlank(status) || status.equalsIgnoreCase(log.getStatus()))
-				.filter(log -> isBlank(laneId) || laneId.equalsIgnoreCase(log.getLaneId()))
-				.filter(log -> entryTimeFrom == null || !log.getEntryTime().isBefore(entryTimeFrom))
-				.filter(log -> entryTimeTo == null || !log.getEntryTime().isAfter(entryTimeTo))
-				.map(log -> EntryLogView.from(log, findDispatchTicketForLog(log, tickets)))
+	public PageResult<EntryLogView> getLogs(
+			String query,
+			String status,
+			String laneId,
+			OffsetDateTime entryTimeFrom,
+			OffsetDateTime entryTimeTo,
+			int page,
+			int pageSize) {
+		int normalizedPage = normalizePage(page);
+		int normalizedPageSize = normalizePageSize(pageSize);
+		Page<EntryLog> logPage = entryLogRepository.searchLogs(
+				blankToNull(query),
+				blankToNull(status),
+				blankToNull(laneId),
+				entryTimeFrom,
+				entryTimeTo,
+				PageRequest.of(normalizedPage - 1, normalizedPageSize));
+		List<EntryLog> logs = logPage.getContent();
+		Set<String> plates = logs.stream()
+				.map(EntryLog::getPlate)
+				.filter(plate -> !isBlank(plate))
+				.map(this::normalizePlate)
+				.collect(Collectors.toSet());
+		List<DispatchTicket> tickets = plates.isEmpty()
+				? List.of()
+				: dispatchTicketRepository.findByPlateInOrderByYardEntryTimeDesc(plates);
+		Map<String, List<DispatchTicket>> ticketsByPlate = tickets.stream()
+				.filter(ticket -> !isBlank(ticket.getPlate()))
+				.collect(Collectors.groupingBy(ticket -> normalizePlate(ticket.getPlate())));
+		List<EntryLogView> items = logs.stream()
+				.map(log -> EntryLogView.from(log, findDispatchTicketForLog(
+						log,
+						ticketsByPlate.getOrDefault(normalizePlate(log.getPlate()), List.of()))))
 				.toList();
+		return PageResult.of(items, logPage.getTotalElements(), normalizedPage, normalizedPageSize);
 	}
 
-	public List<BlacklistRecord> getBlacklist(String query) {
-		return blacklistRecordRepository.findAllByOrderByEffectiveDateDesc().stream()
-				.filter(record -> isBlank(query)
-						|| containsIgnoreCase(record.getPlate(), query)
-						|| containsIgnoreCase(record.getReason(), query)
-						|| containsIgnoreCase(record.getOperator(), query))
-				.toList();
+	public PageResult<BlacklistRecord> getBlacklist(String query, int page, int pageSize) {
+		int normalizedPage = normalizePage(page);
+		int normalizedPageSize = normalizePageSize(pageSize);
+		Page<BlacklistRecord> records = blacklistRecordRepository.search(
+				blankToNull(query),
+				PageRequest.of(normalizedPage - 1, normalizedPageSize));
+		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
 	}
 
 	@Transactional
@@ -3123,12 +3207,31 @@ public class OperationsService {
 		return value == null ? "" : value;
 	}
 
-	private OffsetDateTime now() {
-		return OffsetDateTime.now(ZoneOffset.ofHours(8));
+	private String blankToNull(String value) {
+		return isBlank(value) ? null : value.trim();
 	}
 
-	private boolean containsIgnoreCase(String source, String query) {
-		return source != null && query != null && source.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT));
+	private int normalizePage(int page) {
+		return Math.max(1, page);
+	}
+
+	private int normalizePageSize(int pageSize) {
+		if (pageSize <= 0) {
+			return DEFAULT_PAGE_SIZE;
+		}
+		return Math.min(pageSize, MAX_PAGE_SIZE);
+	}
+
+	private <T> PageResult<T> pageFromList(List<T> values, int page, int pageSize) {
+		int normalizedPage = normalizePage(page);
+		int normalizedPageSize = normalizePageSize(pageSize);
+		int fromIndex = Math.toIntExact(Math.min(values.size(), (long) (normalizedPage - 1) * normalizedPageSize));
+		int toIndex = Math.min(values.size(), fromIndex + normalizedPageSize);
+		return PageResult.of(values.subList(fromIndex, toIndex), values.size(), normalizedPage, normalizedPageSize);
+	}
+
+	private OffsetDateTime now() {
+		return OffsetDateTime.now(ZoneOffset.ofHours(8));
 	}
 
 	private String firstNonBlank(String... values) {

@@ -1,7 +1,5 @@
 package com.smartlane.dispatch.controller;
 
-import java.util.List;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -16,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
 
 import com.smartlane.dispatch.dto.BlacklistPayload;
+import com.smartlane.dispatch.dto.PageResult;
 import com.smartlane.dispatch.entity.BlacklistRecord;
 import com.smartlane.dispatch.service.OperationsService;
 
@@ -33,8 +32,11 @@ public class BlacklistController {
 
 	@GetMapping
 	@PreAuthorize("hasRole('ADMIN')")
-	public List<BlacklistRecord> getBlacklist(@RequestParam(required = false) String query) {
-		return operationsService.getBlacklist(query);
+	public PageResult<BlacklistRecord> getBlacklist(
+			@RequestParam(required = false) String query,
+			@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "10") int pageSize) {
+		return operationsService.getBlacklist(query, page, pageSize);
 	}
 
 	@PostMapping

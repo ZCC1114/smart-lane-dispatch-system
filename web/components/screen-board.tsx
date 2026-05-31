@@ -1011,7 +1011,7 @@ function DailyResetConfirmDialog({
         <div className="px-7 pt-6 text-[17px] leading-[31px] text-white">
           <p className="font-black text-[#ffdf8a]">{scheduled ? `${dialog.label} 完成保障提醒` : "确认执行完成保障"}</p>
           <p className="mt-3 text-[15px] leading-[27px] text-[#d8eefc]">
-            确认后将清空当前车道车辆信息并重启调度流程，首条入口车道会重新打开，出口放行等待重新计算。
+            确认后将清空当前车道车辆信息并重启调度流程，首条车道的入口与出口绿灯会重新打开。
           </p>
         </div>
         <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">

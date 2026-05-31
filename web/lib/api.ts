@@ -12,6 +12,7 @@ import type {
   EntryLog,
   LaneSnapshot,
   ManualDispatchRequest,
+  PageResult,
   RelayControlRequest,
   ScreenEvent,
   SignalOverrideRequest,
@@ -84,11 +85,11 @@ function normalizeErrorMessage(errorText: string, status: number) {
   }
 }
 
-function buildQuery(params: Record<string, string | undefined>) {
+function buildQuery(params: Record<string, string | number | undefined>) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value) {
-      search.set(key, value);
+    if (value !== undefined && value !== "") {
+      search.set(key, String(value));
     }
   });
   const query = search.toString();
@@ -108,11 +109,11 @@ export const api = {
   getLanes() {
     return request<LaneSnapshot[]>("/lanes");
   },
-  getLogs(filters: { query?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string }) {
-    return request<EntryLog[]>(`/logs${buildQuery(filters)}`);
+  getLogs(filters: { query?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string; page?: number; pageSize?: number }) {
+    return request<PageResult<EntryLog>>(`/logs${buildQuery(filters)}`);
   },
-  getScreenEvents(filters: { type?: string; occurredAtFrom?: string; occurredAtTo?: string; includeHandled?: string }) {
-    return request<ScreenEvent[]>(`/screen/events${buildQuery(filters)}`);
+  getScreenEvents(filters: { type?: string; occurredAtFrom?: string; occurredAtTo?: string; includeHandled?: string; page?: number; pageSize?: number }) {
+    return request<PageResult<ScreenEvent>>(`/screen/events${buildQuery(filters)}`);
   },
   handleScreenEvent(id: string) {
     return request<void>(`/screen/events/${encodeURIComponent(id)}/handle`, {
@@ -125,8 +126,8 @@ export const api = {
       body: JSON.stringify({ ids }),
     });
   },
-  getBlacklist(query?: string) {
-    return request<BlacklistRecord[]>(`/blacklist${buildQuery({ query })}`);
+  getBlacklist(filters: { query?: string; page?: number; pageSize?: number } = {}) {
+    return request<PageResult<BlacklistRecord>>(`/blacklist${buildQuery(filters)}`);
   },
   createBlacklist(payload: BlacklistPayload) {
     return request<BlacklistRecord>("/blacklist", {

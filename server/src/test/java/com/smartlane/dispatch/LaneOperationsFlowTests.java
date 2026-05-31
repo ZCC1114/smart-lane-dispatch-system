@@ -784,7 +784,7 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$.entryDispatchEnabled").value(true))
 			.andExpect(jsonPath("$.exitDispatchEnabled").value(true))
 			.andExpect(jsonPath("$.activeEntryLaneId").value("L01"))
-			.andExpect(jsonPath("$.activeExitLaneId").doesNotExist());
+			.andExpect(jsonPath("$.activeExitLaneId").value("L01"));
 
 		mockMvc.perform(get("/api/lanes")
 				.header("Authorization", "Bearer " + token))
@@ -792,8 +792,10 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L02')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("GREEN"))
-			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("RED"));
+			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("RED"));
 		assertSingleGreenSignal("L01", "ENTRY");
+		assertSingleGreenSignal("L01", "EXIT");
 
 		assertThat(entryLogRepository.findAll()).isNotEmpty().allMatch(log -> log.getExitTime() != null);
 		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc())
@@ -813,7 +815,7 @@ class LaneOperationsFlowTests {
 				.param("entryTimeTo", "2026-04-21T00:00:00+08:00")
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[?(@.plate=='沪A30001')]").exists());
+			.andExpect(jsonPath("$.items[?(@.plate=='沪A30001')]").exists());
 
 		mockMvc.perform(get("/api/screen/events")
 				.param("includeHandled", "true")
@@ -821,7 +823,7 @@ class LaneOperationsFlowTests {
 				.param("occurredAtTo", "2026-04-21T00:00:00+08:00")
 				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[?(@.type=='wrong_lane' && @.plate=='沪A30001')]").exists());
+			.andExpect(jsonPath("$.items[?(@.type=='wrong_lane' && @.plate=='沪A30001')]").exists());
 	}
 
 	@Test
