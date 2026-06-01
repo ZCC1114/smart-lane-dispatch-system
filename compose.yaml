@@ -101,6 +101,8 @@ services:
       APP_LED_GUIDE_WRITE_MODE: ${APP_LED_GUIDE_WRITE_MODE:-DYNAMIC_WITH_PROGRAM_FALLBACK}
       APP_LED_GUIDE_DYNAMIC_AREA_START_ID: ${APP_LED_GUIDE_DYNAMIC_AREA_START_ID:-0}
       APP_LED_GUIDE_FULL_REFRESH_MS: ${APP_LED_GUIDE_FULL_REFRESH_MS:-60000}
+    volumes:
+      - ./server/logs:/app/logs
     expose:
       - "8080"
     healthcheck:

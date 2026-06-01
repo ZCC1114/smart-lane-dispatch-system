@@ -218,6 +218,26 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void logListEntryTimeShouldUseYardCaptureTimeWhenTicketMatched() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A12345", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A12345", "2026-04-20T08:03:00+08:00");
+
+		String content = mockMvc.perform(get("/api/logs")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.items[0].plate").value("沪A12345"))
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		JsonNode firstLog = objectMapper.readTree(content).path("items").get(0);
+		assertThat(OffsetDateTime.parse(firstLog.path("entryTime").asText()))
+				.isEqualTo(OffsetDateTime.parse("2026-04-20T08:00:00+08:00"));
+	}
+
+	@Test
 	void duplicateLaneEntryAfterYardAssignmentShouldKeepActiveLogOpen() throws Exception {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 		String token = loginAndGetToken();
@@ -255,6 +275,57 @@ class LaneOperationsFlowTests {
 
 		Lane actualLane = laneRepository.findById("L02").orElseThrow();
 		assertThat(actualLane.getVehicleCount()).isEqualTo(1);
+	}
+
+	@Test
+	void entryHandoffShouldAdvanceAfterTwoDifferentVehiclesEnterNextLane() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(6);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(6);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:01:00+08:00");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+
+		postVehicleEntry(token, "L02", "沪A20002", "2026-04-20T09:30:00+08:00");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("RED"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].entrySignal").value("GREEN"));
+		assertSingleGreenSignal("L02", "ENTRY");
+	}
+
+	@Test
+	void entryHandoffShouldAllowPreviousLaneAgainOnNextCycle() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(6);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:01:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20002", "2026-04-20T08:03:00+08:00");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+
+		postVehicleEntry(token, "L02", "沪A20003", "2026-04-20T08:05:00+08:00");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		mockMvc.perform(get("/api/lanes")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("GREEN"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].entrySignal").value("RED"));
+		assertSingleGreenSignal("L01", "ENTRY");
 	}
 
 	@Test

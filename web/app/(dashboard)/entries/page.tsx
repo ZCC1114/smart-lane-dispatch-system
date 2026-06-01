@@ -90,7 +90,7 @@ export default function EntriesPage() {
               downloadCsv(
                 "traffic-logs.csv",
                 [
-                  ["序号", "车牌号码", "实际入道车道编号", "实际入道车道", "分配车道编号", "分配车道", "入场时间", "离场时间", "车辆类型", "通行状态", "操作员"],
+                  ["序号", "车牌号码", "实际入道车道编号", "实际入道车道", "分配车道编号", "分配车道", "总入口抓拍时间", "离场时间", "车辆类型", "通行状态", "操作员"],
                   ...logs.map((log, index) => [
                     String(pageStartIndex + index + 1),
                     log.plate,
@@ -161,7 +161,7 @@ export default function EntriesPage() {
               <span>车牌号码</span>
               <span>实际入道车道</span>
               <span>分配车道</span>
-              <span>入场时间</span>
+              <span>总入口抓拍时间</span>
               <span>出场时间</span>
               <span>车辆类型</span>
               <span>通行状态</span>

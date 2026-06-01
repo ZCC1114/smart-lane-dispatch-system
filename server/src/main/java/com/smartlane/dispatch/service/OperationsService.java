@@ -103,6 +103,7 @@ public class OperationsService {
 			"TEMP_ALLOW",
 			"CORRECT_COUNT",
 			"SET_PRIORITY");
+	private static final int ENTRY_HANDOFF_TRIGGER_THRESHOLD = 2;
 	private static final int LANE_REMAINING_CLEAR_THRESHOLD = 3;
 	private static final int EXIT_HANDOFF_TRIGGER_THRESHOLD = 3;
 	private static final int DEFAULT_PAGE_SIZE = 10;
@@ -125,6 +126,7 @@ public class OperationsService {
 	private final boolean defaultExitDispatchEnabled;
 	private final long assignmentReserveMinutes;
 	private final AtomicLong lastScreenBoardDiagnosticLogAt = new AtomicLong(0L);
+	private final Map<String, Set<String>> entryHandoffTriggerPlates = new ConcurrentHashMap<>();
 	private final Map<String, Integer> exitHandoffTriggerCounts = new ConcurrentHashMap<>();
 
 	public OperationsService(
@@ -565,6 +567,7 @@ public class OperationsService {
 			lane.setLastActionAt(referenceTime);
 			lane.setStatus(resolveStatusForLane(lane, 0L));
 		}
+		entryHandoffTriggerPlates.clear();
 		exitHandoffTriggerCounts.clear();
 
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
@@ -717,6 +720,7 @@ public class OperationsService {
 	public void restoreAutoControl() {
 		OffsetDateTime referenceTime = now();
 		laneDeviceGateway.clearSyncState();
+		entryHandoffTriggerPlates.clear();
 		exitHandoffTriggerCounts.clear();
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
@@ -736,6 +740,7 @@ public class OperationsService {
 	@Transactional
 	public void globalLockdown() {
 		OffsetDateTime referenceTime = now();
+		entryHandoffTriggerPlates.clear();
 		exitHandoffTriggerCounts.clear();
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.FALSE.toString(), referenceTime);
@@ -1077,6 +1082,7 @@ public class OperationsService {
 		entryLog.setSource(source);
 		entryLog = entryLogRepository.save(entryLog);
 		upsertDispatchTicketForLaneEntry(ticket, lane, plate, vehicleType, source, entryTime);
+		recordEntryHandoffIfNeeded(lane, plate, entryTime);
 		flowLog.info(
 				"节点=车道入场登记完成 event=LANE_ENTRY_REGISTERED laneId={} laneName={} plate={} vehicleType={} source={} entryTime={} previousCount={} currentCount={} ticketMatched={}",
 				lane.getId(),
@@ -1806,7 +1812,7 @@ public class OperationsService {
 			String activeEntryLaneId,
 			boolean entryDispatchEnabled,
 			long reservedCount) {
-		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode())) {
 			return "车道离线，入口灯置为离线/关闭";
 		}
 		if (!entryDispatchEnabled) {
@@ -1830,7 +1836,7 @@ public class OperationsService {
 			boolean exitOpenNow,
 			String activeExitLaneId,
 			boolean exitDispatchEnabled) {
-		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+		if ("OFFLINE".equals(decisionMode) || "OFFLINE".equals(lane.getMode())) {
 			return "车道离线，出口灯置为离线/关闭";
 		}
 		if (!exitDispatchEnabled) {
@@ -1849,7 +1855,7 @@ public class OperationsService {
 	}
 
 	private String resolveLedMessage(Lane lane) {
-		if ("OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+		if ("OFFLINE".equals(lane.getMode())) {
 			return "设备离线，等待现场复位";
 		}
 		if ("GREEN".equals(lane.getExitSignal())) {
@@ -2036,7 +2042,6 @@ public class OperationsService {
 
 	private boolean canActivateLane(Lane lane) {
 		return !"OFFLINE".equals(lane.getMode())
-				&& !"OFFLINE".equals(lane.getSensorStatus())
 				&& lane.getCapacity() > 0;
 	}
 
@@ -2185,9 +2190,6 @@ public class OperationsService {
 		if ("OFFLINE".equals(lane.getMode())) {
 			return "车道模式为 OFFLINE";
 		}
-		if ("OFFLINE".equals(lane.getSensorStatus())) {
-			return "设备状态为 OFFLINE";
-		}
 		if (lane.getCapacity() <= 0) {
 			return "车道容量未配置或为 0";
 		}
@@ -2273,6 +2275,81 @@ public class OperationsService {
 			}
 		}
 		return null;
+	}
+
+	private void recordEntryHandoffIfNeeded(Lane enteredLane, String plate, OffsetDateTime referenceTime) {
+		if (enteredLane == null || isBlank(plate)) {
+			return;
+		}
+		if (!currentBooleanConfig(ENTRY_DISPATCH_ENABLED_KEY, defaultEntryDispatchEnabled)) {
+			entryHandoffTriggerPlates.clear();
+			return;
+		}
+		String activeEntryLaneId = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
+		if (isBlank(activeEntryLaneId)) {
+			return;
+		}
+		if (enteredLane.getId().equals(activeEntryLaneId)) {
+			clearEntryHandoffCountsFrom(activeEntryLaneId);
+			return;
+		}
+
+		List<Lane> orderedLanes = sortLanesByOrder(
+				laneRepository.findAllByOrderByCodeAsc(),
+				currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder));
+		String nextLaneId = nextOrderedLaneId(orderedLanes, activeEntryLaneId);
+		if (!enteredLane.getId().equals(nextLaneId)) {
+			return;
+		}
+
+		String key = entryHandoffKey(activeEntryLaneId, nextLaneId);
+		Set<String> plates = entryHandoffTriggerPlates.computeIfAbsent(key, ignored -> ConcurrentHashMap.newKeySet());
+		if (!plates.add(plate)) {
+			return;
+		}
+
+		flowLog.info(
+				"节点=入口相邻车道交接计数 event=ENTRY_HANDOFF_PROGRESS fromLane={} toLane={} plate={} observedAt={} count={} threshold={}",
+				activeEntryLaneId,
+				nextLaneId,
+				plate,
+				referenceTime,
+				plates.size(),
+				ENTRY_HANDOFF_TRIGGER_THRESHOLD);
+		if (plates.size() < ENTRY_HANDOFF_TRIGGER_THRESHOLD) {
+			return;
+		}
+
+		flowLog.info(
+				"节点=入口交接完成 event=ENTRY_HANDOFF_COMPLETED fromLane={} toLane={} triggerCount={} observedAt={} action=ADVANCE_ACTIVE_ENTRY_LANE",
+				activeEntryLaneId,
+				nextLaneId,
+				plates.size(),
+				referenceTime);
+		saveActiveEntrySignalConfig(nextLaneId, referenceTime);
+	}
+
+	private String nextOrderedLaneId(List<Lane> orderedLanes, String currentLaneId) {
+		if (orderedLanes.isEmpty()) {
+			return null;
+		}
+		int currentIndex = laneIndex(orderedLanes, currentLaneId);
+		if (currentIndex < 0) {
+			return null;
+		}
+		return orderedLanes.get((currentIndex + 1) % orderedLanes.size()).getId();
+	}
+
+	private void clearEntryHandoffCountsFrom(String fromLaneId) {
+		if (isBlank(fromLaneId) || entryHandoffTriggerPlates.isEmpty()) {
+			return;
+		}
+		String prefix = fromLaneId + "->";
+		entryHandoffTriggerPlates.keySet().removeIf(key -> key.startsWith(prefix));
+	}
+
+	private String entryHandoffKey(String fromLaneId, String toLaneId) {
+		return firstNonBlank(fromLaneId, "") + "->" + firstNonBlank(toLaneId, "");
 	}
 
 	private boolean isEligibleCurrentExitLane(List<Lane> orderedLanes, Lane currentLane, String activeEntryLaneId) {
@@ -2732,7 +2809,11 @@ public class OperationsService {
 
 	private void saveActiveEntrySignalConfig(String laneId, OffsetDateTime updatedAt) {
 		clearLegacyActiveSignalConfig();
+		String currentValue = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
 		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, laneId, updatedAt);
+		if (!Objects.equals(currentValue, laneId)) {
+			entryHandoffTriggerPlates.clear();
+		}
 	}
 
 	private void saveActiveExitSignalConfig(String laneId, OffsetDateTime updatedAt) {
@@ -2753,6 +2834,7 @@ public class OperationsService {
 		saveActiveLaneConfig(ACTIVE_ENTRY_LANE_KEY, null, updatedAt);
 		saveActiveLaneConfig(ACTIVE_EXIT_LANE_KEY, null, updatedAt);
 		if (changed) {
+			entryHandoffTriggerPlates.clear();
 			exitHandoffTriggerCounts.clear();
 			flowLog.info("节点=入口出口放行游标清空 event=ACTIVE_SIGNAL_CHANGED at={}", updatedAt);
 		}
@@ -3107,7 +3189,7 @@ public class OperationsService {
 	}
 
 	private String resolveStatusForLane(Lane lane, long reservedCount) {
-		if ("OFFLINE".equals(lane.getMode()) || "OFFLINE".equals(lane.getSensorStatus())) {
+		if ("OFFLINE".equals(lane.getMode())) {
 			return "OFFLINE";
 		}
 		if (lane.getCapacity() <= 0) {

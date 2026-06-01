@@ -29,12 +29,19 @@ public record EntryLogView(
 				actualLaneName,
 				ticket == null ? null : ticket.getAssignedLaneId(),
 				ticket == null ? null : ticket.getAssignedLaneName(),
-				log.getEntryTime(),
+				displayEntryTime(log, ticket),
 				log.getExitTime(),
 				log.getVehicleType(),
 				log.getStatus(),
 				log.getSource(),
 				log.getOperator());
+	}
+
+	private static OffsetDateTime displayEntryTime(EntryLog log, DispatchTicket ticket) {
+		if (ticket != null && ticket.getYardEntryTime() != null) {
+			return ticket.getYardEntryTime();
+		}
+		return log.getEntryTime();
 	}
 
 	private static String actualLaneId(EntryLog log, DispatchTicket ticket) {

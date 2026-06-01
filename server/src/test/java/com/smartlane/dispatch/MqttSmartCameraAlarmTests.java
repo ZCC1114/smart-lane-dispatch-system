@@ -15,6 +15,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.smartlane.dispatch.device.MqttDeviceGateway;
 import com.smartlane.dispatch.dto.YardEntryPayload;
+import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
@@ -157,6 +158,40 @@ class MqttSmartCameraAlarmTests {
 				.containsExactly("苏BFE2000");
 	}
 
+	@Test
+	void smartCameraDevOfflineShouldNotMoveActiveExitLane() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		laneOne.setVehicleCount(1);
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneTwo.setVehicleCount(2);
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+		saveConfig("active_exit_lane", "L01");
+
+		ingestSmartCameraCommand("devOffline");
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+	}
+
+	@Test
+	void sensorOfflineStatusShouldNotBlockDispatchSelection() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		laneOne.setVehicleCount(1);
+		laneOne.setSensorStatus("OFFLINE");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneTwo.setVehicleCount(2);
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+		saveConfig("active_exit_lane", "L01");
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
+		Lane refreshedLane = operationsService.getLanes().stream()
+				.filter(lane -> "L01".equals(lane.getId()))
+				.findFirst()
+				.orElseThrow();
+		assertThat(refreshedLane.getStatus()).isNotEqualTo("OFFLINE");
+		assertThat(refreshedLane.getExitSignal()).isEqualTo("GREEN");
+	}
+
 	private void ingestSmartCameraAlarm(String alarmType, String plate, String inOut, String alarmTime) {
 		ingestSmartCameraAlarm("18030023526b", alarmType, plate, inOut, alarmTime);
 	}
@@ -181,6 +216,32 @@ class MqttSmartCameraAlarmTests {
 				"handleRawMqttMessage",
 				"/device/%s/update".formatted(devId),
 				payload.getBytes(StandardCharsets.UTF_8));
+	}
+
+	private void ingestSmartCameraCommand(String cmd) {
+		String payload = """
+				{
+				  "cmd": "%s",
+				  "msgId": "smart-camera-health-test",
+				  "devId": "18030023526b",
+				  "utcTs": 1778057934,
+				  "content": {}
+				}
+				""".formatted(cmd);
+		ReflectionTestUtils.invokeMethod(
+				mqttDeviceGateway,
+				"handleRawMqttMessage",
+				"/device/18030023526b/update",
+				payload.getBytes(StandardCharsets.UTF_8));
+	}
+
+	private void saveConfig(String key, String value) {
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey(key)
+				.configValue(value)
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
 	}
 
 	private Lane buildLane(String id, String code, String name) {
