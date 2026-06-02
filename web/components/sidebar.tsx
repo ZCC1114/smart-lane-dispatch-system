@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
+  BadgeCheck,
   ClipboardPenLine,
   ChevronRight,
   History,
@@ -39,6 +40,7 @@ const navItems = [
   { href: "/entries", label: "车辆流水", icon: History, visible: () => true },
   { href: "/signals", label: "信号灯控制", icon: Settings2, visible: () => true },
   { href: "/blacklist", label: "黑名单管理", icon: Shield, visible: () => true },
+  { href: "/whitelist", label: "白名单管理", icon: BadgeCheck, visible: () => true },
   { href: "/vehicle-alerts", label: "车辆告警", icon: TriangleAlert, visible: () => true },
   { href: "/dispatch", label: "调度设置", icon: ClipboardPenLine, visible: canDispatch },
 ];

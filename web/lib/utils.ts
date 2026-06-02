@@ -114,6 +114,7 @@ export function dispatchTicketStatusLabel(status: DispatchTicket["status"] | str
     EXPIRED: "预分配超时",
     RESET: "日清关闭",
     NO_LANE_AVAILABLE: "暂无可用车道",
+    NOT_WHITELISTED: "非白名单拦截",
   };
   return mapping[status] ?? status;
 }
@@ -133,6 +134,7 @@ export function dispatchTicketSourceLabel(source: string) {
 export function screenEventTypeLabel(type: ScreenEventType | string) {
   const mapping: Record<string, string> = {
     blacklist: "黑名单",
+    not_whitelisted: "非白名单",
     wrong_lane: "走错车道",
     not_entered: "未进车道",
     other: "其他",

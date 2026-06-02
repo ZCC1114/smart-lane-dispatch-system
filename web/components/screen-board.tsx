@@ -88,7 +88,7 @@ interface LaneSnapshot {
 
 interface ScreenEvent {
   id: string;
-  type: "blacklist" | "wrong_lane" | "not_entered" | "other";
+  type: "blacklist" | "not_whitelisted" | "wrong_lane" | "not_entered" | "other";
   plate: string;
   message: string;
   occurredAt: string;
@@ -541,15 +541,18 @@ function AlertRow({
 function EventRows({
   events,
   type,
+  types,
   blue = false,
   onHandle,
 }: {
   events: ScreenEvent[];
   type: ScreenEvent["type"];
+  types?: ScreenEvent["type"][];
   blue?: boolean;
   onHandle: (event: ScreenEvent) => void;
 }) {
-  const rows = events.filter((event) => event.type === type).slice(0, 10);
+  const acceptedTypes = types ?? [type];
+  const rows = events.filter((event) => acceptedTypes.includes(event.type)).slice(0, 10);
   const visibleRows = 3;
   const rowHeight = 49;
 
@@ -1344,7 +1347,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           <EventRows events={events} type="not_entered" onHandle={requestHandleEvent} />
         </Panel>
         <Panel title="其他" x={16} y={860}>
-          <EventRows events={events} type="other" onHandle={requestHandleEvent} />
+          <EventRows events={events} type="other" types={["other", "not_whitelisted"]} onHandle={requestHandleEvent} />
         </Panel>
 
         <LaneOverlays

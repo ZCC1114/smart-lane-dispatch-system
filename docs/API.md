@@ -34,6 +34,11 @@
 | POST | `/api/blacklist` | `ADMIN` | 新增黑名单 |
 | PUT | `/api/blacklist/{id}` | `ADMIN` | 更新黑名单 |
 | DELETE | `/api/blacklist/{id}` | `ADMIN` | 删除黑名单 |
+| GET | `/api/whitelist` | `ADMIN` | 白名单分页检索 |
+| POST | `/api/whitelist/import` | `ADMIN` | 导入白名单 Excel，字段名 `file` |
+| GET | `/api/whitelist/import-progress/{jobId}` | `ADMIN` | 查询白名单导入任务进度 |
+| GET | `/api/whitelist/settings` | `ADMIN` | 查询白名单过滤开关 |
+| PUT | `/api/whitelist/settings` | `ADMIN` | 更新白名单过滤开关 |
 | POST | `/api/signals/{laneId}` | `ADMIN`,`DISPATCHER` | 手动覆盖信号灯与车道模式 |
 | POST | `/api/signals/restore-auto` | `ADMIN`,`DISPATCHER` | 恢复全域自动联动 |
 | POST | `/api/signals/lockdown` | `ADMIN`,`DISPATCHER` | 执行全域锁死 |

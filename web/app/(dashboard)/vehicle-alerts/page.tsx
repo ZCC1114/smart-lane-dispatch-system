@@ -13,6 +13,7 @@ import { cn, downloadCsv, formatDateTime, formatPlateDisplay, screenEventTypeLab
 
 const eventTypes: Array<{ value: ScreenEventType; label: string }> = [
   { value: "blacklist", label: "黑名单" },
+  { value: "not_whitelisted", label: "非白名单" },
   { value: "wrong_lane", label: "走错车道" },
   { value: "not_entered", label: "未进车道" },
   { value: "other", label: "其他" },
@@ -36,6 +37,7 @@ function todayRange() {
 
 function eventTypeClass(type: string) {
   if (type === "blacklist") return "border-red-200 bg-red-50 text-red-700";
+  if (type === "not_whitelisted") return "border-orange-200 bg-orange-50 text-orange-700";
   if (type === "wrong_lane") return "border-amber-200 bg-amber-50 text-amber-700";
   if (type === "not_entered") return "border-sky-200 bg-sky-50 text-sky-700";
   return "border-slate-200 bg-slate-100 text-slate-700";

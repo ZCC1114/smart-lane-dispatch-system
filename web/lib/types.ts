@@ -74,7 +74,7 @@ export interface EntryLog {
   operator: string;
 }
 
-export type ScreenEventType = "blacklist" | "wrong_lane" | "not_entered" | "other";
+export type ScreenEventType = "blacklist" | "not_whitelisted" | "wrong_lane" | "not_entered" | "other";
 
 export interface ScreenEvent {
   id: string;
@@ -98,6 +98,45 @@ export interface BlacklistRecord {
   effectiveDate: string;
   operator: string;
   active: boolean;
+}
+
+export interface WhitelistRecord {
+  id: string;
+  plate: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+}
+
+export interface WhitelistImportResult {
+  totalRows: number;
+  validRows: number;
+  importedPlates: number;
+  createdCount: number;
+  updatedCount: number;
+  duplicateRows: number;
+  invalidRows: number;
+}
+
+export interface WhitelistImportProgress {
+  jobId: string;
+  status: "WAITING" | "PARSING" | "WRITING" | "CACHING" | "DONE" | "FAILED";
+  percent: number;
+  totalRows: number;
+  validRows: number;
+  importedPlates: number;
+  createdCount: number;
+  updatedCount: number;
+  duplicateRows: number;
+  invalidRows: number;
+  message: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface WhitelistSettings {
+  filterEnabled: boolean;
 }
 
 export interface PageResult<T> {
@@ -175,7 +214,8 @@ export interface DispatchTicket {
     | "EXITED"
     | "EXPIRED"
     | "RESET"
-    | "NO_LANE_AVAILABLE";
+    | "NO_LANE_AVAILABLE"
+    | "NOT_WHITELISTED";
   source: string;
   operator: string;
   notes: string | null;

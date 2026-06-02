@@ -14,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.smartlane.dispatch.device.MqttDeviceGateway;
+import com.smartlane.dispatch.dto.ScreenEventView;
 import com.smartlane.dispatch.dto.YardEntryPayload;
 import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.EntryLog;
@@ -104,11 +105,45 @@ class MqttSmartCameraAlarmTests {
 		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
 
 		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
-		assertThat(updatedLaneOne.getVehicleCount()).isZero();
+		assertThat(updatedLaneOne.getVehicleCount()).isEqualTo(1);
 		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("DEGRADED");
 		assertThat(updatedLaneOne.getStatus()).isEqualTo("FULL");
-		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏BFE8888");
 		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+	}
+
+	@Test
+	void smartCameraTailStayFullShouldNotDuplicateAlreadyRegisteredPlate() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+
+		ingestSmartCameraAlarm("1", "苏BFE8888", "in", "2026-05-06 17:02:00");
+		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
+
+		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
+		assertThat(updatedLaneOne.getVehicleCount()).isEqualTo(1);
+		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("DEGRADED");
+		assertThat(updatedLaneOne.getStatus()).isEqualTo("FULL");
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏BFE8888");
+	}
+
+	@Test
+	void smartCameraTailStayFullShouldNotCreateOtherDeviceEvent() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+
+		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
+
+		List<ScreenEventView> events = operationsService.getScreenEvents(null, null, null, true);
+		assertThat(events)
+				.noneMatch(event -> "other".equals(event.type()) && "L01".equals(event.sourceId()));
+		assertThat(laneRepository.findById("L01").orElseThrow().getStatus()).isEqualTo("FULL");
 	}
 
 	@Test
@@ -124,8 +159,34 @@ class MqttSmartCameraAlarmTests {
 		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
 		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("DEGRADED");
 		assertThat(updatedLaneOne.getStatus()).isEqualTo("FULL");
-		assertThat(updatedLaneOne.getVehicleCount()).isZero();
-		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(updatedLaneOne.getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏BFE8888");
+	}
+
+	@Test
+	void normalLaneEntryShouldRecoverTailStayFullProtection() {
+		Lane laneOne = buildLane("L01", "L01", "1号车道");
+		Lane laneTwo = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(laneOne, laneTwo));
+
+		ingestSmartCameraAlarm("49409", "苏BFE8888", "in", "2026-05-06 17:02:10");
+
+		operationsService.registerVehicleEntryFromDevice(
+				"L01",
+				"苏BFE9999",
+				at("2026-05-06T17:03:00+08:00"),
+				"出租车",
+				"SMART_CAMERA");
+
+		Lane updatedLaneOne = laneRepository.findById("L01").orElseThrow();
+		assertThat(updatedLaneOne.getSensorStatus()).isEqualTo("ONLINE");
+		assertThat(updatedLaneOne.getStatus()).isEqualTo("BUSY");
+		assertThat(updatedLaneOne.getVehicleCount()).isEqualTo(2);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏BFE8888", "苏BFE9999");
 	}
 
 	@Test

@@ -9,6 +9,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,6 +23,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +37,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.smartlane.dispatch.device.LaneDeviceGateway;
@@ -50,6 +57,10 @@ import com.smartlane.dispatch.dto.ScreenEventView;
 import com.smartlane.dispatch.dto.ThroughputPoint;
 import com.smartlane.dispatch.dto.VehicleEntryPayload;
 import com.smartlane.dispatch.dto.YardEntryPayload;
+import com.smartlane.dispatch.dto.WhitelistImportProgress;
+import com.smartlane.dispatch.dto.WhitelistImportResult;
+import com.smartlane.dispatch.dto.WhitelistSettingsRequest;
+import com.smartlane.dispatch.dto.WhitelistSettingsView;
 import com.smartlane.dispatch.entity.BlacklistRecord;
 import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.DispatchTicket;
@@ -57,6 +68,7 @@ import com.smartlane.dispatch.entity.EntryLog;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.entity.ScreenAcknowledgedEvent;
 import com.smartlane.dispatch.entity.ScreenHandledEvent;
+import com.smartlane.dispatch.entity.WhitelistRecord;
 import com.smartlane.dispatch.repository.BlacklistRecordRepository;
 import com.smartlane.dispatch.repository.DispatchConfigRepository;
 import com.smartlane.dispatch.repository.DispatchTicketRepository;
@@ -64,6 +76,7 @@ import com.smartlane.dispatch.repository.EntryLogRepository;
 import com.smartlane.dispatch.repository.LaneRepository;
 import com.smartlane.dispatch.repository.ScreenAcknowledgedEventRepository;
 import com.smartlane.dispatch.repository.ScreenHandledEventRepository;
+import com.smartlane.dispatch.repository.WhitelistRecordRepository;
 
 import jakarta.annotation.PostConstruct;
 
@@ -87,6 +100,7 @@ public class OperationsService {
 	private static final String ACTIVE_SIGNAL_DIRECTION_KEY = "active_signal_direction";
 	private static final String ASSIGNMENT_RESERVE_MINUTES_KEY = "assignment_reserve_minutes";
 	private static final String LAST_DAILY_RESET_AT_KEY = "last_daily_reset_at";
+	private static final String WHITELIST_FILTER_ENABLED_KEY = "whitelist_filter_enabled";
 	private static final String LEGACY_EXIT_LANE_ORDER_KEY = "exit_lane_order";
 	private static final String LEGACY_ENTRY_DISPATCH_CURSOR_KEY = "entry_dispatch_cursor";
 	private static final String LEGACY_ENTRY_DISPATCH_PAUSED_LANE_KEY = "entry_dispatch_paused_lane";
@@ -109,14 +123,37 @@ public class OperationsService {
 	private static final int DEFAULT_PAGE_SIZE = 10;
 	private static final int MAX_PAGE_SIZE = 200;
 
+	public enum LaneExitTriggerAction {
+		CURRENT_DEDUCTED,
+		HANDOFF_BUFFERED,
+		HANDOFF_COMPLETED,
+		IGNORED_NO_ACTIVE_EXIT,
+		IGNORED_NOT_CURRENT_OR_NEXT
+	}
+
+	public record LaneExitTriggerResult(
+			Lane lane,
+			LaneExitTriggerAction action,
+			String activeExitLaneIdBefore,
+			String activeExitLaneIdAfter,
+			String nextHandoffLaneId,
+			int previousVehicleCount,
+			int currentVehicleCount,
+			int deductedCount,
+			int handoffCount,
+			int handoffThreshold) {
+	}
+
 	private final LaneRepository laneRepository;
 	private final DispatchConfigRepository dispatchConfigRepository;
 	private final EntryLogRepository entryLogRepository;
 	private final BlacklistRecordRepository blacklistRecordRepository;
+	private final WhitelistRecordRepository whitelistRecordRepository;
 	private final DispatchTicketRepository dispatchTicketRepository;
 	private final BroadcastService broadcastService;
 	private final ApplicationEventPublisher eventPublisher;
 	private final DashboardCacheService dashboardCacheService;
+	private final WhitelistCacheService whitelistCacheService;
 	private final LaneDeviceGateway laneDeviceGateway;
 	private final LaneRuntimeStateService laneRuntimeStateService;
 	private final ScreenAcknowledgedEventRepository screenAcknowledgedEventRepository;
@@ -128,16 +165,19 @@ public class OperationsService {
 	private final AtomicLong lastScreenBoardDiagnosticLogAt = new AtomicLong(0L);
 	private final Map<String, Set<String>> entryHandoffTriggerPlates = new ConcurrentHashMap<>();
 	private final Map<String, Integer> exitHandoffTriggerCounts = new ConcurrentHashMap<>();
+	private final Map<String, WhitelistImportProgressState> whitelistImportProgress = new ConcurrentHashMap<>();
 
 	public OperationsService(
 			LaneRepository laneRepository,
 			DispatchConfigRepository dispatchConfigRepository,
 			EntryLogRepository entryLogRepository,
 			BlacklistRecordRepository blacklistRecordRepository,
+			WhitelistRecordRepository whitelistRecordRepository,
 			DispatchTicketRepository dispatchTicketRepository,
 			BroadcastService broadcastService,
 			ApplicationEventPublisher eventPublisher,
 			DashboardCacheService dashboardCacheService,
+			WhitelistCacheService whitelistCacheService,
 			LaneDeviceGateway laneDeviceGateway,
 			LaneRuntimeStateService laneRuntimeStateService,
 			ScreenAcknowledgedEventRepository screenAcknowledgedEventRepository,
@@ -150,10 +190,12 @@ public class OperationsService {
 		this.dispatchConfigRepository = dispatchConfigRepository;
 		this.entryLogRepository = entryLogRepository;
 		this.blacklistRecordRepository = blacklistRecordRepository;
+		this.whitelistRecordRepository = whitelistRecordRepository;
 		this.dispatchTicketRepository = dispatchTicketRepository;
 		this.broadcastService = broadcastService;
 		this.eventPublisher = eventPublisher;
 		this.dashboardCacheService = dashboardCacheService;
+		this.whitelistCacheService = whitelistCacheService;
 		this.laneDeviceGateway = laneDeviceGateway;
 		this.laneRuntimeStateService = laneRuntimeStateService;
 		this.screenAcknowledgedEventRepository = screenAcknowledgedEventRepository;
@@ -229,7 +271,8 @@ public class OperationsService {
 			if (currentCycleStart != null && ticketTime(ticket).isBefore(currentCycleStart)) {
 				continue;
 			}
-			if (activeBlacklistByPlate.containsKey(normalizePlate(ticket.getPlate()))) {
+			boolean blacklisted = activeBlacklistByPlate.containsKey(normalizePlate(ticket.getPlate()));
+			if (blacklisted) {
 				events.add(screenEvent(
 						"blacklist",
 						"BL-" + ticket.getId(),
@@ -238,6 +281,17 @@ public class OperationsService {
 						ticketTime(ticket),
 						ticket.getId(),
 						ticket.getAssignedLaneName()));
+			}
+
+			if (!blacklisted && "NOT_WHITELISTED".equals(ticket.getStatus())) {
+				events.add(screenEvent(
+						"not_whitelisted",
+						"NW-" + ticket.getId(),
+						ticket.getPlate(),
+						"非白名单车辆，总入口识别后已禁止参与车道分配",
+						ticketTime(ticket),
+						ticket.getId(),
+						firstNonBlank(ticket.getAssignedLaneName(), "总入口")));
 			}
 
 			if ("ENTERED_MISMATCH".equals(ticket.getStatus())) {
@@ -265,7 +319,7 @@ public class OperationsService {
 
 		for (Lane lane : refreshLaneRuntime(referenceTime)) {
 			OffsetDateTime sensorTime = firstNonNull(lane.getLastSensorAt(), lane.getLastActionAt(), referenceTime);
-			if (!"ONLINE".equals(defaultSensorStatus(lane.getSensorStatus()))
+			if (shouldCreateDeviceStatusEvent(lane)
 					&& (currentCycleStart == null || !sensorTime.isBefore(currentCycleStart))) {
 				events.add(screenEvent(
 						"other",
@@ -628,6 +682,127 @@ public class OperationsService {
 		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
 	}
 
+	public PageResult<WhitelistRecord> getWhitelist(String query, int page, int pageSize) {
+		int normalizedPage = normalizePage(page);
+		int normalizedPageSize = normalizePageSize(pageSize);
+		Page<WhitelistRecord> records = whitelistRecordRepository.search(
+				blankToNull(query),
+				PageRequest.of(normalizedPage - 1, normalizedPageSize));
+		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
+	}
+
+	public WhitelistSettingsView getWhitelistSettings() {
+		return new WhitelistSettingsView(currentBooleanConfig(WHITELIST_FILTER_ENABLED_KEY, false));
+	}
+
+	@Transactional
+	public WhitelistSettingsView updateWhitelistSettings(WhitelistSettingsRequest request) {
+		OffsetDateTime referenceTime = now();
+		saveDispatchConfig(WHITELIST_FILTER_ENABLED_KEY, Boolean.toString(request.filterEnabled()), referenceTime);
+		invalidateRuntimeViews("whitelist_settings_updated");
+		return getWhitelistSettings();
+	}
+
+	public WhitelistImportProgress getWhitelistImportProgress(String jobId) {
+		if (isBlank(jobId)) {
+			return new WhitelistImportProgress("", "WAITING", 0, 0, 0, 0, 0, 0, 0, 0, "等待导入任务开始", null, null);
+		}
+		WhitelistImportProgressState progress = whitelistImportProgress.get(jobId.trim());
+		if (progress == null) {
+			return new WhitelistImportProgress(jobId.trim(), "WAITING", 0, 0, 0, 0, 0, 0, 0, 0, "等待服务端接收文件", null, null);
+		}
+		return progress.snapshot();
+	}
+
+	@Transactional
+	public WhitelistImportResult importWhitelist(MultipartFile file, String operator) {
+		return importWhitelist(file, operator, null);
+	}
+
+	@Transactional
+	public WhitelistImportResult importWhitelist(MultipartFile file, String operator, String jobId) {
+		WhitelistImportProgressState progress = beginWhitelistImportProgress(jobId);
+		try {
+			ParsedWhitelistImport parsed = parseWhitelistImport(file, progress);
+			if (parsed.plates().isEmpty()) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "导入文件中没有有效车牌号");
+			}
+
+			String normalizedOperator = firstNonBlank(operator, "系统管理员");
+			OffsetDateTime referenceTime = now();
+			int createdCount = 0;
+			int updatedCount = 0;
+			List<List<String>> batches = partition(parsed.plates(), 1000);
+			int totalBatches = Math.max(1, batches.size());
+			for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
+				List<String> batch = batches.get(batchIndex);
+				Map<String, WhitelistRecord> existingByPlate = whitelistRecordRepository.findByPlateIn(batch).stream()
+						.collect(Collectors.toMap(
+								record -> normalizePlate(record.getPlate()),
+								record -> record,
+								(first, ignored) -> first));
+				List<WhitelistRecord> records = new ArrayList<>(batch.size());
+				for (String plate : batch) {
+					WhitelistRecord record = existingByPlate.get(plate);
+					if (record == null) {
+						createdCount++;
+						record = WhitelistRecord.builder()
+								.id("WT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
+								.plate(plate)
+								.createdAt(referenceTime)
+								.createdBy(normalizedOperator)
+								.build();
+					} else {
+						updatedCount++;
+					}
+					record.setUpdatedAt(referenceTime);
+					record.setUpdatedBy(normalizedOperator);
+					records.add(record);
+				}
+				whitelistRecordRepository.saveAll(records);
+				int percent = 40 + (int) Math.round(((batchIndex + 1) * 55.0) / totalBatches);
+				progress.update(
+						"WRITING",
+						Math.min(95, percent),
+						parsed.totalRows(),
+						parsed.validRows(),
+						parsed.plates().size(),
+						createdCount,
+						updatedCount,
+						parsed.duplicateRows(),
+						parsed.invalidRows(),
+						"正在写入数据库：" + (batchIndex + 1) + "/" + totalBatches + " 批");
+			}
+			progress.update(
+					"CACHING",
+					98,
+					parsed.totalRows(),
+					parsed.validRows(),
+					parsed.plates().size(),
+					createdCount,
+					updatedCount,
+					parsed.duplicateRows(),
+					parsed.invalidRows(),
+					"正在刷新白名单缓存");
+			whitelistCacheService.refresh();
+			invalidateRuntimeViews("whitelist_imported");
+			WhitelistImportResult result = new WhitelistImportResult(
+					parsed.totalRows(),
+					parsed.validRows(),
+					parsed.plates().size(),
+					createdCount,
+					updatedCount,
+					parsed.duplicateRows(),
+					parsed.invalidRows());
+			progress.complete(result);
+			return result;
+		}
+		catch (RuntimeException exception) {
+			progress.fail(importFailureMessage(exception));
+			throw exception;
+		}
+	}
+
 	@Transactional
 	public BlacklistRecord createBlacklist(BlacklistPayload payload) {
 		validateBlacklistPayload(payload);
@@ -678,6 +853,9 @@ public class OperationsService {
 		lane.setMode("AUTO");
 		lane.setLastActionAt(referenceTime);
 		laneRuntimeStateService.clearManualTarget(lane.getId());
+		if ("GREEN".equals(request.entrySignal())) {
+			clearTailStayProtectionIfLaneHasCapacity(lane, referenceTime, "manual_entry_signal_override");
+		}
 		boolean allRedRequest = "RED".equals(request.entrySignal()) && "RED".equals(request.exitSignal());
 		String currentActiveEntryLaneId = currentStringConfig(ACTIVE_ENTRY_LANE_KEY, null);
 		String currentActiveExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
@@ -693,7 +871,7 @@ public class OperationsService {
 			saveActiveExitSignalConfig(lane.getId(), referenceTime);
 		} else if ("RED".equals(request.exitSignal())
 				&& (lane.getId().equals(currentActiveExitLaneId) || (allRedRequest && isBlank(currentActiveExitLaneId)))) {
-			advanceExitSignalAfterCleared(referenceTime, lane.getId());
+			advanceExitSignalAfterCleared(referenceTime, lane.getId(), false, "manual_exit_signal_override");
 		}
 		lane.setStatus(resolveStatusForLane(lane, pendingAssignmentCounts(referenceTime).getOrDefault(lane.getId(), 0L)));
 		return persistLaneRuntime(lane.getId(), referenceTime, "signal_override");
@@ -870,6 +1048,10 @@ public class OperationsService {
 			return null;
 		}
 
+		if (currentBooleanConfig(WHITELIST_FILTER_ENABLED_KEY, false) && !whitelistCacheService.contains(normalizedPlate)) {
+			return registerNonWhitelistedYardEntry(normalizedPlate, payload, normalizedSource, capturedAt);
+		}
+
 		expireStaleDispatchTickets(capturedAt);
 		DispatchTicket duplicateOpenTicket = findLatestOpenTicketByPlate(normalizedPlate);
 		if (duplicateOpenTicket != null) {
@@ -996,6 +1178,52 @@ public class OperationsService {
 		return ticket;
 	}
 
+	private DispatchTicket registerNonWhitelistedYardEntry(
+			String normalizedPlate,
+			YardEntryPayload payload,
+			String normalizedSource,
+			OffsetDateTime capturedAt) {
+		expireStaleDispatchTickets(capturedAt);
+		DispatchTicket existingTicket = findLatestNonWhitelistedTicketByPlate(normalizedPlate);
+		if (existingTicket != null) {
+			flowLog.info(
+					"节点=总入口非白名单重复抓拍忽略 event=YARD_ENTRY_NON_WHITELISTED_DUPLICATE plate={} plateColor={} source={} capturedAt={} existingTicketId={} reason=OPEN_NON_WHITELISTED_TICKET_EXISTS",
+					normalizedPlate,
+					payload.plateColor(),
+					normalizedSource,
+					capturedAt,
+					existingTicket.getId());
+			return existingTicket;
+		}
+		DispatchTicket ticket = DispatchTicket.builder()
+				.id("DSP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
+				.plate(normalizedPlate)
+				.yardEntryTime(capturedAt)
+				.vehicleType(isBlank(payload.vehicleType()) ? "出租车" : payload.vehicleType())
+				.status("NOT_WHITELISTED")
+				.source(normalizedSource)
+				.operator("总入口抓拍")
+				.notes("非白名单车辆，总入口不参与车道分配")
+				.build();
+		dispatchTicketRepository.save(ticket);
+		log.warn(
+				"Yard entry rejected by whitelist plate={} plateColor={} source={} capturedAt={} ticketId={}",
+				normalizedPlate,
+				payload.plateColor(),
+				normalizedSource,
+				capturedAt,
+				ticket.getId());
+		flowLog.warn(
+				"节点=总入口非白名单拦截 event=YARD_ENTRY_NON_WHITELISTED plate={} plateColor={} source={} capturedAt={} ticketId={} reason=WHITELIST_MISSED",
+				normalizedPlate,
+				payload.plateColor(),
+				normalizedSource,
+				capturedAt,
+				ticket.getId());
+		invalidateRuntimeViews("yard_entry_non_whitelisted");
+		return ticket;
+	}
+
 	@Transactional
 	public EntryLog registerVehicleEntry(VehicleEntryPayload payload) {
 		Lane lane = requireLane(payload.laneId());
@@ -1010,8 +1238,7 @@ public class OperationsService {
 		EntryLog activeLogInLane = findActiveEntryLogInLane(lane.getId(), plate);
 		if (activeTicket != null) {
 			if (lane.getId().equals(activeTicket.getActualLaneId()) && activeLogInLane != null) {
-				lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-				lane.setLastSensorAt(entryTime);
+				markLaneSensorHealthy(lane, entryTime, "vehicle_entry_duplicate_ignored");
 				lane.setLastEntryAt(entryTime);
 				lane.setLastEntryPlate(plate);
 				lane.setLastActionAt(entryTime);
@@ -1044,8 +1271,7 @@ public class OperationsService {
 			ticket = findLatestRecoverableExpiredTicketByPlate(plate, entryTime);
 		}
 		if (activeLogInLane != null && ticket == null) {
-			lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-			lane.setLastSensorAt(entryTime);
+			markLaneSensorHealthy(lane, entryTime, "vehicle_entry_duplicate_ignored");
 			lane.setLastEntryAt(entryTime);
 			lane.setLastEntryPlate(plate);
 			lane.setLastActionAt(entryTime);
@@ -1063,8 +1289,7 @@ public class OperationsService {
 		int previousVehicleCount = lane.getVehicleCount();
 		lane.setVehicleCount(Math.min(lane.getCapacity(), lane.getVehicleCount() + 1));
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), entryTime);
-		lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-		lane.setLastSensorAt(entryTime);
+		markLaneSensorHealthy(lane, entryTime, "vehicle_entry_registered");
 		lane.setLastEntryAt(entryTime);
 		lane.setLastEntryPlate(plate);
 		lane.setLastActionAt(entryTime);
@@ -1115,7 +1340,7 @@ public class OperationsService {
 				nullToEmpty(previousSensorStatus),
 				sensorStatus,
 				nullToEmpty(ledMessage),
-				"DEGRADED".equals(sensorStatus) ? "按满车/异常保护处理，入口自动调度会跳过该车道" : "设备状态恢复或更新",
+				"DEGRADED".equals(sensorStatus) ? "按车道已满保护处理，入口自动调度会跳过该车道" : "设备状态恢复或更新",
 				referenceTime);
 		if (!isBlank(ledMessage)) {
 			laneRuntimeStateService.recordDeviceMessage(laneId, ledMessage, referenceTime);
@@ -1162,6 +1387,7 @@ public class OperationsService {
 		if (delta == 0) {
 			return persistLaneRuntime(laneId, referenceTime, "pass_count_heartbeat");
 		}
+		markLaneSensorHealthy(lane, referenceTime, "pass_count_delta");
 
 		if (delta < 0) {
 			int exitCount = Math.min(previousVehicleCount, Math.abs(delta));
@@ -1200,8 +1426,7 @@ public class OperationsService {
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "该车道内没有匹配的车辆，已忽略出场模拟"));
 
 		int previousVehicleCount = lane.getVehicleCount();
-		lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-		lane.setLastSensorAt(referenceTime);
+		markLaneSensorHealthy(lane, referenceTime, "vehicle_exit_registered");
 		lane.setLastActionAt(referenceTime);
 		lane.setVehicleCount(Math.max(0, previousVehicleCount - 1));
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
@@ -1306,7 +1531,13 @@ public class OperationsService {
 
 	@Transactional
 	public Lane applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
+		return applyLaneExitTriggerWithResult(laneId, observedAt).lane();
+	}
+
+	@Transactional
+	public LaneExitTriggerResult applyLaneExitTriggerWithResult(String laneId, OffsetDateTime observedAt) {
 		Lane lane = requireLane(laneId);
+		int previousVehicleCount = lane.getVehicleCount();
 		OffsetDateTime referenceTime = resolveTime(observedAt);
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
@@ -1315,46 +1546,102 @@ public class OperationsService {
 				? currentStringConfig(ACTIVE_EXIT_LANE_KEY, null)
 				: null;
 		if (laneId.equals(activeExitLaneId)) {
-			return exitLaneByLoopTrigger(laneId, referenceTime, "lane_exit_triggered");
+			Lane updatedLane = exitLaneByLoopTrigger(laneId, referenceTime, "lane_exit_triggered");
+			String activeExitLaneIdAfter = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
+			return new LaneExitTriggerResult(
+					updatedLane,
+					LaneExitTriggerAction.CURRENT_DEDUCTED,
+					activeExitLaneId,
+					activeExitLaneIdAfter,
+					null,
+					previousVehicleCount,
+					updatedLane.getVehicleCount(),
+					Math.max(0, previousVehicleCount - updatedLane.getVehicleCount()),
+					0,
+					EXIT_HANDOFF_TRIGGER_THRESHOLD);
 		}
 
-		Lane updatedLane = exitLaneByLoopTrigger(laneId, referenceTime, "lane_exit_triggered_non_active");
 		if (isBlank(activeExitLaneId)) {
 			flowLog.info(
-					"节点=非出口放行地感已扣减 event=EXIT_LOOP_NON_ACTIVE_PROCESSED laneId={} laneName={} observedAt={} activeExitLane={} reason=NO_ACTIVE_EXIT",
-					lane.getId(),
-					lane.getName(),
-					referenceTime,
-					"");
-			return updatedLane;
+					"节点=非出口放行地感忽略 event=EXIT_LOOP_NON_ACTIVE_IGNORED laneId={} laneName={} observedAt={} activeExitLane={} reason=NO_ACTIVE_EXIT",
+						lane.getId(),
+						lane.getName(),
+						referenceTime,
+						"");
+			Lane updatedLane = persistLaneRuntime(laneId, referenceTime, "exit_loop_non_active_ignored");
+			return new LaneExitTriggerResult(
+					updatedLane,
+					LaneExitTriggerAction.IGNORED_NO_ACTIVE_EXIT,
+					activeExitLaneId,
+					currentStringConfig(ACTIVE_EXIT_LANE_KEY, null),
+					null,
+					previousVehicleCount,
+					updatedLane.getVehicleCount(),
+					0,
+					0,
+					EXIT_HANDOFF_TRIGGER_THRESHOLD);
 		}
 
 		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
 		String nextHandoffLaneId = nextExitHandoffLaneId(orderedLanes, activeExitLaneId);
 		if (!laneId.equals(nextHandoffLaneId)) {
-			flowLog.info(
-					"节点=非相邻出口地感已扣减 event=EXIT_LOOP_NON_ACTIVE_PROCESSED laneId={} laneName={} observedAt={} activeExitLane={} nextHandoffLane={} reason=NOT_CURRENT_OR_NEXT",
-					lane.getId(),
-					lane.getName(),
-					referenceTime,
+				flowLog.info(
+						"节点=非相邻出口地感忽略 event=EXIT_LOOP_NON_ACTIVE_IGNORED laneId={} laneName={} observedAt={} activeExitLane={} nextHandoffLane={} reason=NOT_CURRENT_OR_NEXT",
+						lane.getId(),
+						lane.getName(),
+						referenceTime,
+						activeExitLaneId,
+						nullToEmpty(nextHandoffLaneId));
+			Lane updatedLane = persistLaneRuntime(laneId, referenceTime, "exit_loop_non_active_ignored");
+			return new LaneExitTriggerResult(
+					updatedLane,
+					LaneExitTriggerAction.IGNORED_NOT_CURRENT_OR_NEXT,
 					activeExitLaneId,
-					nullToEmpty(nextHandoffLaneId));
-			return updatedLane;
+					currentStringConfig(ACTIVE_EXIT_LANE_KEY, null),
+					nextHandoffLaneId,
+					previousVehicleCount,
+					updatedLane.getVehicleCount(),
+					0,
+					0,
+					EXIT_HANDOFF_TRIGGER_THRESHOLD);
 		}
 
 		int handoffCount = incrementExitHandoffCount(activeExitLaneId, laneId);
 		flowLog.info(
-				"节点=出口相邻车道交接计数 event=EXIT_HANDOFF_PROGRESS fromLane={} toLane={} observedAt={} count={} threshold={}",
+				"节点=出口相邻车道交接缓存 event=EXIT_HANDOFF_PROGRESS fromLane={} toLane={} observedAt={} count={} threshold={} action=BUFFER_WITHOUT_DEDUCT",
 				activeExitLaneId,
 				laneId,
 				referenceTime,
 				handoffCount,
 				EXIT_HANDOFF_TRIGGER_THRESHOLD);
 		if (handoffCount >= EXIT_HANDOFF_TRIGGER_THRESHOLD) {
+			applyBufferedExitHandoffTriggers(laneId, handoffCount, referenceTime);
 			completeExitHandoff(activeExitLaneId, laneId, referenceTime);
-			return persistLaneRuntime(laneId, referenceTime, "exit_handoff_completed");
+			Lane updatedLane = persistLaneRuntime(laneId, referenceTime, "exit_handoff_completed");
+			return new LaneExitTriggerResult(
+					updatedLane,
+					LaneExitTriggerAction.HANDOFF_COMPLETED,
+					activeExitLaneId,
+					currentStringConfig(ACTIVE_EXIT_LANE_KEY, null),
+					nextHandoffLaneId,
+					previousVehicleCount,
+					updatedLane.getVehicleCount(),
+					Math.max(0, previousVehicleCount - updatedLane.getVehicleCount()),
+					handoffCount,
+					EXIT_HANDOFF_TRIGGER_THRESHOLD);
 		}
-		return updatedLane;
+		Lane updatedLane = persistLaneRuntime(laneId, referenceTime, "exit_handoff_trigger_buffered");
+		return new LaneExitTriggerResult(
+				updatedLane,
+				LaneExitTriggerAction.HANDOFF_BUFFERED,
+				activeExitLaneId,
+				currentStringConfig(ACTIVE_EXIT_LANE_KEY, null),
+				nextHandoffLaneId,
+				previousVehicleCount,
+				updatedLane.getVehicleCount(),
+				0,
+				handoffCount,
+				EXIT_HANDOFF_TRIGGER_THRESHOLD);
 	}
 
 	private Lane exitLaneByLoopTrigger(String laneId, OffsetDateTime observedAt, String action) {
@@ -1379,6 +1666,19 @@ public class OperationsService {
 		}
 
 		return applyPassCountDelta(laneId, -1, referenceTime);
+	}
+
+	private void applyBufferedExitHandoffTriggers(String laneId, int triggerCount, OffsetDateTime referenceTime) {
+		int bufferedCount = Math.min(Math.max(0, triggerCount), EXIT_HANDOFF_TRIGGER_THRESHOLD);
+		for (int index = 0; index < bufferedCount; index++) {
+			exitLaneByLoopTrigger(laneId, referenceTime, "exit_handoff_buffered_trigger");
+		}
+		flowLog.info(
+				"节点=出口交接缓存补扣 event=EXIT_HANDOFF_BUFFER_APPLIED laneId={} triggerCount={} appliedCount={} observedAt={}",
+				laneId,
+				triggerCount,
+				bufferedCount,
+				referenceTime);
 	}
 
 	@Transactional
@@ -1409,8 +1709,7 @@ public class OperationsService {
 				.filter(candidate -> !Objects.equals(candidate.getId(), ticket.getId()))
 				.toList();
 		int visibleRemaining = remainingTickets.size();
-		lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-		lane.setLastSensorAt(referenceTime);
+		markLaneSensorHealthy(lane, referenceTime, "lane_exit_by_loop");
 		lane.setLastActionAt(referenceTime);
 		lane.setVehicleCount(Math.max(visibleRemaining, Math.max(0, previousVehicleCount - 1)));
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
@@ -1446,8 +1745,7 @@ public class OperationsService {
 		closeDispatchTicketForExit(log, referenceTime);
 
 		int previousVehicleCount = lane.getVehicleCount();
-		lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-		lane.setLastSensorAt(referenceTime);
+		markLaneSensorHealthy(lane, referenceTime, "lane_exit_by_loop");
 		lane.setLastActionAt(referenceTime);
 		lane.setVehicleCount(Math.max(0, previousVehicleCount - 1));
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
@@ -1470,8 +1768,7 @@ public class OperationsService {
 	public Lane applyLanePresenceSignal(String laneId, boolean haveCar, OffsetDateTime observedAt) {
 		Lane lane = requireLane(laneId);
 		OffsetDateTime referenceTime = resolveTime(observedAt);
-		lane.setSensorStatus(defaultSensorStatus(lane.getSensorStatus()));
-		lane.setLastSensorAt(referenceTime);
+		markLaneSensorHealthy(lane, referenceTime, "lane_presence_polled");
 		lane.setLastActionAt(referenceTime);
 		if (!haveCar && entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(laneId).isEmpty()) {
 			int previousVehicleCount = lane.getVehicleCount();
@@ -2171,7 +2468,7 @@ public class OperationsService {
 			return activationBlockReason;
 		}
 		if ("DEGRADED".equals(lane.getSensorStatus())) {
-			return "车道传感状态为 DEGRADED，通常来自尾部滞留/异常告警，系统按车道已满保护处理，入口灯转红并切换下一车道";
+			return "车道尾部滞留判满，系统按车道已满保护处理，入口灯转红并切换下一车道";
 		}
 		int occupied = lane.getVehicleCount() + Math.toIntExact(Math.min(Integer.MAX_VALUE, pendingCount));
 		if (occupied >= lane.getCapacity()) {
@@ -2226,10 +2523,22 @@ public class OperationsService {
 	}
 
 	private void advanceExitSignalAfterCleared(OffsetDateTime referenceTime, String currentLaneId) {
+		advanceExitSignalAfterCleared(referenceTime, currentLaneId, true, "exit_signal_advanced_after_cleared");
+	}
+
+	private void advanceExitSignalAfterCleared(
+			OffsetDateTime referenceTime,
+			String currentLaneId,
+			boolean clearTailStayProtection,
+			String action) {
 		List<Lane> lanes = laneRepository.findAllByOrderByCodeAsc();
 		List<String> laneOrder = currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder);
-		String nextLaneId = nextEligibleExitLaneId(sortLanesByOrder(lanes, laneOrder), currentLaneId, null);
+		List<Lane> orderedLanes = sortLanesByOrder(lanes, laneOrder);
+		String nextLaneId = nextEligibleExitLaneId(orderedLanes, currentLaneId, null);
 		logExitActiveLaneSwitch(lanes, laneOrder, currentLaneId, nextLaneId, null, referenceTime);
+		if (clearTailStayProtection) {
+			clearTailStayProtectionBeforeExitTarget(orderedLanes, currentLaneId, nextLaneId, referenceTime, action);
+		}
 		saveActiveExitSignalConfig(nextLaneId, referenceTime);
 	}
 
@@ -2242,6 +2551,34 @@ public class OperationsService {
 			return;
 		}
 		advanceExitSignalAfterCleared(referenceTime, lane.getId());
+	}
+
+	private void clearTailStayProtectionBeforeExitTarget(
+			List<Lane> orderedLanes,
+			String fromLaneId,
+			String toLaneId,
+			OffsetDateTime referenceTime,
+			String action) {
+		if (orderedLanes.isEmpty()
+				|| isBlank(fromLaneId)
+				|| isBlank(toLaneId)
+				|| Objects.equals(fromLaneId, toLaneId)) {
+			return;
+		}
+		int fromIndex = laneIndex(orderedLanes, fromLaneId);
+		int toIndex = laneIndex(orderedLanes, toLaneId);
+		if (fromIndex < 0 || toIndex < 0) {
+			return;
+		}
+		int index = fromIndex;
+		while (index != toIndex) {
+			Lane lane = orderedLanes.get(index);
+			clearTailStayProtectionIfLaneHasCapacity(lane, referenceTime, action);
+			index = (index + 1) % orderedLanes.size();
+			if (index == fromIndex) {
+				return;
+			}
+		}
 	}
 
 	private String nextEligibleEntryLaneId(List<Lane> orderedLanes, String currentLaneId, Map<String, Long> pendingCounts) {
@@ -2427,6 +2764,10 @@ public class OperationsService {
 				activeLogs.size(),
 				openTickets.size(),
 				referenceTime);
+		List<Lane> orderedLanes = sortLanesByOrder(
+				laneRepository.findAllByOrderByCodeAsc(),
+				currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder));
+		clearTailStayProtectionBeforeExitTarget(orderedLanes, fromLaneId, toLaneId, referenceTime, "exit_handoff_completed");
 		saveActiveExitSignalConfig(toLaneId, referenceTime);
 	}
 
@@ -2869,7 +3210,8 @@ public class OperationsService {
 				|| ACTIVE_EXIT_LANE_KEY.equals(configKey)
 				|| ACTIVE_SIGNAL_LANE_KEY.equals(configKey)
 				|| ACTIVE_SIGNAL_DIRECTION_KEY.equals(configKey)
-				|| ASSIGNMENT_RESERVE_MINUTES_KEY.equals(configKey);
+				|| ASSIGNMENT_RESERVE_MINUTES_KEY.equals(configKey)
+				|| WHITELIST_FILTER_ENABLED_KEY.equals(configKey);
 	}
 
 	private List<String> parseLaneOrder(String configuredOrder) {
@@ -2953,6 +3295,18 @@ public class OperationsService {
 		}
 		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
 				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> !"NOT_WHITELISTED".equals(ticket.getStatus()))
+				.findFirst()
+				.orElse(null);
+	}
+
+	private DispatchTicket findLatestNonWhitelistedTicketByPlate(String plate) {
+		if (isBlank(plate)) {
+			return null;
+		}
+		return dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(plate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> "NOT_WHITELISTED".equals(ticket.getStatus()))
 				.findFirst()
 				.orElse(null);
 	}
@@ -3188,6 +3542,130 @@ public class OperationsService {
 		}
 	}
 
+	private WhitelistImportProgressState beginWhitelistImportProgress(String jobId) {
+		OffsetDateTime referenceTime = now();
+		cleanupWhitelistImportProgress(referenceTime);
+		String normalizedJobId = isBlank(jobId) ? UUID.randomUUID().toString() : jobId.trim();
+		WhitelistImportProgressState progress = new WhitelistImportProgressState(normalizedJobId, referenceTime);
+		whitelistImportProgress.put(normalizedJobId, progress);
+		return progress;
+	}
+
+	private void cleanupWhitelistImportProgress(OffsetDateTime referenceTime) {
+		OffsetDateTime expiredBefore = referenceTime.minusHours(1);
+		whitelistImportProgress.entrySet().removeIf(entry -> {
+			WhitelistImportProgress snapshot = entry.getValue().snapshot();
+			return snapshot.finishedAt() != null && snapshot.finishedAt().isBefore(expiredBefore);
+		});
+	}
+
+	private String importFailureMessage(RuntimeException exception) {
+		if (exception instanceof ResponseStatusException responseStatusException && !isBlank(responseStatusException.getReason())) {
+			return responseStatusException.getReason();
+		}
+		return firstNonBlank(exception.getMessage(), "白名单导入失败");
+	}
+
+	private ParsedWhitelistImport parseWhitelistImport(MultipartFile file, WhitelistImportProgressState progress) {
+		if (file == null || file.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请选择要导入的 Excel 文件");
+		}
+		if (!isExcelFile(file)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只支持导入 xls 或 xlsx 格式的 Excel 文件");
+		}
+		try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
+			if (workbook.getNumberOfSheets() == 0) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Excel 文件没有工作表");
+			}
+			Sheet sheet = workbook.getSheetAt(0);
+			int estimatedRows = Math.max(1, sheet.getLastRowNum() + 1);
+			DataFormatter formatter = new DataFormatter(Locale.CHINA);
+			LinkedHashSet<String> plates = new LinkedHashSet<>();
+			int totalRows = 0;
+			int validRows = 0;
+			int duplicateRows = 0;
+			int invalidRows = 0;
+			boolean firstValueSeen = false;
+			progress.update("PARSING", 5, 0, 0, 0, 0, 0, 0, 0, "正在解析 Excel");
+			for (Row row : sheet) {
+				String rawPlate = formatter.formatCellValue(row.getCell(0)).trim();
+				if (!firstValueSeen && !rawPlate.isBlank()) {
+					firstValueSeen = true;
+					if (rawPlate.contains("车牌")) {
+						continue;
+					}
+				}
+				totalRows++;
+				if (rawPlate.isBlank()) {
+					invalidRows++;
+					continue;
+				}
+				String normalizedPlate = normalizePlate(rawPlate);
+				if (isBlank(normalizedPlate)) {
+					invalidRows++;
+					continue;
+				}
+				validRows++;
+				if (!plates.add(normalizedPlate)) {
+					duplicateRows++;
+				}
+				if (totalRows % 200 == 0 || row.getRowNum() >= sheet.getLastRowNum()) {
+					int percent = 5 + (int) Math.round((Math.min(row.getRowNum() + 1, estimatedRows) * 35.0) / estimatedRows);
+					progress.update(
+							"PARSING",
+							Math.min(40, percent),
+							totalRows,
+							validRows,
+							plates.size(),
+							0,
+							0,
+							duplicateRows,
+							invalidRows,
+							"正在解析 Excel：" + totalRows + " 行");
+				}
+			}
+			progress.update(
+					"PARSING",
+					40,
+					totalRows,
+					validRows,
+					plates.size(),
+					0,
+					0,
+					duplicateRows,
+					invalidRows,
+					"Excel 解析完成，准备写入数据库");
+			return new ParsedWhitelistImport(totalRows, validRows, List.copyOf(plates), duplicateRows, invalidRows);
+		}
+		catch (ResponseStatusException exception) {
+			throw exception;
+		}
+		catch (Exception exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Excel 文件解析失败，请确认文件格式为 xls 或 xlsx");
+		}
+	}
+
+	private boolean isExcelFile(MultipartFile file) {
+		String filename = file.getOriginalFilename();
+		if (isBlank(filename)) {
+			return false;
+		}
+		String lowerFilename = filename.toLowerCase(Locale.ROOT);
+		return lowerFilename.endsWith(".xls") || lowerFilename.endsWith(".xlsx");
+	}
+
+	private <T> List<List<T>> partition(List<T> values, int batchSize) {
+		if (values.isEmpty()) {
+			return List.of();
+		}
+		int normalizedBatchSize = Math.max(1, batchSize);
+		List<List<T>> batches = new ArrayList<>();
+		for (int start = 0; start < values.size(); start += normalizedBatchSize) {
+			batches.add(values.subList(start, Math.min(values.size(), start + normalizedBatchSize)));
+		}
+		return batches;
+	}
+
 	private String resolveStatusForLane(Lane lane, long reservedCount) {
 		if ("OFFLINE".equals(lane.getMode())) {
 			return "OFFLINE";
@@ -3214,6 +3692,36 @@ public class OperationsService {
 
 	private String defaultSensorStatus(String currentSensorStatus) {
 		return isBlank(currentSensorStatus) ? "ONLINE" : currentSensorStatus;
+	}
+
+	private void markLaneSensorHealthy(Lane lane, OffsetDateTime observedAt, String action) {
+		String previousSensorStatus = lane.getSensorStatus();
+		lane.setSensorStatus("ONLINE");
+		lane.setLastSensorAt(observedAt);
+		if ("DEGRADED".equals(previousSensorStatus)) {
+			flowLog.info(
+					"节点=车道滞留保护恢复 event=LANE_TAIL_STAY_RECOVERED laneId={} laneName={} previousSensorStatus={} nextSensorStatus=ONLINE observedAt={} action={}",
+					lane.getId(),
+					lane.getName(),
+					previousSensorStatus,
+					observedAt,
+					action);
+		}
+	}
+
+	private void clearTailStayProtectionIfLaneHasCapacity(Lane lane, OffsetDateTime referenceTime, String action) {
+		if (!"DEGRADED".equals(lane.getSensorStatus())) {
+			return;
+		}
+		long pendingCount = pendingAssignmentCounts(referenceTime).getOrDefault(lane.getId(), 0L);
+		if (!canActivateLane(lane) || lane.getVehicleCount() + pendingCount >= lane.getCapacity()) {
+			return;
+		}
+		markLaneSensorHealthy(lane, referenceTime, action);
+	}
+
+	private boolean shouldCreateDeviceStatusEvent(Lane lane) {
+		return "OFFLINE".equals(defaultSensorStatus(lane.getSensorStatus()));
 	}
 
 	private String normalizeOrderToken(String value) {
@@ -3330,5 +3838,94 @@ public class OperationsService {
 	}
 
 	private record ActiveSignal(String laneId, String direction) {
+	}
+
+	private static class WhitelistImportProgressState {
+		private final String jobId;
+		private final OffsetDateTime startedAt;
+		private String status = "WAITING";
+		private int percent = 0;
+		private int totalRows = 0;
+		private int validRows = 0;
+		private int importedPlates = 0;
+		private int createdCount = 0;
+		private int updatedCount = 0;
+		private int duplicateRows = 0;
+		private int invalidRows = 0;
+		private String message = "等待服务端接收文件";
+		private OffsetDateTime finishedAt;
+
+		private WhitelistImportProgressState(String jobId, OffsetDateTime startedAt) {
+			this.jobId = jobId;
+			this.startedAt = startedAt;
+		}
+
+		private synchronized void update(
+				String status,
+				int percent,
+				int totalRows,
+				int validRows,
+				int importedPlates,
+				int createdCount,
+				int updatedCount,
+				int duplicateRows,
+				int invalidRows,
+				String message) {
+			this.status = status;
+			this.percent = Math.max(0, Math.min(100, percent));
+			this.totalRows = Math.max(0, totalRows);
+			this.validRows = Math.max(0, validRows);
+			this.importedPlates = Math.max(0, importedPlates);
+			this.createdCount = Math.max(0, createdCount);
+			this.updatedCount = Math.max(0, updatedCount);
+			this.duplicateRows = Math.max(0, duplicateRows);
+			this.invalidRows = Math.max(0, invalidRows);
+			this.message = message;
+		}
+
+		private synchronized void complete(WhitelistImportResult result) {
+			this.status = "DONE";
+			this.percent = 100;
+			this.totalRows = result.totalRows();
+			this.validRows = result.validRows();
+			this.importedPlates = result.importedPlates();
+			this.createdCount = result.createdCount();
+			this.updatedCount = result.updatedCount();
+			this.duplicateRows = result.duplicateRows();
+			this.invalidRows = result.invalidRows();
+			this.message = "导入完成";
+			this.finishedAt = OffsetDateTime.now(ZoneOffset.ofHours(8));
+		}
+
+		private synchronized void fail(String message) {
+			this.status = "FAILED";
+			this.message = message;
+			this.finishedAt = OffsetDateTime.now(ZoneOffset.ofHours(8));
+		}
+
+		private synchronized WhitelistImportProgress snapshot() {
+			return new WhitelistImportProgress(
+					jobId,
+					status,
+					percent,
+					totalRows,
+					validRows,
+					importedPlates,
+					createdCount,
+					updatedCount,
+					duplicateRows,
+					invalidRows,
+					message,
+					startedAt,
+					finishedAt);
+		}
+	}
+
+	private record ParsedWhitelistImport(
+			int totalRows,
+			int validRows,
+			List<String> plates,
+			int duplicateRows,
+			int invalidRows) {
 	}
 }

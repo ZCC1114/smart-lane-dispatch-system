@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS blacklist_records (
   KEY idx_blacklist_active_plate_effective (active, plate, effective_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='车辆黑名单记录表';
 
+CREATE TABLE IF NOT EXISTS whitelist_records (
+  id VARCHAR(255) NOT NULL COMMENT '白名单记录主键',
+  plate VARCHAR(255) NOT NULL COMMENT '白名单车牌号，系统按规范化车牌唯一命中',
+  created_at DATETIME(6) NOT NULL COMMENT '首次导入创建时间',
+  updated_at DATETIME(6) NOT NULL COMMENT '最近一次导入或更新时间',
+  created_by VARCHAR(255) NOT NULL COMMENT '首次导入操作人',
+  updated_by VARCHAR(255) NOT NULL COMMENT '最近导入或更新操作人',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_whitelist_plate (plate),
+  KEY idx_whitelist_updated_at (updated_at),
+  KEY idx_whitelist_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='车辆白名单记录表';
+
 CREATE TABLE IF NOT EXISTS screen_handled_events (
   id VARCHAR(255) NOT NULL COMMENT '大屏告警事件 ID，例如 BL-调度单号、WL-调度单号、DV-车道设备',
   handled_at DATETIME(6) NOT NULL COMMENT '处理确认时间',

@@ -869,12 +869,13 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			updateLaneDeviceStatus(binding.getLaneId(), "ONLINE", observedAt, mapping.message() + "解除");
 			return;
 		}
+		registerTailStayPlateIfNeeded(devId, binding, content, observedAt, alarmType, plate);
 		String message = mapping.message();
 		if (!isBlank(plate)) {
 			message += ": " + plate;
 		}
 		flowLog.info(
-				"节点=车道滞留告警 event=LANE_CAMERA_STAY laneId={} devId={} alarmType={} plate={} observedAt={} message={}",
+				"节点=车道尾部滞留判满 event=LANE_TAIL_STAY_FULL laneId={} devId={} alarmType={} plate={} observedAt={} message={}",
 				binding.getLaneId(),
 				devId,
 				alarmType,
@@ -882,6 +883,55 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				observedAt,
 				message);
 		updateLaneDeviceStatus(binding.getLaneId(), "DEGRADED", observedAt, message);
+	}
+
+	private void registerTailStayPlateIfNeeded(
+			String devId,
+			DeviceGatewayProperties.LaneBinding binding,
+			JsonNode content,
+			OffsetDateTime observedAt,
+			String alarmType,
+			String plate) {
+		if (!"49409".equals(alarmType) || isBlank(plate) || !isSmartCameraEntryDirection(content)) {
+			return;
+		}
+		try {
+			flowLog.info(
+					"节点=车道尾部滞留补登记请求 event=LANE_TAIL_STAY_ENTRY_REGISTER_REQUEST laneId={} devId={} alarmType={} plate={} observedAt={} inOut={}",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					plate,
+					observedAt,
+					text(content.path("inOut")));
+			registerVehicleEntryFromDevice(
+					binding.getLaneId(),
+					plate,
+					observedAt,
+					"出租车",
+					"SMART_CAMERA");
+		}
+		catch (ResponseStatusException ex) {
+			flowLog.warn(
+					"节点=车道尾部滞留补登记失败 event=LANE_TAIL_STAY_ENTRY_REGISTER_FAILED laneId={} devId={} alarmType={} plate={} observedAt={} status={} reason={} action=KEEP_TAIL_STAY_PROTECTION",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					plate,
+					observedAt,
+					ex.getStatusCode(),
+					ex.getReason());
+		}
+		catch (RuntimeException ex) {
+			flowLog.warn(
+					"节点=车道尾部滞留补登记异常 event=LANE_TAIL_STAY_ENTRY_REGISTER_FAILED laneId={} devId={} alarmType={} plate={} observedAt={} action=KEEP_TAIL_STAY_PROTECTION",
+					binding.getLaneId(),
+					devId,
+					alarmType,
+					plate,
+					observedAt,
+					ex);
+		}
 	}
 
 	private DeviceGatewayProperties.LaneBinding resolveEntryBindingForSmartCamera(
@@ -1019,7 +1069,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				binding.getLaneId(),
 				binding.getExitTriggerInputKey(),
 				observedAt);
-		applyLaneExitTrigger(binding.getLaneId(), observedAt);
+		applyLaneExitTrigger(binding, observedAt);
 	}
 
 	private Map<String, Lane> currentLaneSignalTargetsById() {
@@ -1939,12 +1989,50 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 		}
 	}
 
-	private void applyLaneExitTrigger(String laneId, OffsetDateTime observedAt) {
+	private void applyLaneExitTrigger(DeviceGatewayProperties.LaneBinding binding, OffsetDateTime observedAt) {
 		OperationsService operationsService = operationsServiceProvider.getIfAvailable();
 		if (operationsService != null) {
+			String laneId = binding.getLaneId();
 			flowLog.info("节点=出口地感执行业务 event=EXIT_LOOP_APPLY laneId={} observedAt={}", laneId, observedAt);
-			operationsService.applyLaneExitTrigger(laneId, observedAt);
+			OperationsService.LaneExitTriggerResult result = operationsService.applyLaneExitTriggerWithResult(laneId, observedAt);
+			writeDidoExitBusinessMqttLog(binding, result);
 		}
+	}
+
+	private void writeDidoExitBusinessMqttLog(
+			DeviceGatewayProperties.LaneBinding binding,
+			OperationsService.LaneExitTriggerResult result) {
+		if (result == null) {
+			return;
+		}
+		cameraMqttLog.info(
+				"{}\tCX-6E\t业务\t{}\t出口业务 {} {}\t车辆数 {} -> {}\t扣车={}\t出口绿灯 {} -> {}\t交接={}/{}\t下一车道={}",
+				CAMERA_MQTT_LOG_TIME_FORMATTER.format(now()),
+				cameraMqttLaneLabel(binding),
+				binding.getExitTriggerInputKey(),
+				exitTriggerActionText(result),
+				result.previousVehicleCount(),
+				result.currentVehicleCount(),
+				result.deductedCount(),
+				laneLogValue(result.activeExitLaneIdBefore()),
+				laneLogValue(result.activeExitLaneIdAfter()),
+				result.handoffCount(),
+				result.handoffThreshold(),
+				laneLogValue(result.nextHandoffLaneId()));
+	}
+
+	private String exitTriggerActionText(OperationsService.LaneExitTriggerResult result) {
+		return switch (result.action()) {
+			case CURRENT_DEDUCTED -> result.deductedCount() > 0 ? "已扣车" : "当前车道触发但车辆数未减少";
+			case HANDOFF_BUFFERED -> "交接缓存未扣车";
+			case HANDOFF_COMPLETED -> "交接完成补扣";
+			case IGNORED_NO_ACTIVE_EXIT -> "无出口绿灯已忽略";
+			case IGNORED_NOT_CURRENT_OR_NEXT -> "非当前/非下一车道已忽略";
+		};
+	}
+
+	private String laneLogValue(String laneId) {
+		return isBlank(laneId) ? "-" : laneId;
 	}
 
 	private void updateLaneSignalFeedback(
@@ -2179,7 +2267,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return switch (alarmType) {
 				case "49406" -> new AlarmMapping("TF_CARD_FAULT", "WARNING", "TF 卡异常", false);
 				case "49407" -> new AlarmMapping("PLATE_MISMATCH", "WARNING", "车牌不一致", false);
-				case "49409" -> new AlarmMapping("MOTOR_STAY", "WARNING", "机动车滞留", false);
+				case "49409" -> new AlarmMapping("LANE_TAIL_STAY_FULL", "WARNING", "车道尾部滞留，判定车道已满", false);
 				case "49411" -> new AlarmMapping("NON_MOTOR_STAY", "WARNING", "非机动车滞留", false);
 				case "49412" -> new AlarmMapping("BARRIER_ABNORMAL", "DANGER", "道闸异常", false);
 				case "49413" -> new AlarmMapping("LANE_CONGESTION", "DANGER", "车道拥堵", false);

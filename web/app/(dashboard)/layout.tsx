@@ -14,19 +14,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
+  const hydrated = useAuthStore((state) => state.hydrated);
   const setOverviewExpanded = useDashboardLayoutStore((state) => state.setOverviewExpanded);
   const isOverviewPage = pathname === "/";
 
   useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
     if (!token) {
       router.replace("/login");
+      return;
+    }
+
+    if (!user?.role) {
       return;
     }
 
     if (!canViewPath(user?.role, pathname)) {
       router.replace("/");
     }
-  }, [pathname, router, token, user?.role]);
+  }, [hydrated, pathname, router, token, user?.role]);
 
   useEffect(() => {
     if (!isOverviewPage) {
@@ -34,7 +43,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [isOverviewPage, setOverviewExpanded]);
 
-  if (!token) {
+  if (!hydrated || !token) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="border border-[var(--border-soft)] bg-[var(--bg-panel)] px-5 py-3 text-sm text-[var(--text-secondary)]">

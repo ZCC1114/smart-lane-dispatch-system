@@ -16,6 +16,10 @@ import type {
   RelayControlRequest,
   ScreenEvent,
   SignalOverrideRequest,
+  WhitelistImportProgress,
+  WhitelistImportResult,
+  WhitelistRecord,
+  WhitelistSettings,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -63,6 +67,32 @@ async function request<T>(path: string, init?: RequestInit) {
   }
 
   return JSON.parse(responseText) as T;
+}
+
+async function requestForm<T>(path: string, formData: FormData) {
+  const token = useAuthStore.getState().token;
+  const headers = new Headers();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (response.status === 401) {
+    useAuthStore.getState().clearSession();
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new ApiError(normalizeErrorMessage(errorText, response.status), response.status);
+  }
+
+  const responseText = await response.text();
+  return responseText ? (JSON.parse(responseText) as T) : (undefined as T);
 }
 
 function normalizeErrorMessage(errorText: string, status: number) {
@@ -144,6 +174,30 @@ export const api = {
   deleteBlacklist(id: string) {
     return request<void>(`/blacklist/${id}`, {
       method: "DELETE",
+    });
+  },
+  getWhitelist(filters: { query?: string; page?: number; pageSize?: number } = {}) {
+    return request<PageResult<WhitelistRecord>>(`/whitelist${buildQuery(filters)}`);
+  },
+  importWhitelist(file: File, operator: string, jobId?: string) {
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("operator", operator);
+    if (jobId) {
+      formData.set("jobId", jobId);
+    }
+    return requestForm<WhitelistImportResult>("/whitelist/import", formData);
+  },
+  getWhitelistImportProgress(jobId: string) {
+    return request<WhitelistImportProgress>(`/whitelist/import-progress/${encodeURIComponent(jobId)}`);
+  },
+  getWhitelistSettings() {
+    return request<WhitelistSettings>("/whitelist/settings");
+  },
+  updateWhitelistSettings(filterEnabled: boolean) {
+    return request<WhitelistSettings>("/whitelist/settings", {
+      method: "PUT",
+      body: JSON.stringify({ filterEnabled }),
     });
   },
   updateSignal(payload: SignalOverrideRequest) {

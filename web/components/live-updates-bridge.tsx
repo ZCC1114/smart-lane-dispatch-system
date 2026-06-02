@@ -31,6 +31,8 @@ export function LiveUpdatesBridge() {
           queryClient.invalidateQueries({ queryKey: ["lanes"] });
           queryClient.invalidateQueries({ queryKey: ["logs"] });
           queryClient.invalidateQueries({ queryKey: ["blacklist"] });
+          queryClient.invalidateQueries({ queryKey: ["whitelist"] });
+          queryClient.invalidateQueries({ queryKey: ["whitelist-settings"] });
           queryClient.invalidateQueries({ queryKey: ["screen-events"] });
         });
       });

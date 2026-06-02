@@ -4,6 +4,10 @@ export function canAccessBlacklist(role: UserRole | undefined) {
   return role === "ADMIN";
 }
 
+export function canAccessWhitelist(role: UserRole | undefined) {
+  return role === "ADMIN";
+}
+
 export function canOperateSignals(role: UserRole | undefined) {
   return role === "ADMIN" || role === "DISPATCHER";
 }
@@ -22,6 +26,9 @@ export function canViewPath(role: UserRole | undefined, pathname: string) {
   }
   if (pathname.startsWith("/blacklist")) {
     return canAccessBlacklist(role);
+  }
+  if (pathname.startsWith("/whitelist")) {
+    return canAccessWhitelist(role);
   }
   return true;
 }

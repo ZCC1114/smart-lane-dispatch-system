@@ -329,6 +329,35 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void entryLaneShouldWrapFromLaneElevenToRecoveredLaneOne() {
+		List<Lane> lanes = java.util.stream.IntStream.rangeClosed(1, 11)
+				.mapToObj(index -> buildLane(
+						"L%02d".formatted(index),
+						"L%02d".formatted(index),
+						index + "号车道"))
+				.toList();
+		Lane firstLane = lanes.getFirst();
+		firstLane.setSensorStatus("DEGRADED");
+		firstLane.setStatus("FULL");
+		Lane eleventhLane = lanes.get(10);
+		eleventhLane.setCapacity(1);
+		eleventhLane.setVehicleCount(1);
+		laneRepository.saveAll(lanes);
+
+		operationsService.registerVehicleEntryFromDevice(
+				"L01",
+				"苏B10001",
+				OffsetDateTime.parse("2026-04-20T08:00:00+08:00"),
+				"出租车",
+				"SMART_CAMERA");
+		saveConfig("active_entry_lane", "L11");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(laneRepository.findById("L01").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
+		assertSingleGreenSignal("L01", "ENTRY");
+	}
+
+	@Test
 	void signalGreenShouldMoveEntryCursorAndKeepEntryGreenUnique() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
@@ -355,6 +384,22 @@ class LaneOperationsFlowTests {
 		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
 		assertThat(ticket.getAssignedLaneId()).isEqualTo("L02");
 		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L02");
+	}
+
+	@Test
+	void signalGreenShouldClearTailStayProtectionWhenLaneHasCapacity() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setSensorStatus("DEGRADED");
+		firstLane.setStatus("FULL");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postSignalOverride(token, "L01", "GREEN", "RED", "测试人工恢复入口放行游标");
+
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(laneRepository.findById("L01").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
+		assertSingleGreenSignal("L01", "ENTRY");
 	}
 
 	@Test
@@ -503,7 +548,7 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void nonCurrentAndNonNextExitLoopShouldStillDeductLaneQueue() throws Exception {
+	void nonCurrentAndNonNextExitLoopShouldIgnoreLaneQueue() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(3);
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
@@ -518,11 +563,18 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L03", "沪A30001", "2026-04-20T08:04:00+08:00");
 		openExitSignal(token, "L01");
 
-		operationsService.applyLaneExitTrigger("L03", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+		OperationsService.LaneExitTriggerResult result =
+				operationsService.applyLaneExitTriggerWithResult("L03", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
 
+		assertThat(result.action()).isEqualTo(OperationsService.LaneExitTriggerAction.IGNORED_NOT_CURRENT_OR_NEXT);
+		assertThat(result.previousVehicleCount()).isEqualTo(1);
+		assertThat(result.currentVehicleCount()).isEqualTo(1);
+		assertThat(result.deductedCount()).isZero();
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
-		assertThat(laneRepository.findById("L03").orElseThrow().getVehicleCount()).isZero();
-		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L03")).isEmpty();
+		assertThat(laneRepository.findById("L03").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L03"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A30001");
 		assertSingleGreenSignal("L01", "EXIT");
 	}
 
@@ -543,19 +595,38 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L02", "沪A20004", "2026-04-20T08:09:00+08:00");
 		openExitSignal(token, "L01");
 
-		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+		OperationsService.LaneExitTriggerResult firstTrigger =
+				operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+		assertThat(firstTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_BUFFERED);
+		assertThat(firstTrigger.handoffCount()).isEqualTo(1);
+		assertThat(firstTrigger.deductedCount()).isZero();
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
-		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(3);
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(4);
 
-		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:12:00+08:00"));
+		OperationsService.LaneExitTriggerResult secondTrigger =
+				operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:12:00+08:00"));
+		assertThat(secondTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_BUFFERED);
+		assertThat(secondTrigger.handoffCount()).isEqualTo(2);
+		assertThat(secondTrigger.deductedCount()).isZero();
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
-		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(2);
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(4);
 
-		operationsService.applyLaneExitTrigger("L02", OffsetDateTime.parse("2026-04-20T08:14:00+08:00"));
+		OperationsService.LaneExitTriggerResult thirdTrigger =
+				operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:14:00+08:00"));
+		assertThat(thirdTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_COMPLETED);
+		assertThat(thirdTrigger.handoffCount()).isEqualTo(3);
+		assertThat(thirdTrigger.previousVehicleCount()).isEqualTo(4);
+		assertThat(thirdTrigger.currentVehicleCount()).isEqualTo(1);
+		assertThat(thirdTrigger.deductedCount()).isEqualTo(3);
+		assertThat(thirdTrigger.activeExitLaneIdBefore()).isEqualTo("L01");
+		assertThat(thirdTrigger.activeExitLaneIdAfter()).isEqualTo("L02");
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
 		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
 		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L02"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A20004");
 		assertSingleGreenSignal("L02", "EXIT");
 	}
 
@@ -719,6 +790,35 @@ class LaneOperationsFlowTests {
 			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("GREEN"))
 			.andExpect(jsonPath("$[?(@.id=='L04')].entrySignal").value("GREEN"));
 		assertSingleGreenSignal("L02", "EXIT");
+	}
+
+	@Test
+	void exitLaneAdvanceShouldClearTailStayProtectionBeforeNextExitLane() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(1);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		Lane thirdLane = buildLane("L03", "L03", "3号车道");
+		thirdLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane, thirdLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L03", "沪A30001", "2026-04-20T08:02:00+08:00");
+
+		Lane protectedLaneOne = laneRepository.findById("L01").orElseThrow();
+		Lane protectedLaneTwo = laneRepository.findById("L02").orElseThrow();
+		protectedLaneOne.setSensorStatus("DEGRADED");
+		protectedLaneTwo.setSensorStatus("DEGRADED");
+		laneRepository.saveAll(List.of(protectedLaneOne, protectedLaneTwo));
+
+		openExitSignal(token, "L01");
+		operationsService.applyPassCountDelta("L01", -1, OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L03");
+		assertThat(laneRepository.findById("L01").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
+		assertThat(laneRepository.findById("L02").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
+		assertThat(laneRepository.findById("L03").orElseThrow().getSensorStatus()).isEqualTo("ONLINE");
 	}
 
 	@Test
@@ -1162,6 +1262,15 @@ class LaneOperationsFlowTests {
 					}
 					""".formatted(laneId, entrySignal, exitSignal, reason)))
 			.andExpect(status().isOk());
+	}
+
+	private void saveConfig(String key, String value) {
+		dispatchConfigRepository.save(DispatchConfig.builder()
+				.configKey(key)
+				.configValue(value)
+				.updatedAt(now())
+				.updatedBy("测试")
+				.build());
 	}
 
 	private void openExitSignal(String token, String laneId) throws Exception {
