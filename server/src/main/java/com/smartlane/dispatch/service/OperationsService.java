@@ -101,6 +101,8 @@ public class OperationsService {
 	private static final String ASSIGNMENT_RESERVE_MINUTES_KEY = "assignment_reserve_minutes";
 	private static final String LAST_DAILY_RESET_AT_KEY = "last_daily_reset_at";
 	private static final String WHITELIST_FILTER_ENABLED_KEY = "whitelist_filter_enabled";
+	private static final String EXIT_HANDOFF_MANUAL_CONFIRM_KEY_PREFIX = "exit_handoff_manual_confirm_";
+	private static final String EXIT_HANDOFF_MANUAL_CONFIRM_NOTE_PREFIX = "出口交接残留超过阈值，需人工确认";
 	private static final String LEGACY_EXIT_LANE_ORDER_KEY = "exit_lane_order";
 	private static final String LEGACY_ENTRY_DISPATCH_CURSOR_KEY = "entry_dispatch_cursor";
 	private static final String LEGACY_ENTRY_DISPATCH_PAUSED_LANE_KEY = "entry_dispatch_paused_lane";
@@ -332,6 +334,31 @@ public class OperationsService {
 			}
 		}
 
+		Map<String, Lane> lanesById = laneRepository.findAllByOrderByCodeAsc().stream()
+				.collect(Collectors.toMap(Lane::getId, lane -> lane, (first, second) -> first));
+		for (DispatchConfig config : dispatchConfigRepository.findAll()) {
+			if (!config.getConfigKey().startsWith(EXIT_HANDOFF_MANUAL_CONFIRM_KEY_PREFIX)) {
+				continue;
+			}
+			OffsetDateTime eventTime = config.getUpdatedAt();
+			if (currentCycleStart != null && eventTime != null && eventTime.isBefore(currentCycleStart)) {
+				continue;
+			}
+			String laneId = config.getConfigKey().substring(EXIT_HANDOFF_MANUAL_CONFIRM_KEY_PREFIX.length());
+			Lane lane = lanesById.get(laneId);
+			String laneName = lane == null ? laneId : lane.getName();
+			int remainingCount = exitHandoffManualConfirmRemainingCount(config.getConfigValue());
+			String toLaneId = exitHandoffManualConfirmToLaneId(config.getConfigValue());
+			events.add(screenEvent(
+					"other",
+					"EH-" + laneId,
+					lane == null ? "-" : firstNonBlank(lane.getCurrentPlate(), lane.getLastEntryPlate(), "-"),
+					laneName + " 出口交接后仍残留 " + remainingCount + " 辆，请人工确认后清空",
+					eventTime,
+					laneId,
+					isBlank(toLaneId) ? laneName : laneName + " -> " + toLaneId));
+		}
+
 		Map<String, OffsetDateTime> acknowledgedEventTimes = screenAcknowledgedEventRepository.findAll().stream()
 				.collect(Collectors.toMap(ScreenAcknowledgedEvent::getId, ScreenAcknowledgedEvent::getAcknowledgedAt, (first, second) -> first));
 		Map<String, OffsetDateTime> handledEventTimes = screenHandledEventRepository.findAll().stream()
@@ -356,7 +383,21 @@ public class OperationsService {
 			boolean includeHandled,
 			int page,
 			int pageSize) {
-		List<ScreenEventView> events = getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled);
+		return getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled, null, page, pageSize);
+	}
+
+	@Transactional
+	public PageResult<ScreenEventView> getScreenEvents(
+			String type,
+			OffsetDateTime occurredAtFrom,
+			OffsetDateTime occurredAtTo,
+			boolean includeHandled,
+			Boolean handled,
+			int page,
+			int pageSize) {
+		List<ScreenEventView> events = getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled).stream()
+				.filter(event -> handled == null || event.handled() == handled.booleanValue())
+				.toList();
 		return pageFromList(events, page, pageSize);
 	}
 
@@ -623,6 +664,7 @@ public class OperationsService {
 		}
 		entryHandoffTriggerPlates.clear();
 		exitHandoffTriggerCounts.clear();
+		clearExitHandoffManualConfirms();
 
 		saveDispatchConfig(ENTRY_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
 		saveDispatchConfig(EXIT_DISPATCH_ENABLED_KEY, Boolean.TRUE.toString(), referenceTime);
@@ -1473,12 +1515,13 @@ public class OperationsService {
 				activeLogs.size(),
 				remainingCount,
 				reason);
-		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
+		boolean exitHandoffManualConfirm = hasExitHandoffManualConfirm(lane.getId());
+		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD && !exitHandoffManualConfirm) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车道剩余车辆超过 3 辆，不能使用兜底清空");
 		}
 
 		String activeExitLaneId = currentStringConfig(ACTIVE_EXIT_LANE_KEY, null);
-		if (!lane.getId().equals(activeExitLaneId)) {
+		if (!lane.getId().equals(activeExitLaneId) && !exitHandoffManualConfirm) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能对当前出口开放车道使用兜底清空");
 		}
 		long pendingCount = pendingAssignmentCounts(referenceTime).getOrDefault(lane.getId(), 0L);
@@ -1516,7 +1559,10 @@ public class OperationsService {
 		lane.setPriority(false);
 		lane.setLastActionAt(referenceTime);
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
-		advanceExitSignalAfterCleared(referenceTime, lane.getId());
+		if (lane.getId().equals(activeExitLaneId)) {
+			advanceExitSignalAfterCleared(referenceTime, lane.getId());
+		}
+		clearExitHandoffManualConfirm(lane.getId());
 		flowLog.info(
 				"节点=车道兜底清空完成 event=LANE_REMAINING_CLEARED laneId={} laneName={} observedAt={} previousCount={} closedLogs={} closedTickets={} reason={}",
 				lane.getId(),
@@ -2727,6 +2773,28 @@ public class OperationsService {
 				.max(Integer::compareTo)
 				.orElse(0);
 		String reason = "相邻车道 " + toLaneId + " 出口地感连续 " + EXIT_HANDOFF_TRIGGER_THRESHOLD + " 次确认交接";
+		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
+			markExitHandoffManualConfirm(fromLane, toLaneId, remainingCount, openTickets, referenceTime);
+			flowLog.warn(
+					"节点=出口交接需人工确认 event=EXIT_HANDOFF_MANUAL_CONFIRM_REQUIRED fromLane={} toLane={} remainingCount={} threshold={} openTickets={} activeLogs={} observedAt={} action=KEEP_PREVIOUS_LANE_DATA",
+					fromLaneId,
+					toLaneId,
+					remainingCount,
+					LANE_REMAINING_CLEAR_THRESHOLD,
+					openTickets.size(),
+					activeLogs.size(),
+					referenceTime);
+			saveActiveExitSignalConfig(toLaneId, referenceTime);
+			return;
+		}
+		clearExitHandoffManualConfirm(fromLaneId);
+		flowLog.info(
+				"节点=出口交接自动清空上一车道 event=EXIT_HANDOFF_AUTO_CLEAR_PREVIOUS fromLane={} toLane={} remainingCount={} threshold={} observedAt={}",
+				fromLaneId,
+				toLaneId,
+				remainingCount,
+				LANE_REMAINING_CLEAR_THRESHOLD,
+				referenceTime);
 		for (EntryLog log : activeLogs) {
 			log.setExitTime(referenceTime);
 		}
@@ -2746,15 +2814,6 @@ public class OperationsService {
 		fromLane.setPriority(false);
 		fromLane.setLastActionAt(referenceTime);
 		updateQueueHeadAtForObservedCountChange(fromLane, previousVehicleCount, fromLane.getVehicleCount(), referenceTime);
-		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
-			flowLog.warn(
-					"节点=出口交接数据不一致 event=EXIT_HANDOFF_INCONSISTENT fromLane={} toLane={} remainingCount={} threshold={} observedAt={}",
-					fromLaneId,
-					toLaneId,
-					remainingCount,
-					LANE_REMAINING_CLEAR_THRESHOLD,
-					referenceTime);
-		}
 		flowLog.info(
 				"节点=出口交接完成 event=EXIT_HANDOFF_COMPLETED fromLane={} toLane={} triggerCount={} previousCount={} closedLogs={} closedTickets={} observedAt={}",
 				fromLaneId,
@@ -2769,6 +2828,83 @@ public class OperationsService {
 				currentLaneOrder(ENTRY_LANE_ORDER_KEY, defaultEntryLaneOrder));
 		clearTailStayProtectionBeforeExitTarget(orderedLanes, fromLaneId, toLaneId, referenceTime, "exit_handoff_completed");
 		saveActiveExitSignalConfig(toLaneId, referenceTime);
+	}
+
+	private void markExitHandoffManualConfirm(
+			Lane fromLane,
+			String toLaneId,
+			int remainingCount,
+			List<DispatchTicket> openTickets,
+			OffsetDateTime referenceTime) {
+		String note = EXIT_HANDOFF_MANUAL_CONFIRM_NOTE_PREFIX
+				+ "：相邻车道 " + toLaneId + " 出口地感连续 " + EXIT_HANDOFF_TRIGGER_THRESHOLD
+				+ " 次确认交接，系统保留上一车道数据";
+		for (DispatchTicket ticket : openTickets) {
+			if (isBlank(ticket.getNotes())) {
+				ticket.setNotes(note);
+			} else if (!ticket.getNotes().contains(EXIT_HANDOFF_MANUAL_CONFIRM_NOTE_PREFIX)) {
+				ticket.setNotes(ticket.getNotes() + "；" + note);
+			}
+		}
+		if (!openTickets.isEmpty()) {
+			dispatchTicketRepository.saveAll(openTickets);
+		}
+		saveDispatchConfig(
+				exitHandoffManualConfirmKey(fromLane.getId()),
+				"toLaneId=" + nullToEmpty(toLaneId) + ";remainingCount=" + remainingCount,
+				referenceTime);
+	}
+
+	private boolean hasExitHandoffManualConfirm(String laneId) {
+		return dispatchConfigRepository.existsById(exitHandoffManualConfirmKey(laneId));
+	}
+
+	private void clearExitHandoffManualConfirm(String laneId) {
+		clearDispatchConfig(exitHandoffManualConfirmKey(laneId));
+	}
+
+	private void clearExitHandoffManualConfirms() {
+		List<String> configKeys = dispatchConfigRepository.findAll().stream()
+				.map(DispatchConfig::getConfigKey)
+				.filter(configKey -> configKey.startsWith(EXIT_HANDOFF_MANUAL_CONFIRM_KEY_PREFIX))
+				.toList();
+		for (String configKey : configKeys) {
+			clearDispatchConfig(configKey);
+		}
+	}
+
+	private String exitHandoffManualConfirmKey(String laneId) {
+		return EXIT_HANDOFF_MANUAL_CONFIRM_KEY_PREFIX + nullToEmpty(laneId);
+	}
+
+	private int exitHandoffManualConfirmRemainingCount(String configValue) {
+		String value = exitHandoffManualConfirmValue(configValue, "remainingCount");
+		if (isBlank(value)) {
+			return 0;
+		}
+		try {
+			return Math.max(0, Integer.parseInt(value));
+		} catch (NumberFormatException ex) {
+			return 0;
+		}
+	}
+
+	private String exitHandoffManualConfirmToLaneId(String configValue) {
+		return exitHandoffManualConfirmValue(configValue, "toLaneId");
+	}
+
+	private String exitHandoffManualConfirmValue(String configValue, String fieldName) {
+		if (isBlank(configValue) || isBlank(fieldName)) {
+			return "";
+		}
+		String prefix = fieldName + "=";
+		for (String part : configValue.split(";")) {
+			String trimmed = part.trim();
+			if (trimmed.startsWith(prefix)) {
+				return trimmed.substring(prefix.length()).trim();
+			}
+		}
+		return "";
 	}
 
 	private int laneIndex(List<Lane> orderedLanes, String laneId) {

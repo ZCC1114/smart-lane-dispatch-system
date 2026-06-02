@@ -55,12 +55,13 @@ public class ScreenController {
 	@GetMapping("/events")
 	public PageResult<ScreenEventView> getEvents(
 			@RequestParam(required = false) String type,
+			@RequestParam(required = false) Boolean handled,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtFrom,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtTo,
 			@RequestParam(defaultValue = "false") boolean includeHandled,
 			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize) {
-		return operationsService.getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled, page, pageSize);
+		return operationsService.getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled, handled, page, pageSize);
 	}
 
 	@PostMapping("/events/{eventId}/handle")

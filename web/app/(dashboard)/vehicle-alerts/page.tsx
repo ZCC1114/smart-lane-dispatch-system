@@ -8,7 +8,7 @@ import { FilterSelect } from "@/components/filter-select";
 import { Panel } from "@/components/panel";
 import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
-import type { ScreenEventType } from "@/lib/types";
+import type { PageResult, ScreenEvent, ScreenEventType } from "@/lib/types";
 import { cn, downloadCsv, formatDateTime, formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
 
 const eventTypes: Array<{ value: ScreenEventType; label: string }> = [
@@ -18,6 +18,8 @@ const eventTypes: Array<{ value: ScreenEventType; label: string }> = [
   { value: "not_entered", label: "未进车道" },
   { value: "other", label: "其他" },
 ];
+
+type AlertHandledStatus = "" | "handled" | "unhandled";
 
 function toApiDateTime(value: string) {
   return value ? new Date(value).toISOString() : undefined;
@@ -47,6 +49,7 @@ export default function VehicleAlertsPage() {
   const queryClient = useQueryClient();
   const defaultTimeRange = todayRange();
   const [type, setType] = useState("");
+  const [handledStatus, setHandledStatus] = useState<AlertHandledStatus>("");
   const [occurredAtFrom, setOccurredAtFrom] = useState(defaultTimeRange.from);
   const [occurredAtTo, setOccurredAtTo] = useState(defaultTimeRange.to);
   const [page, setPage] = useState(1);
@@ -55,6 +58,7 @@ export default function VehicleAlertsPage() {
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
   const [filters, setFilters] = useState({
     type: "",
+    handledStatus: "" as AlertHandledStatus,
     occurredAtFrom: defaultTimeRange.from,
     occurredAtTo: defaultTimeRange.to,
   });
@@ -64,9 +68,10 @@ export default function VehicleAlertsPage() {
     queryFn: () =>
       api.getScreenEvents({
         type: filters.type,
+        handled: filters.handledStatus === "" ? undefined : filters.handledStatus === "handled" ? "true" : "false",
         occurredAtFrom: toApiDateTime(filters.occurredAtFrom),
         occurredAtTo: toApiDateTime(filters.occurredAtTo),
-        includeHandled: "true",
+        includeHandled: filters.handledStatus === "unhandled" ? "false" : "true",
         page,
         pageSize,
       }),
@@ -84,19 +89,50 @@ export default function VehicleAlertsPage() {
   const pagedUnhandledAlertIds = alerts.filter((alert) => !alert.handled).map((alert) => alert.id);
   const currentPageAllSelected = pagedUnhandledAlertIds.length > 0 && pagedUnhandledAlertIds.every((id) => selectedAlertSet.has(id));
 
+  function markAlertsHandledInCache(ids: string[]) {
+    const handledIds = new Set(ids);
+    const handledAt = new Date().toISOString();
+    queryClient.setQueriesData<PageResult<ScreenEvent>>({ queryKey: ["screen-events"] }, (current) => {
+      if (!current) {
+        return current;
+      }
+      return {
+        ...current,
+        items: current.items.map((alert) => (handledIds.has(alert.id) ? { ...alert, handled: true, handledAt } : alert)),
+      };
+    });
+    if (filters.handledStatus === "unhandled") {
+      queryClient.setQueryData<PageResult<ScreenEvent>>(["screen-events", filters, page, pageSize], (current) => {
+        if (!current) {
+          return current;
+        }
+        const nextItems = current.items.filter((alert) => !handledIds.has(alert.id));
+        const removedCount = current.items.length - nextItems.length;
+        return {
+          ...current,
+          total: Math.max(0, current.total - removedCount),
+          items: nextItems,
+        };
+      });
+    }
+  }
+
   const handleAlertMutation = useMutation({
     mutationFn: (id: string) => api.handleScreenEvent(id),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["screen-events"] });
+    onSuccess: async (_result, id) => {
+      markAlertsHandledInCache([id]);
+      setSelectedAlertIds((current) => current.filter((selectedId) => selectedId !== id));
+      await queryClient.refetchQueries({ queryKey: ["screen-events"], type: "active" });
     },
   });
 
   const batchHandleMutation = useMutation({
     mutationFn: (ids: string[]) => api.handleScreenEvents(ids),
-    onSuccess: async () => {
+    onSuccess: async (_result, ids) => {
+      markAlertsHandledInCache(ids);
       setSelectedAlertIds([]);
       setBatchConfirmOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["screen-events"] });
+      await queryClient.refetchQueries({ queryKey: ["screen-events"], type: "active" });
     },
   });
 
@@ -104,7 +140,7 @@ export default function VehicleAlertsPage() {
     event.preventDefault();
     setPage(1);
     setSelectedAlertIds([]);
-    setFilters({ type, occurredAtFrom, occurredAtTo });
+    setFilters({ type, handledStatus, occurredAtFrom, occurredAtTo });
   }
 
   function handlePageChange(nextPage: number) {
@@ -184,7 +220,7 @@ export default function VehicleAlertsPage() {
           </div>
         }
       >
-        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-[180px_220px_220px_120px_minmax(0,1fr)]">
+        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-[180px_180px_220px_220px_120px_minmax(0,1fr)]">
           <FilterSelect
             value={type}
             onChange={setType}
@@ -192,6 +228,17 @@ export default function VehicleAlertsPage() {
             options={[
               { value: "", label: "全部类型" },
               ...eventTypes.map((item) => ({ value: item.value, label: item.label })),
+            ]}
+          />
+
+          <FilterSelect
+            value={handledStatus}
+            onChange={(value) => setHandledStatus(value as AlertHandledStatus)}
+            icon={CheckCircle2}
+            options={[
+              { value: "", label: "全部状态" },
+              { value: "unhandled", label: "未处理" },
+              { value: "handled", label: "已处理" },
             ]}
           />
 

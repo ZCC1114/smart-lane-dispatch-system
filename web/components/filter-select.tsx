@@ -17,6 +17,7 @@ export function FilterSelect({
   placeholder,
   disabled = false,
   size = "md",
+  menuPlacement = "bottom",
   className,
 }: {
   value: string;
@@ -26,6 +27,7 @@ export function FilterSelect({
   placeholder?: string;
   disabled?: boolean;
   size?: "sm" | "md";
+  menuPlacement?: "bottom" | "top";
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -59,7 +61,14 @@ export function FilterSelect({
       ? "h-8 gap-2 rounded-sm px-3 text-sm"
       : "h-12 gap-3 rounded-sm px-4 text-sm";
   const iconClassName = size === "sm" ? "size-3.5" : "size-4";
-  const menuOffsetClassName = size === "sm" ? "top-10" : "top-14";
+  const menuOffsetClassName =
+    menuPlacement === "top"
+      ? size === "sm"
+        ? "bottom-10"
+        : "bottom-14"
+      : size === "sm"
+        ? "top-10"
+        : "top-14";
 
   return (
     <div ref={containerRef} className={cn("relative", className)}>

@@ -30,6 +30,7 @@ export function TablePagination({ page, pageSize, total, onPageChange, onPageSiz
           <FilterSelect
             value={String(pageSize)}
             size="sm"
+            menuPlacement="top"
             className="w-[84px]"
             onChange={(value) => onPageSizeChange(Number(value))}
             options={pageSizeOptions.map((option) => ({ value: String(option), label: String(option) }))}

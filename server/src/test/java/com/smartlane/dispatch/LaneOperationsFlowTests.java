@@ -631,6 +631,63 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void exitHandoffShouldRequireManualClearWhenPreviousLaneHasLargeRemainingCount() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(4);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(6);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10003", "2026-04-20T08:04:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10004", "2026-04-20T08:06:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:08:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20002", "2026-04-20T08:10:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20003", "2026-04-20T08:12:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20004", "2026-04-20T08:14:00+08:00");
+		openExitSignal(token, "L01");
+
+		operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:20:00+08:00"));
+		operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:21:00+08:00"));
+		OperationsService.LaneExitTriggerResult thirdTrigger =
+				operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:22:00+08:00"));
+
+		assertThat(thirdTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_COMPLETED);
+		assertThat(thirdTrigger.activeExitLaneIdAfter()).isEqualTo("L02");
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(4);
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A10001", "沪A10002", "沪A10003", "沪A10004");
+		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L01"))
+				.hasSize(4)
+				.allSatisfy(ticket -> assertThat(ticket.getNotes()).contains("出口交接残留超过阈值，需人工确认"));
+		assertThat(operationsService.getScreenEvents().stream()
+				.filter(event -> "EH-L01".equals(event.id()))
+				.findFirst())
+			.hasValueSatisfying(event -> {
+				assertThat(event.type()).isEqualTo("other");
+				assertThat(event.message()).contains("1号车道 出口交接后仍残留 4 辆，请人工确认后清空");
+			});
+		assertSingleGreenSignal("L02", "EXIT");
+
+		operationsService.clearLaneRemainingVehicles(
+				"L01",
+				OffsetDateTime.parse("2026-04-20T08:30:00+08:00"),
+				"现场确认 1号车道已全部驶出");
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
+		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L01")).isEmpty();
+		assertThat(operationsService.getScreenEvents())
+				.noneMatch(event -> "EH-L01".equals(event.id()));
+		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
+		assertSingleGreenSignal("L02", "EXIT");
+	}
+
+	@Test
 	void screenClearRemainingVehiclesShouldCloseLaneQueueAndAdvanceExitLane() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);

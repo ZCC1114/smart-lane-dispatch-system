@@ -142,7 +142,15 @@ export const api = {
   getLogs(filters: { query?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string; page?: number; pageSize?: number }) {
     return request<PageResult<EntryLog>>(`/logs${buildQuery(filters)}`);
   },
-  getScreenEvents(filters: { type?: string; occurredAtFrom?: string; occurredAtTo?: string; includeHandled?: string; page?: number; pageSize?: number }) {
+  getScreenEvents(filters: {
+    type?: string;
+    handled?: string;
+    occurredAtFrom?: string;
+    occurredAtTo?: string;
+    includeHandled?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
     return request<PageResult<ScreenEvent>>(`/screen/events${buildQuery(filters)}`);
   },
   handleScreenEvent(id: string) {
