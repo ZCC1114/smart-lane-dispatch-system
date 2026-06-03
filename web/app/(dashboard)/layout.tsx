@@ -14,7 +14,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const token = useAuthStore((state) => state.token);
   const user = useAuthStore((state) => state.user);
-  const hydrated = useAuthStore((state) => state.hydrated);
+  const hydrated = useAuthStore.persist?.hasHydrated?.() ?? true;
   const setOverviewExpanded = useDashboardLayoutStore((state) => state.setOverviewExpanded);
   const isOverviewPage = pathname === "/";
 

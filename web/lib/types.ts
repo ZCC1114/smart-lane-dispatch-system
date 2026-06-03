@@ -72,6 +72,7 @@ export interface EntryLog {
   status: LogStatus;
   source: string;
   operator: string;
+  alarmType: string | null;
 }
 
 export type ScreenEventType = "blacklist" | "not_whitelisted" | "wrong_lane" | "not_entered" | "other";
@@ -107,6 +108,10 @@ export interface WhitelistRecord {
   updatedAt: string;
   createdBy: string;
   updatedBy: string;
+}
+
+export interface WhitelistPayload {
+  plate: string;
 }
 
 export interface WhitelistImportResult {

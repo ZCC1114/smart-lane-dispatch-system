@@ -8,7 +8,7 @@ import { Panel } from "@/components/panel";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
-import { downloadCsv, formatDateTime, formatPlateDisplay } from "@/lib/utils";
+import { downloadCsv, formatDateTime, formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
 
 function toApiDateTime(value: string) {
   return value ? new Date(value).toISOString() : undefined;
@@ -26,17 +26,30 @@ function todayRange() {
   };
 }
 
+const ALARM_TYPE_OPTIONS = [
+  { value: "", label: "全部告警类型" },
+  { value: "blacklist", label: "黑名单" },
+  { value: "not_whitelisted", label: "非白名单" },
+  { value: "wrong_lane", label: "走错车道" },
+  { value: "not_entered", label: "未进车道" },
+  { value: "none", label: "无告警" },
+];
+
 export default function EntriesPage() {
   const defaultTimeRange = todayRange();
   const [query, setQuery] = useState("");
   const [laneId, setLaneId] = useState("");
+  const [alarmType, setAlarmType] = useState("");
   const [entryTimeFrom, setEntryTimeFrom] = useState(defaultTimeRange.from);
   const [entryTimeTo, setEntryTimeTo] = useState(defaultTimeRange.to);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const [filters, setFilters] = useState({
     query: "",
     laneId: "",
+    alarmType: "",
     entryTimeFrom: defaultTimeRange.from,
     entryTimeTo: defaultTimeRange.to,
   });
@@ -52,18 +65,21 @@ export default function EntriesPage() {
       api.getLogs({
         query: filters.query,
         laneId: filters.laneId,
+        alarmType: filters.alarmType,
         entryTimeFrom: toApiDateTime(filters.entryTimeFrom),
         entryTimeTo: toApiDateTime(filters.entryTimeTo),
         page,
         pageSize,
       }),
   });
+
   const lanes = lanesQuery.data ?? [];
   const logsPage = logsQuery.data;
   const logs = logsPage?.items ?? [];
   const totalLogs = logsPage?.total ?? 0;
   const currentPage = logsPage?.page ?? page;
   const pageStartIndex = (currentPage - 1) * pageSize;
+
   const laneOptions = [
     { value: "", label: "全部车道" },
     ...lanes.map((lane) => ({
@@ -75,46 +91,90 @@ export default function EntriesPage() {
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPage(1);
-    setFilters({ query, laneId, entryTimeFrom, entryTimeTo });
+    setFilters({
+      query,
+      laneId,
+      alarmType,
+      entryTimeFrom,
+      entryTimeTo,
+    });
+    setExportError("");
+  }
+
+  async function handleExport() {
+    try {
+      setExporting(true);
+      setExportError("");
+      const exportItems = await api.getLogsExport({
+        query: filters.query,
+        laneId: filters.laneId,
+        alarmType: filters.alarmType,
+        entryTimeFrom: toApiDateTime(filters.entryTimeFrom),
+        entryTimeTo: toApiDateTime(filters.entryTimeTo),
+      });
+
+      downloadCsv(
+        "traffic-logs.csv",
+        [
+          [
+            "序号",
+            "车牌号码",
+            "实际入道车道编号",
+            "实际入道车道",
+            "分配车道编号",
+            "分配车道",
+            "总入口抓拍时间",
+            "离场时间",
+            "车辆类型",
+            "告警类型",
+            "通行状态",
+            "操作员",
+          ],
+          ...exportItems.map((log, index) => [
+            String(index + 1),
+            log.plate,
+            log.laneId ?? "",
+            log.laneName ?? "",
+            log.assignedLaneId ?? "",
+            log.assignedLaneName ?? "",
+            log.entryTime,
+            log.exitTime ?? "",
+            log.vehicleType,
+            log.alarmType ? screenEventTypeLabel(log.alarmType) : "",
+            log.status,
+            log.operator,
+          ]),
+        ],
+      );
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "车辆流水导出失败");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
     <div className="space-y-5">
-<Panel
+      {exportError ? <div className="rounded-sm border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">导出失败：{exportError}</div> : null}
+      <Panel
         title="车辆进出流水"
         eyebrow="实际入道与出场记录"
         action={
           <button
             type="button"
-            onClick={() =>
-              downloadCsv(
-                "traffic-logs.csv",
-                [
-                  ["序号", "车牌号码", "实际入道车道编号", "实际入道车道", "分配车道编号", "分配车道", "总入口抓拍时间", "离场时间", "车辆类型", "通行状态", "操作员"],
-                  ...logs.map((log, index) => [
-                    String(pageStartIndex + index + 1),
-                    log.plate,
-                    log.laneId ?? "",
-                    log.laneName ?? "",
-                    log.assignedLaneId ?? "",
-                    log.assignedLaneName ?? "",
-                    log.entryTime,
-                    log.exitTime ?? "",
-                    log.vehicleType,
-                    log.status,
-                    log.operator,
-                  ]),
-                ],
-              )
-            }
-            className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+            disabled={exporting}
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Download className="size-3.5" />
-            导出当前页
+            {exporting ? "导出中..." : "导出全部"}
           </button>
         }
       >
-        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_220px_220px_220px_120px]">
+        <form
+          onSubmit={handleSearch}
+          className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_180px_220px_220px_220px_120px_120px]"
+        >
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
@@ -126,6 +186,7 @@ export default function EntriesPage() {
           </label>
 
           <FilterSelect value={laneId} options={laneOptions} onChange={setLaneId} />
+          <FilterSelect value={alarmType} options={ALARM_TYPE_OPTIONS} onChange={setAlarmType} />
 
           <input
             type="datetime-local"
@@ -156,7 +217,7 @@ export default function EntriesPage() {
 
         <div className="mt-5 rounded-sm border border-[var(--border-soft)]">
           <div className="overflow-hidden rounded-t-sm">
-            <div className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
+            <div className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr_0.75fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
               <span>序号</span>
               <span>车牌号码</span>
               <span>实际入道车道</span>
@@ -164,11 +225,12 @@ export default function EntriesPage() {
               <span>总入口抓拍时间</span>
               <span>出场时间</span>
               <span>车辆类型</span>
+              <span>告警类型</span>
               <span>通行状态</span>
             </div>
             <div className="divide-y divide-[var(--border-soft)]">
               {logs.map((log, index) => (
-                <div key={log.id} className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr] gap-3 px-5 py-4 text-sm">
+                <div key={log.id} className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr_0.75fr] gap-3 px-5 py-4 text-sm">
                   <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                   <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(log.plate) || log.plate}</span>
                   <span className="inline-flex items-center gap-2 text-[var(--text-primary)]">
@@ -182,6 +244,7 @@ export default function EntriesPage() {
                   <span className="text-[var(--text-secondary)]">{formatDateTime(log.entryTime)}</span>
                   <span className="text-[var(--text-secondary)]">{log.exitTime ? formatDateTime(log.exitTime) : "在场"}</span>
                   <span className="text-[var(--text-secondary)]">{log.vehicleType}</span>
+                  <span className="text-[var(--text-secondary)]">{log.alarmType ? screenEventTypeLabel(log.alarmType) : "--"}</span>
                   <div>
                     <StatusBadge value={log.status} kind="log" />
                   </div>

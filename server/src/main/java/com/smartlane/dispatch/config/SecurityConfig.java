@@ -26,12 +26,15 @@ import com.smartlane.dispatch.security.JwtAuthenticationFilter;
 public class SecurityConfig {
 
 	private final JwtAuthenticationFilter jwtAuthenticationFilter;
+	private final String allowedOriginPatterns;
 	private final String allowedOrigins;
 
 	public SecurityConfig(
 			JwtAuthenticationFilter jwtAuthenticationFilter,
+			@Value("${app.cors.allowed-origin-patterns:}") String allowedOriginPatterns,
 			@Value("${app.cors.allowed-origins}") String allowedOrigins) {
 		this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+		this.allowedOriginPatterns = allowedOriginPatterns;
 		this.allowedOrigins = allowedOrigins;
 	}
 
@@ -68,8 +71,19 @@ public class SecurityConfig {
 
 	@Bean
 	CorsConfigurationSource corsConfigurationSource() {
-		CorsConfiguration configuration = new CorsConfiguration();
-		configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(",")).map(String::trim).toList());
+	CorsConfiguration configuration = new CorsConfiguration();
+		List<String> originPatterns = Arrays.stream(allowedOriginPatterns.split(","))
+				.map(String::trim)
+				.filter(value -> !value.isBlank())
+				.toList();
+		if (!originPatterns.isEmpty()) {
+			configuration.setAllowedOriginPatterns(originPatterns);
+		} else {
+			configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+					.map(String::trim)
+					.filter(value -> !value.isBlank())
+					.toList());
+		}
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("*"));
 		configuration.setAllowCredentials(true);

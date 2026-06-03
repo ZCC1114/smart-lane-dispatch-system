@@ -2,17 +2,25 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Search, Upload } from "lucide-react";
+import { PencilLine, Plus, Search, Trash2, Upload } from "lucide-react";
+import { ConfirmModal } from "@/components/confirm-modal";
 import { Panel } from "@/components/panel";
 import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
 import { canAccessWhitelist } from "@/lib/permissions";
 import { cn, formatDateTime, formatPlateDisplay } from "@/lib/utils";
-import type { WhitelistImportProgress, WhitelistImportResult } from "@/lib/types";
+import type { WhitelistImportProgress, WhitelistImportResult, WhitelistPayload, WhitelistRecord } from "@/lib/types";
 import { useAuthStore } from "@/stores/auth-store";
 
 const EXCEL_ACCEPT = ".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const RUNNING_IMPORT_STATUSES = new Set<WhitelistImportProgress["status"]>(["WAITING", "PARSING", "WRITING", "CACHING"]);
+
+type WhitelistFormState = Pick<WhitelistPayload, "plate">;
+type WhitelistFormErrors = Partial<Record<keyof WhitelistFormState, string>>;
+
+const emptyForm: WhitelistFormState = {
+  plate: "",
+};
 
 function isExcelFile(file: File) {
   const lowerName = file.name.toLowerCase();
@@ -89,6 +97,11 @@ export default function WhitelistPage() {
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importProgress, setImportProgress] = useState<WhitelistImportProgress | null>(null);
   const [importResult, setImportResult] = useState<WhitelistImportResult | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<WhitelistRecord | null>(null);
+  const [formState, setFormState] = useState<WhitelistFormState>(emptyForm);
+  const [formErrors, setFormErrors] = useState<WhitelistFormErrors>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const whitelistQuery = useQuery({
     queryKey: ["whitelist", searchQuery, page, pageSize],
@@ -98,6 +111,36 @@ export default function WhitelistPage() {
   const settingsQuery = useQuery({
     queryKey: ["whitelist-settings"],
     queryFn: () => api.getWhitelistSettings(),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const payload: WhitelistPayload = {
+        plate: formState.plate.trim(),
+      };
+      return editingRecord ? api.updateWhitelist(editingRecord.id, payload) : api.createWhitelist(payload);
+    },
+    onSuccess: async () => {
+      setFormState(emptyForm);
+      setFormErrors({});
+      setEditingRecord(null);
+      setEditorOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["whitelist"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteWhitelist(deletingId!),
+    onSuccess: async () => {
+      setDeletingId(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["whitelist"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
   });
 
   const importMutation = useMutation({
@@ -141,8 +184,10 @@ export default function WhitelistPage() {
     if (!importDialogOpen || !importJobId || !importLocked) {
       return undefined;
     }
+
     const activeJobId = importJobId;
     let cancelled = false;
+
     async function pollProgress() {
       try {
         const progress = await api.getWhitelistImportProgress(activeJobId);
@@ -150,9 +195,10 @@ export default function WhitelistPage() {
           setImportProgress(progress);
         }
       } catch {
-        // XHR import request will surface the final error; progress polling should not add noise.
+        // Polling should be silent while import is in progress.
       }
     }
+
     pollProgress();
     const timer = window.setInterval(pollProgress, 500);
     return () => {
@@ -223,8 +269,116 @@ export default function WhitelistPage() {
     importMutation.mutate({ file: selectedFile, jobId });
   }
 
+  function openCreateEditor() {
+    setEditingRecord(null);
+    setFormState(emptyForm);
+    setFormErrors({});
+    saveMutation.reset();
+    setEditorOpen(true);
+  }
+
+  function openEditEditor(record: WhitelistRecord) {
+    setEditingRecord(record);
+    setFormState({
+      plate: record.plate,
+    });
+    setFormErrors({});
+    saveMutation.reset();
+    setEditorOpen(true);
+  }
+
+  function closeEditor() {
+    setEditorOpen(false);
+    setEditingRecord(null);
+    setFormState(emptyForm);
+    setFormErrors({});
+    saveMutation.reset();
+  }
+
+  function validateForm() {
+    const nextErrors: WhitelistFormErrors = {};
+    if (!formState.plate.trim()) {
+      nextErrors.plate = "请输入车牌号码";
+    }
+    setFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
   return (
-    <div className="space-y-5">
+    <>
+      <ConfirmModal
+        open={Boolean(deletingId)}
+        title="删除白名单记录"
+        description="该操作会将车辆移出白名单，之后该车辆不再通过白名单检查。"
+        confirmText="确认删除"
+        busy={deleteMutation.isPending}
+        onCancel={() => setDeletingId(null)}
+        onConfirm={() => deleteMutation.mutate()}
+      />
+
+      {editorOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/18 p-4 backdrop-blur-sm">
+          <div className="panel-surface w-full max-w-md rounded-sm p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">白名单维护</p>
+            <h2 className="mt-3 text-2xl font-semibold text-[var(--text-primary)]">
+              {editingRecord ? "编辑白名单记录" : "新增白名单记录"}
+            </h2>
+            <form
+              className="mt-6 space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!validateForm()) {
+                  return;
+                }
+                saveMutation.mutate();
+              }}
+            >
+              <label className="block">
+                <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">车牌号码</span>
+                <input
+                  type="text"
+                  required
+                  value={formState.plate}
+                  disabled={!canManage}
+                  onChange={(event) => {
+                    setFormState((current) => ({
+                      ...current,
+                      plate: event.target.value,
+                    }));
+                    setFormErrors((current) => ({ ...current, plate: undefined }));
+                  }}
+                  className="w-full rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40 disabled:opacity-60"
+                />
+                {formErrors.plate ? <p className="mt-2 text-sm text-rose-600">{formErrors.plate}</p> : null}
+              </label>
+
+              {saveMutation.isError ? (
+                <div className="rounded-sm border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {saveMutation.error instanceof Error ? saveMutation.error.message : "白名单记录保存失败"}
+                </div>
+              ) : null}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="rounded-sm border border-[var(--border-soft)] px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canManage || saveMutation.isPending}
+                  className="rounded-sm bg-[var(--brand)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                >
+                  {saveMutation.isPending ? "提交中..." : editingRecord ? "更新记录" : "新增记录"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
       {importDialogOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
           <div className="panel-surface w-full max-w-xl rounded-sm p-6 shadow-2xl">
@@ -244,7 +398,14 @@ export default function WhitelistPage() {
             </div>
 
             <div className="space-y-4">
-              <label className={cn("flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-[var(--border-soft)] bg-slate-50 px-4 py-5 text-center transition", importLocked ? "cursor-not-allowed opacity-70" : "hover:border-sky-300 hover:bg-sky-50/40")}>
+              <label
+                className={cn(
+                  "flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-sm border border-dashed border-[var(--border-soft)] bg-slate-50 px-4 py-5 text-center transition",
+                  importLocked
+                    ? "cursor-not-allowed opacity-70"
+                    : "hover:border-sky-300 hover:bg-sky-50/40",
+                )}
+              >
                 <Upload className="mb-2 size-6 text-blue-500" />
                 <span className="text-sm font-semibold text-[var(--text-primary)]">选择 Excel 文件</span>
                 <span className="mt-1 text-xs text-[var(--text-muted)]">仅支持 .xls / .xlsx</span>
@@ -333,11 +494,11 @@ export default function WhitelistPage() {
             <button
               type="button"
               disabled={!canManage}
-              onClick={openImportDialog}
+              onClick={openCreateEditor}
               className="inline-flex items-center gap-2 rounded-sm bg-[var(--brand)] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Upload className="size-4" />
-              导入白名单
+              <Plus className="size-4" />
+              新增白名单
             </button>
             <button
               type="button"
@@ -345,11 +506,21 @@ export default function WhitelistPage() {
               onClick={() => settingsMutation.mutate(!filterEnabled)}
               className={cn(
                 "inline-flex items-center gap-2 rounded-sm px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
-                filterEnabled ? "bg-emerald-600 text-white hover:bg-emerald-500" : "border border-[var(--border-soft)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]",
+                filterEnabled
+                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                  : "border border-[var(--border-soft)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]",
               )}
             >
-              <BadgeCheck className="size-4" />
               {filterEnabled ? "白名单过滤已启用" : "白名单过滤未启用"}
+            </button>
+            <button
+              type="button"
+              disabled={!canManage}
+              onClick={openImportDialog}
+              className="inline-flex items-center gap-2 rounded-sm bg-[var(--brand)] px-4 py-2.5 text-sm font-semibold transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Upload className="size-4" />
+              导入白名单
             </button>
           </div>
         }
@@ -382,23 +553,42 @@ export default function WhitelistPage() {
         ) : null}
 
         <div className="overflow-hidden rounded-sm border border-[var(--border-soft)]">
-          <div className="grid grid-cols-[0.45fr_1fr_1fr_1fr_0.9fr_0.9fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
+          <div className="grid grid-cols-[0.45fr_1fr_1fr_1fr_0.9fr_0.9fr_0.75fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
             <span>序号</span>
             <span>车牌号码</span>
             <span>创建时间</span>
             <span>更新时间</span>
             <span>创建人</span>
             <span>更新人</span>
+            <span className="text-right">管理</span>
           </div>
           <div className="divide-y divide-[var(--border-soft)]">
             {records.map((record, index) => (
-              <div key={record.id} className="grid grid-cols-[0.45fr_1fr_1fr_1fr_0.9fr_0.9fr] gap-3 px-5 py-4 text-sm">
+              <div key={record.id} className="grid grid-cols-[0.45fr_1fr_1fr_1fr_0.9fr_0.9fr_0.75fr] gap-3 px-5 py-4 text-sm">
                 <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                 <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(record.plate) || record.plate}</span>
                 <span className="text-[var(--text-secondary)]">{formatDateTime(record.createdAt)}</span>
                 <span className="text-[var(--text-secondary)]">{formatDateTime(record.updatedAt)}</span>
                 <span className="text-[var(--text-secondary)]">{record.createdBy}</span>
                 <span className="text-[var(--text-secondary)]">{record.updatedBy}</span>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={!canManage}
+                    onClick={() => openEditEditor(record)}
+                    className="rounded-sm border border-[var(--border-soft)] p-2 text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-40"
+                  >
+                    <PencilLine className="size-4" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canManage}
+                    onClick={() => setDeletingId(record.id)}
+                    className="rounded-sm border border-rose-200 p-2 text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
               </div>
             ))}
             {whitelistQuery.isLoading ? (
@@ -420,6 +610,6 @@ export default function WhitelistPage() {
           />
         </div>
       </Panel>
-    </div>
+    </>
   );
 }

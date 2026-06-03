@@ -20,6 +20,7 @@ import type {
   WhitelistImportResult,
   WhitelistRecord,
   WhitelistSettings,
+  WhitelistPayload,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -139,8 +140,27 @@ export const api = {
   getLanes() {
     return request<LaneSnapshot[]>("/lanes");
   },
-  getLogs(filters: { query?: string; laneId?: string; entryTimeFrom?: string; entryTimeTo?: string; page?: number; pageSize?: number }) {
+  getLogs(filters: {
+    query?: string;
+    status?: string;
+    laneId?: string;
+    entryTimeFrom?: string;
+    entryTimeTo?: string;
+    alarmType?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
     return request<PageResult<EntryLog>>(`/logs${buildQuery(filters)}`);
+  },
+  getLogsExport(filters: {
+    query?: string;
+    status?: string;
+    laneId?: string;
+    entryTimeFrom?: string;
+    entryTimeTo?: string;
+    alarmType?: string;
+  }) {
+    return request<EntryLog[]>(`/logs/export${buildQuery(filters)}`);
   },
   getScreenEvents(filters: {
     type?: string;
@@ -186,6 +206,23 @@ export const api = {
   },
   getWhitelist(filters: { query?: string; page?: number; pageSize?: number } = {}) {
     return request<PageResult<WhitelistRecord>>(`/whitelist${buildQuery(filters)}`);
+  },
+  createWhitelist(payload: WhitelistPayload) {
+    return request<WhitelistRecord>("/whitelist", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  updateWhitelist(id: string, payload: WhitelistPayload) {
+    return request<WhitelistRecord>(`/whitelist/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteWhitelist(id: string) {
+    return request<void>(`/whitelist/${id}`, {
+      method: "DELETE",
+    });
   },
   importWhitelist(file: File, operator: string, jobId?: string) {
     const formData = new FormData();

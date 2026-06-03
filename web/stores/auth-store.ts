@@ -8,10 +8,8 @@ type AuthState = {
   token: string | null;
   expiresAt: string | null;
   user: UserSession | null;
-  hydrated: boolean;
   setSession: (payload: AuthResponse) => void;
   clearSession: () => void;
-  markHydrated: () => void;
 };
 
 export const useAuthStore = create<AuthState>()(
@@ -20,15 +18,11 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       expiresAt: null,
       user: null,
-      hydrated: false,
       setSession: ({ token, expiresAt, user }) => {
         set({ token, expiresAt, user });
       },
       clearSession: () => {
         set({ token: null, expiresAt: null, user: null });
-      },
-      markHydrated: () => {
-        set({ hydrated: true });
       },
     }),
     {
@@ -39,9 +33,6 @@ export const useAuthStore = create<AuthState>()(
         expiresAt: state.expiresAt,
         user: state.user,
       }),
-      onRehydrateStorage: () => (state) => {
-        state?.markHydrated();
-      },
     },
   ),
 );

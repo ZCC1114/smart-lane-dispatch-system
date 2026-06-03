@@ -29,8 +29,20 @@ public class EntryLogController {
 			@RequestParam(required = false) String laneId,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeFrom,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeTo,
+			@RequestParam(required = false) String alarmType,
 			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize) {
-		return operationsService.getLogs(query, status, laneId, entryTimeFrom, entryTimeTo, page, pageSize);
+		return operationsService.getLogs(query, status, laneId, entryTimeFrom, entryTimeTo, alarmType, page, pageSize);
+	}
+
+	@GetMapping("/export")
+	public java.util.List<EntryLogView> exportLogs(
+			@RequestParam(required = false) String query,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) String laneId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime entryTimeTo,
+			@RequestParam(required = false) String alarmType) {
+		return operationsService.exportLogs(query, status, laneId, entryTimeFrom, entryTimeTo, alarmType);
 	}
 }

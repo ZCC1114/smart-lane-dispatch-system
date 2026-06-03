@@ -6,6 +6,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -33,6 +34,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -61,6 +63,7 @@ import com.smartlane.dispatch.dto.WhitelistImportProgress;
 import com.smartlane.dispatch.dto.WhitelistImportResult;
 import com.smartlane.dispatch.dto.WhitelistSettingsRequest;
 import com.smartlane.dispatch.dto.WhitelistSettingsView;
+import com.smartlane.dispatch.dto.WhitelistPayload;
 import com.smartlane.dispatch.entity.BlacklistRecord;
 import com.smartlane.dispatch.entity.DispatchConfig;
 import com.smartlane.dispatch.entity.DispatchTicket;
@@ -112,6 +115,7 @@ public class OperationsService {
 	private static final List<String> VALID_BLACKLIST_LEVELS = List.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
 	private static final List<String> VALID_SENSOR_STATES = List.of("ONLINE", "DEGRADED", "OFFLINE");
 	private static final List<String> VALID_SIGNAL_DIRECTIONS = List.of("ENTRY", "EXIT");
+	private static final String LOG_ALARM_TYPE_NONE = "none";
 	private static final List<String> VALID_COMMAND_TYPES = List.of(
 			"FORCE_OPEN_GATE",
 			"MANUAL_ENTRY",
@@ -119,6 +123,7 @@ public class OperationsService {
 			"TEMP_ALLOW",
 			"CORRECT_COUNT",
 			"SET_PRIORITY");
+	private static final List<String> VALID_LOG_ALARM_TYPES = List.of("blacklist", "not_whitelisted", "wrong_lane", "not_entered", LOG_ALARM_TYPE_NONE);
 	private static final int ENTRY_HANDOFF_TRIGGER_THRESHOLD = 2;
 	private static final int LANE_REMAINING_CLEAR_THRESHOLD = 3;
 	private static final int EXIT_HANDOFF_TRIGGER_THRESHOLD = 3;
@@ -423,10 +428,18 @@ public class OperationsService {
 				.filter(plate -> !isBlank(plate))
 				.map(this::normalizePlate)
 				.collect(Collectors.toSet());
-		if (plates.isEmpty()) {
+		return activeBlacklistByPlate(plates);
+	}
+
+	private Map<String, BlacklistRecord> activeBlacklistByPlate(Collection<String> plates) {
+		Set<String> normalizedPlates = plates.stream()
+				.filter(plate -> !isBlank(plate))
+				.map(this::normalizePlate)
+				.collect(Collectors.toSet());
+		if (normalizedPlates.isEmpty()) {
 			return Map.of();
 		}
-		return blacklistRecordRepository.findByActiveTrueAndPlateIn(plates).stream()
+		return blacklistRecordRepository.findByActiveTrueAndPlateIn(normalizedPlates).stream()
 				.collect(Collectors.toMap(
 						record -> normalizePlate(record.getPlate()),
 						record -> record,
@@ -684,17 +697,80 @@ public class OperationsService {
 			String laneId,
 			OffsetDateTime entryTimeFrom,
 			OffsetDateTime entryTimeTo,
+			String alarmType,
 			int page,
 			int pageSize) {
 		int normalizedPage = normalizePage(page);
 		int normalizedPageSize = normalizePageSize(pageSize);
-		Page<EntryLog> logPage = entryLogRepository.searchLogs(
+		String normalizedAlarmType = normalizeAlarmTypeFilter(alarmType);
+		PageRequest pageRequest = PageRequest.of(normalizedPage - 1, normalizedPageSize);
+		List<EntryLogView> allItems = queryEntryLogViews(
 				blankToNull(query),
 				blankToNull(status),
 				blankToNull(laneId),
 				entryTimeFrom,
 				entryTimeTo,
+				isBlank(normalizedAlarmType) ? pageRequest : Pageable.unpaged());
+		if (isBlank(normalizedAlarmType)) {
+			Page<EntryLog> logPage = entryLogRepository.searchLogs(
+					blankToNull(query),
+					blankToNull(status),
+					blankToNull(laneId),
+					entryTimeFrom,
+					entryTimeTo,
+					pageRequest);
+			return PageResult.of(
+					allItems,
+					logPage.getTotalElements(),
+					normalizedPage,
+					normalizedPageSize);
+		}
+		List<EntryLogView> filteredItems = filterEntriesByAlarmType(allItems, normalizedAlarmType);
+		return pageFromList(filteredItems, normalizedPage, normalizedPageSize);
+	}
+
+	@Transactional
+	public List<EntryLogView> exportLogs(
+			String query,
+			String status,
+			String laneId,
+			OffsetDateTime entryTimeFrom,
+			OffsetDateTime entryTimeTo,
+			String alarmType) {
+		String normalizedAlarmType = normalizeAlarmTypeFilter(alarmType);
+		List<EntryLogView> allItems = queryEntryLogViews(
+				blankToNull(query),
+				blankToNull(status),
+				blankToNull(laneId),
+				entryTimeFrom,
+				entryTimeTo,
+				Pageable.unpaged());
+		return filterEntriesByAlarmType(allItems, normalizedAlarmType);
+	}
+
+	public PageResult<BlacklistRecord> getBlacklist(String query, int page, int pageSize) {
+		int normalizedPage = normalizePage(page);
+		int normalizedPageSize = normalizePageSize(pageSize);
+		Page<BlacklistRecord> records = blacklistRecordRepository.search(
+				blankToNull(query),
 				PageRequest.of(normalizedPage - 1, normalizedPageSize));
+		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
+	}
+
+	private List<EntryLogView> queryEntryLogViews(
+			String query,
+			String status,
+			String laneId,
+			OffsetDateTime entryTimeFrom,
+			OffsetDateTime entryTimeTo,
+			Pageable pageable) {
+		Page<EntryLog> logPage = entryLogRepository.searchLogs(
+				query,
+				status,
+				laneId,
+				entryTimeFrom,
+				entryTimeTo,
+				pageable);
 		List<EntryLog> logs = logPage.getContent();
 		Set<String> plates = logs.stream()
 				.map(EntryLog::getPlate)
@@ -707,21 +783,67 @@ public class OperationsService {
 		Map<String, List<DispatchTicket>> ticketsByPlate = tickets.stream()
 				.filter(ticket -> !isBlank(ticket.getPlate()))
 				.collect(Collectors.groupingBy(ticket -> normalizePlate(ticket.getPlate())));
-		List<EntryLogView> items = logs.stream()
-				.map(log -> EntryLogView.from(log, findDispatchTicketForLog(
-						log,
-						ticketsByPlate.getOrDefault(normalizePlate(log.getPlate()), List.of()))))
+		Map<String, BlacklistRecord> blacklistedPlates = activeBlacklistByPlate(plates);
+		return logs.stream()
+				.map(log -> {
+					String normalizedPlate = normalizePlate(log.getPlate());
+					DispatchTicket ticket = findDispatchTicketForLog(log, ticketsByPlate.getOrDefault(normalizedPlate, List.of()));
+					String alarmType = resolveLogAlarmType(log, ticket, blacklistedPlates);
+					return EntryLogView.from(log, ticket, alarmType);
+				})
 				.toList();
-		return PageResult.of(items, logPage.getTotalElements(), normalizedPage, normalizedPageSize);
 	}
 
-	public PageResult<BlacklistRecord> getBlacklist(String query, int page, int pageSize) {
-		int normalizedPage = normalizePage(page);
-		int normalizedPageSize = normalizePageSize(pageSize);
-		Page<BlacklistRecord> records = blacklistRecordRepository.search(
-				blankToNull(query),
-				PageRequest.of(normalizedPage - 1, normalizedPageSize));
-		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
+	private List<EntryLogView> filterEntriesByAlarmType(List<EntryLogView> items, String alarmType) {
+		if (isBlank(alarmType)) {
+			return items;
+		}
+		if (LOG_ALARM_TYPE_NONE.equals(alarmType)) {
+			return items.stream()
+					.filter(item -> isBlank(item.alarmType()))
+					.toList();
+		}
+		return items.stream()
+				.filter(item -> alarmType.equals(item.alarmType()))
+				.toList();
+	}
+
+	private String normalizeAlarmTypeFilter(String alarmType) {
+		String normalized = blankToNull(alarmType);
+		if (normalized == null) {
+			return null;
+		}
+		String normalizedLower = normalized.toLowerCase(Locale.ROOT);
+		if (!VALID_LOG_ALARM_TYPES.contains(normalizedLower)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "告警类型筛选参数非法");
+		}
+		return normalizedLower;
+	}
+
+	private String resolveLogAlarmType(
+			EntryLog log,
+			DispatchTicket ticket,
+			Map<String, BlacklistRecord> blacklistedPlates) {
+		if (log == null || isBlank(log.getPlate())) {
+			return null;
+		}
+		String normalizedPlate = normalizePlate(log.getPlate());
+		if (blacklistedPlates.containsKey(normalizedPlate)) {
+			return "blacklist";
+		}
+		if (ticket == null) {
+			return null;
+		}
+		if ("NOT_WHITELISTED".equals(ticket.getStatus())) {
+			return "not_whitelisted";
+		}
+		if ("ENTERED_MISMATCH".equals(ticket.getStatus())) {
+			return "wrong_lane";
+		}
+		if ("EXPIRED".equals(ticket.getStatus()) || "NO_LANE_AVAILABLE".equals(ticket.getStatus())) {
+			return "not_entered";
+		}
+		return null;
 	}
 
 	public PageResult<WhitelistRecord> getWhitelist(String query, int page, int pageSize) {
@@ -731,6 +853,54 @@ public class OperationsService {
 				blankToNull(query),
 				PageRequest.of(normalizedPage - 1, normalizedPageSize));
 		return PageResult.of(records.getContent(), records.getTotalElements(), normalizedPage, normalizedPageSize);
+	}
+
+	@Transactional
+	public WhitelistRecord createWhitelist(WhitelistPayload payload, String operator) {
+		validateWhitelistPayload(payload);
+		String normalizedPlate = normalizePlate(payload.plate());
+		if (whitelistRecordRepository.existsByPlate(normalizedPlate)) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "车牌已在白名单中");
+		}
+		OffsetDateTime referenceTime = now();
+		String normalizedOperator = firstNonBlank(operator, "系统管理员");
+		WhitelistRecord record = WhitelistRecord.builder()
+				.id("WT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
+				.plate(normalizedPlate)
+				.createdAt(referenceTime)
+				.updatedAt(referenceTime)
+				.createdBy(normalizedOperator)
+				.updatedBy(normalizedOperator)
+				.build();
+		WhitelistRecord saved = whitelistRecordRepository.save(record);
+		refreshWhitelistCacheAndInvalidate("whitelist_created");
+		return saved;
+	}
+
+	@Transactional
+	public WhitelistRecord updateWhitelist(String id, WhitelistPayload payload, String operator) {
+		validateWhitelistPayload(payload);
+		WhitelistRecord record = whitelistRecordRepository.findById(id)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "白名单记录不存在"));
+		String normalizedPlate = normalizePlate(payload.plate());
+		if (!record.getPlate().equals(normalizedPlate) && whitelistRecordRepository.existsByPlate(normalizedPlate)) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "车牌已在其他白名单记录中");
+		}
+		record.setPlate(normalizedPlate);
+		record.setUpdatedAt(now());
+		record.setUpdatedBy(firstNonBlank(operator, "系统管理员"));
+		WhitelistRecord saved = whitelistRecordRepository.save(record);
+		refreshWhitelistCacheAndInvalidate("whitelist_updated");
+		return saved;
+	}
+
+	@Transactional
+	public void deleteWhitelist(String id) {
+		if (!whitelistRecordRepository.existsById(id)) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "白名单记录不存在");
+		}
+		whitelistRecordRepository.deleteById(id);
+		refreshWhitelistCacheAndInvalidate("whitelist_deleted");
 	}
 
 	public WhitelistSettingsView getWhitelistSettings() {
@@ -826,8 +996,7 @@ public class OperationsService {
 					parsed.duplicateRows(),
 					parsed.invalidRows(),
 					"正在刷新白名单缓存");
-			whitelistCacheService.refresh();
-			invalidateRuntimeViews("whitelist_imported");
+			refreshWhitelistCacheAndInvalidate("whitelist_imported");
 			WhitelistImportResult result = new WhitelistImportResult(
 					parsed.totalRows(),
 					parsed.validRows(),
@@ -3664,6 +3833,17 @@ public class OperationsService {
 		if (!VALID_BLACKLIST_LEVELS.contains(payload.level())) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "风险等级非法");
 		}
+	}
+
+	private void validateWhitelistPayload(WhitelistPayload payload) {
+		if (payload == null || isBlank(payload.plate())) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车牌不能为空");
+		}
+	}
+
+	private void refreshWhitelistCacheAndInvalidate(String reason) {
+		whitelistCacheService.refresh();
+		invalidateRuntimeViews(reason);
 	}
 
 	private void validateSensorStatus(String sensorStatus) {

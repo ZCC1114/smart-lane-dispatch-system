@@ -17,9 +17,14 @@ public record EntryLogView(
 		String vehicleType,
 		String status,
 		String source,
-		String operator) {
+		String operator,
+		String alarmType) {
 
 	public static EntryLogView from(EntryLog log, DispatchTicket ticket) {
+		return from(log, ticket, null);
+	}
+
+	public static EntryLogView from(EntryLog log, DispatchTicket ticket, String alarmType) {
 		String actualLaneId = actualLaneId(log, ticket);
 		String actualLaneName = actualLaneName(log, ticket);
 		return new EntryLogView(
@@ -34,7 +39,8 @@ public record EntryLogView(
 				log.getVehicleType(),
 				log.getStatus(),
 				log.getSource(),
-				log.getOperator());
+				log.getOperator(),
+				alarmType);
 	}
 
 	private static OffsetDateTime displayEntryTime(EntryLog log, DispatchTicket ticket) {
