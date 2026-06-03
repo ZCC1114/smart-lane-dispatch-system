@@ -33,6 +33,12 @@ const ALERT_POPUP_HEIGHT = 270;
 const ALERT_POPUP_STABLE_POLLS = 2;
 const MAX_VISIBLE_ALERT_POPUPS = 4;
 const DAILY_RESET_DISMISS_STORAGE_KEY = "smart-lane-screen-daily-reset-dismissed-v1";
+const LANE_STACK_TOP = 250;
+const LANE_STACK_HEIGHT = 638;
+const LANE_ENTRY_CAMERA_X = 1560;
+const LANE_ENTRY_CAMERA_Y = 398;
+const LANE_ENTRY_ANIMATION_WINDOW_MS = 30_000;
+const LANE_ENTRY_ANIMATION_TTL_MS = 10_000;
 
 interface DispatchTicket {
   id: string;
@@ -84,6 +90,22 @@ interface LaneSnapshot {
   exitSignal: "RED" | "GREEN" | "OFFLINE";
   reservedCount: number;
   availableSlots: number;
+}
+
+interface LaneEntryArrivalAnimation {
+  id: string;
+  ticket: DispatchTicket;
+  laneId: string;
+  laneIndex: number;
+  plateWidth: number;
+  plateHeight: number;
+  fontSize: number;
+  startY: number;
+  targetX: number;
+  targetY: number;
+  delaySeconds: number;
+  durationSeconds: number;
+  startedAt: number;
 }
 
 interface ScreenEvent {
@@ -328,6 +350,20 @@ function buildDisplayLanes(lanes: LaneSnapshot[]) {
     return diff !== 0 ? diff : `${left.code}-${left.name}`.localeCompare(`${right.code}-${right.name}`, "zh-CN");
   });
   return Array.from({ length: 11 }, (_, index) => ordered[index] ?? null);
+}
+
+function laneVehicleLayout(lane: LaneSnapshot | null) {
+  const effectiveLane = lane ?? { capacity: 10 };
+  const capacity = Math.max(effectiveLane.capacity || 1, 1);
+  const slot = LANE_STACK_HEIGHT / capacity;
+  const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
+  return {
+    capacity,
+    plateHeight,
+    plateWidth: LANE_PLATE_WIDTH,
+    slot,
+    fontSize: Math.max(11, Math.min(17, plateHeight * 0.56)),
+  };
 }
 
 function laneSignalState(signal: LaneSnapshot["entrySignal"] | LaneSnapshot["exitSignal"] | null | undefined) {
@@ -722,43 +758,37 @@ function LaneVehicleStack({
     return null;
   }
 
-  const laneTop = 250;
-  const laneHeight = 638;
-  const capacity = Math.max(lane.capacity || 1, 1);
+  const layout = laneVehicleLayout(lane);
   const rows = vehicles
     .filter((ticket) => ticket.plate)
-    .slice(0, capacity)
+    .slice(0, layout.capacity)
     .map((ticket) => ({ id: ticket.id, plate: ticket.plate }));
-  const slot = laneHeight / capacity;
-  const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
-  const plateWidth = LANE_PLATE_WIDTH;
-  const fontSize = Math.max(13, Math.min(17, plateHeight * 0.56));
+  const slot = layout.slot;
 
   return (
     <>
       {rows.map((vehicle, index) => {
         const displayPlate = screenPlateText(vehicle.plate);
-        const fittedFontSize = plateFontSize(displayPlate, plateWidth, fontSize, 11);
-        const rowTop = laneTop + slot * index;
-        const top = rowTop + Math.max(0, (slot - plateHeight) / 2);
+        const fittedFontSize = plateFontSize(displayPlate, layout.plateWidth, layout.fontSize, 11);
+        const rowTop = LANE_STACK_TOP + slot * index;
+        const top = rowTop + Math.max(0, (slot - layout.plateHeight) / 2);
         const centerX = x + LANE_WIDTH / 2;
         return (
-          <div key={`${lane.id}-${vehicle.id}-${index}`}>
-            <div
-              className={[
-                "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.02em]",
-                plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
-              ].join(" ")}
-              style={{
-                left: centerX - plateWidth / 2,
-                top,
-                width: plateWidth,
-                height: plateHeight,
-                fontSize: fittedFontSize,
-              }}
-            >
-              <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
-            </div>
+          <div
+            key={`${lane.id}-${vehicle.id}-${index}`}
+            className={[
+              "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.02em]",
+              plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
+            ].join(" ")}
+            style={{
+              left: centerX - layout.plateWidth / 2,
+              top,
+              width: layout.plateWidth,
+              height: layout.plateHeight,
+              fontSize: fittedFontSize,
+            }}
+          >
+            <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
           </div>
         );
       })}
@@ -840,6 +870,49 @@ function MovingGuidePlates({ tickets, lanes }: { tickets: DispatchTicket[]; lane
               style={{ width: plateWidth, fontSize: fittedFontSize }}
             >
               <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LaneEntryArrivalPlates({ arrivals }: { arrivals: LaneEntryArrivalAnimation[] }) {
+  if (!arrivals.length) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-35">
+      {arrivals.map((arrival) => {
+        const displayPlate = screenPlateText(arrival.ticket.plate);
+        const fittedFontSize = plateFontSize(displayPlate, arrival.plateWidth, arrival.fontSize, 9);
+        const style = {
+          "--lane-entry-start-x": `${LANE_ENTRY_CAMERA_X - arrival.plateWidth / 2}px`,
+          "--lane-entry-start-y": `${arrival.startY}px`,
+          "--lane-entry-end-x": `${arrival.targetX}px`,
+          "--lane-entry-end-y": `${arrival.targetY}px`,
+          "--lane-entry-duration": `${arrival.durationSeconds}s`,
+          "--lane-entry-delay": `${arrival.delaySeconds}s`,
+        } as CSSProperties;
+        const plateClass = plateTone(arrival.ticket.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS;
+
+        return (
+          <div key={arrival.id} className="screen-lane-entry-plate-motion absolute left-0 top-0" style={style}>
+            <div
+              className="screen-lane-entry-plate-glow"
+              style={{ width: arrival.plateWidth, height: arrival.plateHeight, animationDelay: `${arrival.delaySeconds}s` }}
+            >
+              <div
+                className={[
+                  "absolute inset-0 flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.04em]",
+                  plateClass,
+                ].join(" ")}
+                style={{ fontSize: fittedFontSize }}
+              >
+                <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
+              </div>
             </div>
           </div>
         );
@@ -1056,7 +1129,10 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const [dailyResetDialog, setDailyResetDialog] = useState<DailyResetDialog | null>(null);
   const [dailyResetBusy, setDailyResetBusy] = useState(false);
   const [dismissedDailyResetSlots, setDismissedDailyResetSlots] = useState<Record<string, true>>(() => loadDismissedDailyResetSlots());
+  const [laneEntryArrivals, setLaneEntryArrivals] = useState<LaneEntryArrivalAnimation[]>([]);
   const pendingAlertSeenCountsRef = useRef<Record<string, number>>({});
+  const laneVehiclesRef = useRef<Record<string, Set<string>>>({});
+  const hasLaneVehiclesBaselineRef = useRef(false);
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
   const events = useMemo(() => (board?.events ?? []).filter((event) => !event.handled), [board?.events]);
@@ -1067,11 +1143,92 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const guideEntries = pendingGuideEntries.length ? pendingGuideEntries : board?.guideAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = useMemo(() => board?.laneVehicles ?? {}, [board?.laneVehicles]);
+  const displayLanes = useMemo(() => buildDisplayLanes(lanes), [lanes]);
   const currentPendingClearLane = pendingClearLane ? lanes.find((lane) => lane.id === pendingClearLane.id) ?? pendingClearLane : null;
   const pendingClearLaneCount = currentPendingClearLane ? laneRemainingCount(currentPendingClearLane, laneVehicles) : 0;
   const pendingClearLaneClearable = Boolean(
     board && currentPendingClearLane && isLaneBaseClearable(currentPendingClearLane, board, laneVehicles),
   );
+
+  useEffect(() => {
+    if (!board) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    const nextTracked: Record<string, Set<string>> = {};
+    const nextArrivals: LaneEntryArrivalAnimation[] = [];
+
+    const activeLanes = displayLanes
+      .map((lane, index) => ({ lane, index }))
+      .filter((entry): entry is { lane: LaneSnapshot; index: number } => Boolean(entry.lane));
+
+    activeLanes.forEach(({ lane, index }) => {
+      const vehicles = laneVehicles[lane.id] ?? [];
+      const previousIds = laneVehiclesRef.current[lane.id] ?? new Set<string>();
+      const newVehicles = vehicles.filter((vehicle) => {
+        if (!vehicle.laneEntryTime) {
+          return false;
+        }
+        if (previousIds.has(vehicle.id)) {
+          return false;
+        }
+        const entryTimeMs = new Date(vehicle.laneEntryTime).getTime();
+        return Number.isFinite(entryTimeMs) && nowMs - entryTimeMs <= LANE_ENTRY_ANIMATION_WINDOW_MS;
+      });
+      const layout = laneVehicleLayout(lane);
+      const baseVisibleCount = Math.min(previousIds.size, layout.capacity - 1);
+      const laneLeft = LANE_LEFTS[index];
+      const targetLaneCenterX = laneLeft + LANE_WIDTH / 2;
+
+      newVehicles.forEach((vehicle, offset) => {
+        const targetIndex = Math.min(baseVisibleCount + offset, layout.capacity - 1);
+        const targetY = LANE_STACK_TOP + layout.slot * targetIndex + Math.max(0, (layout.slot - layout.plateHeight) / 2);
+        const fittedFontSize = plateFontSize(vehicle.plate, layout.plateWidth, layout.fontSize, 10);
+        const targetDuration = Math.max(6, Math.min(9, 5.7 + (index / 3)));
+        nextArrivals.push({
+          id: `${vehicle.id}-${vehicle.laneEntryTime ?? ""}-${nowMs}`,
+          ticket: vehicle,
+          laneId: lane.id,
+          laneIndex: index,
+          plateWidth: layout.plateWidth,
+          plateHeight: layout.plateHeight,
+          fontSize: fittedFontSize,
+          startY: LANE_ENTRY_CAMERA_Y + (index % 4) * 15,
+          targetX: targetLaneCenterX - layout.plateWidth / 2,
+          targetY,
+          delaySeconds: (index % 2) * 0.18 + Math.min(offset, 3) * 0.22,
+          durationSeconds: targetDuration,
+          startedAt: nowMs,
+        });
+      });
+
+      nextTracked[lane.id] = new Set(vehicles.map((vehicle) => vehicle.id));
+    });
+
+    if (!hasLaneVehiclesBaselineRef.current) {
+      laneVehiclesRef.current = nextTracked;
+      hasLaneVehiclesBaselineRef.current = true;
+      return;
+    }
+
+    laneVehiclesRef.current = nextTracked;
+
+    setLaneEntryArrivals((current) => {
+      const next = [...current, ...nextArrivals]
+        .filter((item) => nowMs - item.startedAt <= LANE_ENTRY_ANIMATION_TTL_MS)
+        .filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index);
+      return next.slice(-24);
+    });
+  }, [board, displayLanes, laneVehicles]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nowMs = Date.now();
+      setLaneEntryArrivals((current) => current.filter((item) => nowMs - item.startedAt <= LANE_ENTRY_ANIMATION_TTL_MS));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -1354,6 +1511,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           lanes={lanes}
           laneVehicles={laneVehicles}
         />
+        <LaneEntryArrivalPlates arrivals={laneEntryArrivals} />
         <MovingGuidePlates tickets={pendingGuideEntries} lanes={lanes} />
 
         <Asset name="Group 48097127.png" className="absolute left-[1541px] top-[398px] h-[104px] w-[71px]" />
