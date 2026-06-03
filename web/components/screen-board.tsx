@@ -15,11 +15,15 @@ const API_BASE_URL =
   (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
 const LANE_LEFTS = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
 const LANE_WIDTH = 92;
+const LANE_HEIGHT = 638;
+const LANE_FIRST_PLATE_TOP = 272;
 const LANE_PLATE_SIDE_GAP = 4;
 const LANE_PLATE_WIDTH = LANE_WIDTH - LANE_PLATE_SIDE_GAP * 2;
 const ENTRY_ROAD_WIDTH = 74;
 const ENTRY_ROAD_PLATE_SIDE_GAP = 4;
 const ENTRY_ROAD_PLATE_WIDTH = ENTRY_ROAD_WIDTH - ENTRY_ROAD_PLATE_SIDE_GAP * 2;
+const LANE_ENTRY_ANIMATION_MS = 2100;
+const LANE_ENTRY_ANIMATION_CLEANUP_MS = LANE_ENTRY_ANIMATION_MS + 350;
 const BLUE_PLATE_CLASS = "border-2 border-white bg-[#1f6fe5] text-white shadow-[0_0_7px_rgba(0,0,0,0.45)]";
 const GREEN_PLATE_CLASS =
   "border-2 border-white bg-[linear-gradient(180deg,#effff3_0%,#4ee773_100%)] text-[#061a0a] shadow-[inset_0_0_9px_rgba(255,255,255,0.72),0_0_7px_rgba(0,0,0,0.45)]";
@@ -115,6 +119,14 @@ interface ScreenBoardData {
   events: ScreenEvent[];
   lanes: LaneSnapshot[];
   lastDailyResetAt: string | null;
+}
+
+interface LaneEntryAnimation {
+  id: string;
+  laneId: string;
+  ticketId: string;
+  plate: string;
+  startedAt: number;
 }
 
 type PopupPosition = { x: number; y: number };
@@ -397,6 +409,35 @@ function plateFontSize(text: string, plateWidth: number, maxFontSize: number, mi
   const usableWidth = plateWidth - 6;
   const fittedFontSize = Math.floor(usableWidth / Math.max(estimatePlateTextUnits(text), 1));
   return Math.max(minFontSize, Math.min(maxFontSize, fittedFontSize));
+}
+
+function lanePlateMetrics(lane: LaneSnapshot) {
+  const capacity = Math.max(lane.capacity || 1, 1);
+  const slot = LANE_HEIGHT / capacity;
+  const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
+  const fontSize = Math.max(13, Math.min(17, plateHeight * 0.56));
+  return {
+    capacity,
+    slot,
+    plateHeight,
+    plateWidth: LANE_PLATE_WIDTH,
+    fontSize,
+  };
+}
+
+function lanePlatePlacement(lane: LaneSnapshot, x: number, index: number, plate: string) {
+  const metrics = lanePlateMetrics(lane);
+  const displayPlate = screenPlateText(plate);
+  const top = LANE_FIRST_PLATE_TOP + metrics.slot * index;
+  const centerX = x + LANE_WIDTH / 2;
+  return {
+    displayPlate,
+    left: centerX - metrics.plateWidth / 2,
+    top,
+    width: metrics.plateWidth,
+    height: metrics.plateHeight,
+    fontSize: plateFontSize(displayPlate, metrics.plateWidth, metrics.fontSize, 11),
+  };
 }
 
 function screenScrollStyle(rowCount: number, rowHeight: number): CSSProperties {
@@ -713,51 +754,46 @@ function LaneVehicleStack({
   lane,
   vehicles,
   x,
+  hiddenVehicleIds,
 }: {
   lane: LaneSnapshot | null;
   vehicles: DispatchTicket[];
   x: number;
+  hiddenVehicleIds?: Set<string>;
 }) {
   if (!lane) {
     return null;
   }
 
-  const laneTop = 250;
-  const laneHeight = 638;
-  const capacity = Math.max(lane.capacity || 1, 1);
+  const { capacity } = lanePlateMetrics(lane);
   const rows = vehicles
     .filter((ticket) => ticket.plate)
     .slice(0, capacity)
     .map((ticket) => ({ id: ticket.id, plate: ticket.plate }));
-  const slot = laneHeight / capacity;
-  const plateHeight = Math.max(30, Math.min(36, slot * 0.82));
-  const plateWidth = LANE_PLATE_WIDTH;
-  const fontSize = Math.max(13, Math.min(17, plateHeight * 0.56));
 
   return (
     <>
       {rows.map((vehicle, index) => {
-        const displayPlate = screenPlateText(vehicle.plate);
-        const fittedFontSize = plateFontSize(displayPlate, plateWidth, fontSize, 11);
-        const rowTop = laneTop + slot * index;
-        const top = rowTop + Math.max(0, (slot - plateHeight) / 2);
-        const centerX = x + LANE_WIDTH / 2;
+        if (hiddenVehicleIds?.has(vehicle.id)) {
+          return null;
+        }
+        const placement = lanePlatePlacement(lane, x, index, vehicle.plate);
         return (
           <div key={`${lane.id}-${vehicle.id}-${index}`}>
             <div
               className={[
-                "absolute flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.02em]",
+                "absolute flex items-center justify-center overflow-hidden px-[3px] font-sans font-black leading-none tracking-normal",
                 plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
               ].join(" ")}
               style={{
-                left: centerX - plateWidth / 2,
-                top,
-                width: plateWidth,
-                height: plateHeight,
-                fontSize: fittedFontSize,
+                left: placement.left,
+                top: placement.top,
+                width: placement.width,
+                height: placement.height,
+                fontSize: placement.fontSize,
               }}
             >
-              <span className="max-w-full whitespace-nowrap">{displayPlate}</span>
+              <span className="max-w-full whitespace-nowrap">{placement.displayPlate}</span>
             </div>
           </div>
         );
@@ -769,9 +805,11 @@ function LaneVehicleStack({
 function LaneOverlays({
   lanes,
   laneVehicles,
+  hiddenVehicleIds,
 }: {
   lanes: LaneSnapshot[];
   laneVehicles: Record<string, DispatchTicket[]>;
+  hiddenVehicleIds?: Set<string>;
 }) {
   const displayLanes = buildDisplayLanes(lanes);
 
@@ -786,10 +824,84 @@ function LaneOverlays({
             <p>候</p>
             <p>区</p>
           </div>
-          <LaneVehicleStack lane={displayLanes[index]} vehicles={displayLanes[index] ? laneVehicles[displayLanes[index].id] ?? [] : []} x={x} />
+          <LaneVehicleStack
+            lane={displayLanes[index]}
+            vehicles={displayLanes[index] ? laneVehicles[displayLanes[index].id] ?? [] : []}
+            x={x}
+            hiddenVehicleIds={hiddenVehicleIds}
+          />
         </div>
       ))}
     </>
+  );
+}
+
+function LaneEntryMotionLayer({
+  animations,
+  lanes,
+  laneVehicles,
+}: {
+  animations: LaneEntryAnimation[];
+  lanes: LaneSnapshot[];
+  laneVehicles: Record<string, DispatchTicket[]>;
+}) {
+  if (animations.length === 0) {
+    return null;
+  }
+
+  const displayLanes = buildDisplayLanes(lanes);
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-40">
+      {animations.map((animation) => {
+        const laneIndex = displayLanes.findIndex((lane) => lane?.id === animation.laneId);
+        const lane = laneIndex >= 0 ? displayLanes[laneIndex] : null;
+        if (!lane) {
+          return null;
+        }
+
+        const laneLeft = LANE_LEFTS[laneIndex];
+        const { capacity, plateWidth } = lanePlateMetrics(lane);
+        const vehicles = laneVehicles[lane.id] ?? [];
+        const rawTargetIndex = vehicles.findIndex((vehicle) => vehicle.id === animation.ticketId);
+        if (rawTargetIndex < 0) {
+          return null;
+        }
+
+        const targetIndex = Math.min(rawTargetIndex, capacity - 1);
+        const placement = lanePlatePlacement(lane, laneLeft, targetIndex, animation.plate);
+        const startLeft = laneLeft + LANE_WIDTH / 2 - plateWidth / 2;
+        const startTop = 920;
+        const style = {
+          "--lane-entry-start-x": `${startLeft}px`,
+          "--lane-entry-start-y": `${startTop}px`,
+          "--lane-entry-end-x": `${placement.left}px`,
+          "--lane-entry-end-y": `${placement.top}px`,
+          "--lane-entry-duration": `${LANE_ENTRY_ANIMATION_MS}ms`,
+        } as CSSProperties;
+        const plateClass = plateTone(animation.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS;
+
+        return (
+          <div key={animation.id} className="screen-lane-entry-motion absolute left-0 top-0" style={style}>
+            <div className="screen-lane-entry-plate-wrap relative">
+              <div
+                className={[
+                  "relative z-10 flex items-center justify-center overflow-hidden px-[3px] font-sans font-black leading-none tracking-normal",
+                  plateClass,
+                ].join(" ")}
+                style={{
+                  width: placement.width,
+                  height: placement.height,
+                  fontSize: placement.fontSize,
+                }}
+              >
+                <span className="max-w-full whitespace-nowrap">{placement.displayPlate}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1056,7 +1168,9 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const [dailyResetDialog, setDailyResetDialog] = useState<DailyResetDialog | null>(null);
   const [dailyResetBusy, setDailyResetBusy] = useState(false);
   const [dismissedDailyResetSlots, setDismissedDailyResetSlots] = useState<Record<string, true>>(() => loadDismissedDailyResetSlots());
+  const [laneEntryAnimations, setLaneEntryAnimations] = useState<LaneEntryAnimation[]>([]);
   const pendingAlertSeenCountsRef = useRef<Record<string, number>>({});
+  const previousLaneVehicleIdsRef = useRef<Record<string, Set<string>> | null>(null);
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
   const events = useMemo(() => (board?.events ?? []).filter((event) => !event.handled), [board?.events]);
@@ -1067,6 +1181,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const guideEntries = pendingGuideEntries.length ? pendingGuideEntries : board?.guideAssignments ?? [];
   const lanes = useMemo(() => board?.lanes ?? [], [board?.lanes]);
   const laneVehicles = useMemo(() => board?.laneVehicles ?? {}, [board?.laneVehicles]);
+  const animatingLaneVehicleIds = useMemo(() => new Set(laneEntryAnimations.map((animation) => animation.ticketId)), [laneEntryAnimations]);
   const currentPendingClearLane = pendingClearLane ? lanes.find((lane) => lane.id === pendingClearLane.id) ?? pendingClearLane : null;
   const pendingClearLaneCount = currentPendingClearLane ? laneRemainingCount(currentPendingClearLane, laneVehicles) : 0;
   const pendingClearLaneClearable = Boolean(
@@ -1077,6 +1192,64 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!board) {
+      return;
+    }
+
+    const previousByLane = previousLaneVehicleIdsRef.current;
+    const currentByLane: Record<string, Set<string>> = {};
+    const nowMs = Date.now();
+    const additions: LaneEntryAnimation[] = [];
+
+    Object.entries(board.laneVehicles ?? {}).forEach(([laneId, vehicles]) => {
+      const currentIds = new Set<string>();
+      vehicles.forEach((vehicle) => {
+        if (!vehicle.id || !vehicle.plate) {
+          return;
+        }
+        currentIds.add(vehicle.id);
+        if (previousByLane && !previousByLane[laneId]?.has(vehicle.id)) {
+          additions.push({
+            id: `${laneId}-${vehicle.id}-${nowMs}`,
+            laneId,
+            ticketId: vehicle.id,
+            plate: vehicle.plate,
+            startedAt: nowMs,
+          });
+        }
+      });
+      currentByLane[laneId] = currentIds;
+    });
+
+    previousLaneVehicleIdsRef.current = currentByLane;
+    if (!additions.length) {
+      return;
+    }
+
+    setLaneEntryAnimations((current) => {
+      const additionKeys = new Set(additions.map((animation) => `${animation.laneId}:${animation.ticketId}`));
+      const retained = current.filter(
+        (animation) =>
+          nowMs - animation.startedAt < LANE_ENTRY_ANIMATION_CLEANUP_MS &&
+          !additionKeys.has(`${animation.laneId}:${animation.ticketId}`),
+      );
+      return [...retained, ...additions].slice(-12);
+    });
+  }, [board]);
+
+  useEffect(() => {
+    if (laneEntryAnimations.length === 0) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const nowMs = Date.now();
+      setLaneEntryAnimations((current) => current.filter((animation) => nowMs - animation.startedAt < LANE_ENTRY_ANIMATION_CLEANUP_MS));
+    }, LANE_ENTRY_ANIMATION_CLEANUP_MS);
+    return () => window.clearTimeout(timer);
+  }, [laneEntryAnimations]);
 
   useEffect(() => {
     if (!actionMessage) {
@@ -1353,8 +1526,10 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <LaneOverlays
           lanes={lanes}
           laneVehicles={laneVehicles}
+          hiddenVehicleIds={animatingLaneVehicleIds}
         />
         <MovingGuidePlates tickets={pendingGuideEntries} lanes={lanes} />
+        <LaneEntryMotionLayer animations={laneEntryAnimations} lanes={lanes} laneVehicles={laneVehicles} />
 
         <Asset name="Group 48097127.png" className="absolute left-[1541px] top-[398px] h-[104px] w-[71px]" />
         <Asset name="Group 48097128.png" className="absolute left-[1541px] top-[730px] h-[104px] w-[71px]" />
