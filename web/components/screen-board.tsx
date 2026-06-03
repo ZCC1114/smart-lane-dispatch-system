@@ -900,7 +900,10 @@ function LaneEntryArrivalPlates({ arrivals }: { arrivals: LaneEntryArrivalAnimat
 
         return (
           <div key={arrival.id} className="screen-lane-entry-plate-motion absolute left-0 top-0" style={style}>
-            <div className="screen-lane-entry-plate-glow" style={{ width: arrival.plateWidth, height: arrival.plateHeight }}>
+            <div
+              className="screen-lane-entry-plate-glow"
+              style={{ width: arrival.plateWidth, height: arrival.plateHeight, animationDelay: `${arrival.delaySeconds}s` }}
+            >
               <div
                 className={[
                   "absolute inset-0 flex items-center justify-center overflow-hidden px-[3px] font-mono font-black leading-none tracking-[-0.04em]",
