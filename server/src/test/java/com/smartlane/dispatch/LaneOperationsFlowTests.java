@@ -631,7 +631,7 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void exitHandoffShouldRequireManualClearWhenPreviousLaneHasLargeRemainingCount() throws Exception {
+	void exitHandoffShouldAutoClearPreviousLaneWhenPreviousLaneHasLargeRemainingCount() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(4);
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
@@ -656,31 +656,18 @@ class LaneOperationsFlowTests {
 
 		assertThat(thirdTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_COMPLETED);
 		assertThat(thirdTrigger.activeExitLaneIdAfter()).isEqualTo("L02");
-		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(4);
-		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
-		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
-				.extracting(EntryLog::getPlate)
-				.containsExactly("沪A10001", "沪A10002", "沪A10003", "沪A10004");
-		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L01"))
-				.hasSize(4)
-				.allSatisfy(ticket -> assertThat(ticket.getNotes()).contains("出口交接残留超过阈值，需人工确认"));
-		assertThat(operationsService.getScreenEvents().stream()
-				.filter(event -> "EH-L01".equals(event.id()))
-				.findFirst())
-			.hasValueSatisfying(event -> {
-				assertThat(event.type()).isEqualTo("other");
-				assertThat(event.message()).contains("1号车道 出口交接后仍残留 4 辆，请人工确认后清空");
-			});
-		assertSingleGreenSignal("L02", "EXIT");
-
-		operationsService.clearLaneRemainingVehicles(
-				"L01",
-				OffsetDateTime.parse("2026-04-20T08:30:00+08:00"),
-				"现场确认 1号车道已全部驶出");
-
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isZero();
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
 		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01")).isEmpty();
 		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L01")).isEmpty();
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "L01".equals(ticket.getActualLaneId())))
+			.hasSize(4)
+			.allSatisfy(ticket -> {
+				assertThat(ticket.getStatus()).isEqualTo("EXITED");
+				assertThat(ticket.getExitTime()).isNotNull();
+				assertThat(ticket.getClosedAt()).isNotNull();
+			});
 		assertThat(operationsService.getScreenEvents())
 				.noneMatch(event -> "EH-L01".equals(event.id()));
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L02");
@@ -1005,6 +992,15 @@ class LaneOperationsFlowTests {
 		postYardEntry(token, "沪A30001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L02", "沪A30001", "2026-04-20T08:01:00+08:00");
 		postYardEntry(token, "沪A30002", "2026-04-20T08:02:00+08:00");
+		firstLane = laneRepository.findById("L01").orElseThrow();
+		firstLane.setVehicleCount(2);
+		firstLane.setSensorStatus("DEGRADED");
+		firstLane.setStatus("FULL");
+		secondLane = laneRepository.findById("L02").orElseThrow();
+		secondLane.setVehicleCount(1);
+		secondLane.setSensorStatus("DEGRADED");
+		secondLane.setStatus("FULL");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
 
 		mockMvc.perform(post("/api/dispatch/daily-reset")
 				.header("Authorization", "Bearer " + token))
@@ -1019,6 +1015,10 @@ class LaneOperationsFlowTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[?(@.id=='L01')].vehicleCount").value(0))
 			.andExpect(jsonPath("$[?(@.id=='L02')].vehicleCount").value(0))
+			.andExpect(jsonPath("$[?(@.id=='L01')].sensorStatus").value("ONLINE"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].sensorStatus").value("ONLINE"))
+			.andExpect(jsonPath("$[?(@.id=='L01')].status").value("OPEN"))
+			.andExpect(jsonPath("$[?(@.id=='L02')].status").value("OPEN"))
 			.andExpect(jsonPath("$[?(@.id=='L01')].entrySignal").value("GREEN"))
 			.andExpect(jsonPath("$[?(@.id=='L01')].exitSignal").value("GREEN"))
 			.andExpect(jsonPath("$[?(@.id=='L02')].exitSignal").value("RED"));

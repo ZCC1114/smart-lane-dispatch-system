@@ -14,6 +14,7 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
 const LANE_LEFTS = [404, 508, 611, 714, 817, 920, 1023, 1126, 1229, 1332, 1435];
+const LANE_PLATE_CENTERS = [449, 556, 660, 762, 862, 963, 1067, 1166, 1267, 1369, 1469];
 const LANE_WIDTH = 92;
 const LANE_HEIGHT = 638;
 const LANE_FIRST_PLATE_TOP = 272;
@@ -425,11 +426,10 @@ function lanePlateMetrics(lane: LaneSnapshot) {
   };
 }
 
-function lanePlatePlacement(lane: LaneSnapshot, x: number, index: number, plate: string) {
+function lanePlatePlacement(lane: LaneSnapshot, centerX: number, index: number, plate: string) {
   const metrics = lanePlateMetrics(lane);
   const displayPlate = screenPlateText(plate);
   const top = LANE_FIRST_PLATE_TOP + metrics.slot * index;
-  const centerX = x + LANE_WIDTH / 2;
   return {
     displayPlate,
     left: centerX - metrics.plateWidth / 2,
@@ -753,12 +753,12 @@ function Gate({ x, y, text }: { x: number; y: number; text: string }) {
 function LaneVehicleStack({
   lane,
   vehicles,
-  x,
+  centerX,
   hiddenVehicleIds,
 }: {
   lane: LaneSnapshot | null;
   vehicles: DispatchTicket[];
-  x: number;
+  centerX: number;
   hiddenVehicleIds?: Set<string>;
 }) {
   if (!lane) {
@@ -777,7 +777,7 @@ function LaneVehicleStack({
         if (hiddenVehicleIds?.has(vehicle.id)) {
           return null;
         }
-        const placement = lanePlatePlacement(lane, x, index, vehicle.plate);
+        const placement = lanePlatePlacement(lane, centerX, index, vehicle.plate);
         return (
           <div key={`${lane.id}-${vehicle.id}-${index}`}>
             <div
@@ -827,7 +827,7 @@ function LaneOverlays({
           <LaneVehicleStack
             lane={displayLanes[index]}
             vehicles={displayLanes[index] ? laneVehicles[displayLanes[index].id] ?? [] : []}
-            x={x}
+            centerX={LANE_PLATE_CENTERS[index]}
             hiddenVehicleIds={hiddenVehicleIds}
           />
         </div>
@@ -860,7 +860,7 @@ function LaneEntryMotionLayer({
           return null;
         }
 
-        const laneLeft = LANE_LEFTS[laneIndex];
+        const laneCenterX = LANE_PLATE_CENTERS[laneIndex];
         const { capacity, plateWidth } = lanePlateMetrics(lane);
         const vehicles = laneVehicles[lane.id] ?? [];
         const rawTargetIndex = vehicles.findIndex((vehicle) => vehicle.id === animation.ticketId);
@@ -869,8 +869,8 @@ function LaneEntryMotionLayer({
         }
 
         const targetIndex = Math.min(rawTargetIndex, capacity - 1);
-        const placement = lanePlatePlacement(lane, laneLeft, targetIndex, animation.plate);
-        const startLeft = laneLeft + LANE_WIDTH / 2 - plateWidth / 2;
+        const placement = lanePlatePlacement(lane, laneCenterX, targetIndex, animation.plate);
+        const startLeft = laneCenterX - plateWidth / 2;
         const startTop = 920;
         const style = {
           "--lane-entry-start-x": `${startLeft}px`,
@@ -924,18 +924,18 @@ function MovingGuidePlates({ tickets, lanes }: { tickets: DispatchTicket[]; lane
         }
 
         const laneLeft = LANE_LEFTS[laneIndex];
+        const laneCenterX = LANE_PLATE_CENTERS[laneIndex];
         const routeOffset = index % 3;
         const displayPlate = screenPlateText(ticket.plate);
         const plateWidth = ENTRY_ROAD_PLATE_WIDTH;
         const fittedFontSize = plateFontSize(displayPlate, plateWidth, 13, 9);
         const entryRoadCenterX = 1560;
-        const targetLaneCenterX = laneLeft + LANE_WIDTH / 2;
         const duration = Math.max(5.2, Math.min(8.5, 5.2 + (1548 - laneLeft) / 300));
         const style = {
           "--guide-start-x": `${entryRoadCenterX - plateWidth / 2}px`,
           "--guide-start-y": `${418 + routeOffset * 22}px`,
           "--guide-turn-y": `${980 + routeOffset * 13}px`,
-          "--guide-end-x": `${targetLaneCenterX - plateWidth / 2}px`,
+          "--guide-end-x": `${laneCenterX - plateWidth / 2}px`,
           "--guide-end-y": `${980 + routeOffset * 13}px`,
           "--guide-duration": `${duration}s`,
           "--guide-delay": `${index * -0.72}s`,

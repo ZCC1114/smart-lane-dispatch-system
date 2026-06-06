@@ -146,6 +146,7 @@ docker compose up -d --build
 APP_HTTP_PORT=3002
 APP_PUBLIC_HOST=<服务器局域网IP，例如192.168.124.3>
 APP_CORS_ALLOWED_ORIGINS=http://<服务器局域网IP>:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://<服务器局域网IP>:3002,http://localhost:*,http://127.0.0.1:*
 APP_JWT_SECRET=<生产环境随机长密钥，不要用示例值>
 
 DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
@@ -154,6 +155,8 @@ MYSQL_ROOT_PASSWORD=<MySQL root密码>
 MYSQL_USER=smartlane
 MYSQL_PASSWORD=<业务数据库密码>
 ```
+
+如果现场通过公网、FRP 或多个 IP 访问系统，需要把所有浏览器访问地址同时写入 `APP_CORS_ALLOWED_ORIGINS` 和 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`。后端会优先使用 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`，只改 `APP_CORS_ALLOWED_ORIGINS` 可能导致登录接口返回 `Invalid CORS request`。修改 `.env` 后需要重新创建 `server` 容器。
 
 如果所有服务都用 `compose.yaml` 里的内置 Mosquitto，MQTT 主机保持 `mqtt`：
 

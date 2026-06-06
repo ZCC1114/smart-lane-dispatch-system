@@ -78,7 +78,7 @@ test -f .env || cp .env.example .env
 现场服务器是 `172.17.2.10:3002` 时，至少确认这些值：
 
 ```bash
-grep -E '^(APP_PUBLIC_HOST|APP_CORS_ALLOWED_ORIGINS|DOCKER_IMAGE_REGISTRY)=' .env
+grep -E '^(APP_PUBLIC_HOST|APP_CORS_ALLOWED_ORIGINS|APP_CORS_ALLOWED_ORIGIN_PATTERNS|DOCKER_IMAGE_REGISTRY)=' .env
 ```
 
 推荐值：
@@ -86,8 +86,19 @@ grep -E '^(APP_PUBLIC_HOST|APP_CORS_ALLOWED_ORIGINS|DOCKER_IMAGE_REGISTRY)=' .en
 ```dotenv
 APP_PUBLIC_HOST=172.17.2.10
 APP_CORS_ALLOWED_ORIGINS=http://172.17.2.10:3002
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
 DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
 ```
+
+如果现场同时通过公网或 FRP 地址访问，例如 `http://139.224.203.95:3002`，必须同时写入 `APP_CORS_ALLOWED_ORIGINS` 和 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`：
+
+```dotenv
+APP_PUBLIC_HOST=139.224.203.95
+APP_CORS_ALLOWED_ORIGINS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
+```
+
+注意：后端 CORS 配置会优先使用 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`。如果只配置 `APP_CORS_ALLOWED_ORIGINS`，但没有把外网或 FRP 地址写入 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`，登录接口可能返回 `Invalid CORS request`，表现为登录页能打开但点击登录失败并提示“当前账号没有权限执行该操作”。
 
 构建前后端业务镜像：
 
@@ -110,7 +121,13 @@ docker save -o "$PKG_DIR/images/smart-lane-business-images-amd64-${VERSION}.tar"
   smart-lane-dispatch-system-web:latest
 ```
 
-打包项目文件。这个包不包含现场 `.env`，不会直接覆盖服务器配置：
+打包项目文件。这个包不包含现场 `.env`，不会直接覆盖服务器配置。
+
+如果是在 macOS 上打包，建议先设置 `COPYFILE_DISABLE=1`，避免压缩包里写入 macOS 扩展属性，服务器解压时出现大量 `LIBARCHIVE.xattr.com.apple.provenance` 提示：
+
+```bash
+export COPYFILE_DISABLE=1
+```
 
 ```bash
 tar \
@@ -232,6 +249,21 @@ sudo chmod 644 deploy/mosquitto/password_file
 
 如果这次需要同步现场参数，可以参考上传包里的 `env/onsite.env`，手动对比合并到服务器 `.env`。不要直接覆盖服务器 `.env`，避免丢失数据库密码、JWT 密钥等现场配置。
 
+外网、FRP 或新增访问 IP 后，必须确认服务器 `.env` 同时包含对应的 `APP_CORS_ALLOWED_ORIGINS` 和 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`。例如现场既通过内网 `172.17.2.10:3002` 访问，也通过公网 `139.224.203.95:3002` 访问：
+
+```bash
+grep -E '^(APP_CORS_ALLOWED_ORIGINS|APP_CORS_ALLOWED_ORIGIN_PATTERNS)=' .env
+```
+
+期望至少包含：
+
+```dotenv
+APP_CORS_ALLOWED_ORIGINS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
+```
+
+只改 `.env` 不会自动影响运行中的后端，必须重新创建 `server` 容器。
+
 检查 Compose 配置：
 
 ```bash
@@ -245,6 +277,23 @@ sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recre
 sudo docker compose -p smart-lane-dispatch-system up -d --no-build --force-recreate --no-deps web
 sudo docker compose -p smart-lane-dispatch-system ps
 ```
+
+部署后建议从实际访问域名或 IP 验证登录接口 CORS。以下示例验证公网 `139.224.203.95:3002`：
+
+```bash
+curl -i -X OPTIONS 'http://139.224.203.95:3002/api/auth/login' \
+  -H 'Origin: http://139.224.203.95:3002' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type'
+```
+
+正常结果应返回 `HTTP/1.1 200`，并包含：
+
+```text
+Access-Control-Allow-Origin: http://139.224.203.95:3002
+```
+
+如果返回 `Invalid CORS request`，优先检查 `APP_CORS_ALLOWED_ORIGIN_PATTERNS` 是否包含当前浏览器地址，然后重新创建 `server` 容器。
 
 如果这次同时改了 `compose.yaml`、`deploy/nginx/default.conf`、MQTT 配置或 `.env` 中 Nginx/MQTT 相关变量，再按需重建：
 

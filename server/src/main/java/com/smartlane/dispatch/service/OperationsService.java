@@ -685,6 +685,12 @@ public class OperationsService {
 		saveActiveEntrySignalConfig(resetEntryLaneId, referenceTime);
 		saveActiveExitSignalConfig(resetEntryLaneId, referenceTime);
 		saveDispatchConfig(LAST_DAILY_RESET_AT_KEY, referenceTime.toString(), referenceTime);
+		flowLog.info(
+				"节点=日清重置完成 event=DAILY_RESET_COMPLETED resetEntryLane={} laneOrder={} lanesCleared={} at={}",
+				nullToEmpty(resetEntryLaneId),
+				laneOrderDescription(sortLanesByOrder(lanes, laneOrder), laneOrder),
+				lanes.size(),
+				referenceTime);
 
 		refreshLaneRuntime(referenceTime);
 		invalidateRuntimeViews("daily_reset");
@@ -2942,23 +2948,9 @@ public class OperationsService {
 				.max(Integer::compareTo)
 				.orElse(0);
 		String reason = "相邻车道 " + toLaneId + " 出口地感连续 " + EXIT_HANDOFF_TRIGGER_THRESHOLD + " 次确认交接";
-		if (remainingCount > LANE_REMAINING_CLEAR_THRESHOLD) {
-			markExitHandoffManualConfirm(fromLane, toLaneId, remainingCount, openTickets, referenceTime);
-			flowLog.warn(
-					"节点=出口交接需人工确认 event=EXIT_HANDOFF_MANUAL_CONFIRM_REQUIRED fromLane={} toLane={} remainingCount={} threshold={} openTickets={} activeLogs={} observedAt={} action=KEEP_PREVIOUS_LANE_DATA",
-					fromLaneId,
-					toLaneId,
-					remainingCount,
-					LANE_REMAINING_CLEAR_THRESHOLD,
-					openTickets.size(),
-					activeLogs.size(),
-					referenceTime);
-			saveActiveExitSignalConfig(toLaneId, referenceTime);
-			return;
-		}
 		clearExitHandoffManualConfirm(fromLaneId);
 		flowLog.info(
-				"节点=出口交接自动清空上一车道 event=EXIT_HANDOFF_AUTO_CLEAR_PREVIOUS fromLane={} toLane={} remainingCount={} threshold={} observedAt={}",
+				"节点=出口交接自动清空上一车道 event=EXIT_HANDOFF_AUTO_CLEAR_PREVIOUS fromLane={} toLane={} remainingCount={} previousThreshold={} observedAt={} policy=ALWAYS_CLEAR",
 				fromLaneId,
 				toLaneId,
 				remainingCount,

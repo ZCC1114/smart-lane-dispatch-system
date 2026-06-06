@@ -318,8 +318,11 @@ docker.m.daocloud.io/library/node:23-alpine
 cp .env.example .env
 sed -i.bak 's/^APP_PUBLIC_HOST=.*/APP_PUBLIC_HOST=172.17.2.10/' .env
 sed -i.bak 's/^APP_CORS_ALLOWED_ORIGINS=.*/APP_CORS_ALLOWED_ORIGINS=http:\/\/172.17.2.10:3002/' .env
+sed -i.bak 's/^APP_CORS_ALLOWED_ORIGIN_PATTERNS=.*/APP_CORS_ALLOWED_ORIGIN_PATTERNS=http:\/\/172.17.2.10:3002,http:\/\/localhost:*,http:\/\/127.0.0.1:*/' .env
 sed -i.bak 's/^DOCKER_IMAGE_REGISTRY=.*/DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io\/library/' .env
 ```
+
+如果现场还通过公网或 FRP 地址访问，例如 `http://139.224.203.95:3002`，需要把该地址同时追加到 `APP_CORS_ALLOWED_ORIGINS` 和 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`。后端 CORS 会优先使用 `APP_CORS_ALLOWED_ORIGIN_PATTERNS`，只配置 `APP_CORS_ALLOWED_ORIGINS` 时可能出现登录页可打开、登录接口返回 `Invalid CORS request`。
 
 如果有网电脑是 Apple Silicon Mac，而生产服务器是常见 x86_64 / amd64，必须指定 `linux/amd64`，否则会导出 ARM 镜像，服务器无法运行:
 
@@ -471,6 +474,7 @@ nano .env
 APP_HTTP_PORT=3002
 APP_PUBLIC_HOST=172.17.2.10
 APP_CORS_ALLOWED_ORIGINS=http://172.17.2.10:3002
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
 DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
 
 APP_DEVICE_MQTT_HOST=mqtt
@@ -558,6 +562,7 @@ nano .env
 APP_HTTP_PORT=3002
 APP_PUBLIC_HOST=172.17.2.10
 APP_CORS_ALLOWED_ORIGINS=http://172.17.2.10:3002
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
 APP_JWT_SECRET=replace-with-a-long-random-64-byte-secret
 APP_JWT_EXPIRE_HOURS=8
 
@@ -1399,6 +1404,7 @@ set_env() {
 
 set_env APP_PUBLIC_HOST 172.17.2.10
 set_env APP_CORS_ALLOWED_ORIGINS http://172.17.2.10:3002
+set_env APP_CORS_ALLOWED_ORIGIN_PATTERNS http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
 
 set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_SN 00E02721A3A7
 set_env APP_DEVICE_PARKING_MF_YARD_ENTRY_GROUP_ID 9QHZNII
