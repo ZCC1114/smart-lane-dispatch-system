@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole, Power } from "lucide-react";
+import { Car, LockKeyhole, Plus, Power } from "lucide-react";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { Panel } from "@/components/panel";
 import { SignalStack } from "@/components/signal-stack";
 import { api } from "@/lib/api";
-import type { SignalState } from "@/lib/types";
+import type { LaneSnapshot, ManualDispatchRequest, SignalState } from "@/lib/types";
 import { canOperateSignals } from "@/lib/permissions";
 import { cn, sensorStatusLabel, signalLabel } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -15,6 +15,11 @@ import { useAuthStore } from "@/stores/auth-store";
 const signalOptions: SignalState[] = ["RED", "GREEN"];
 const laneTableHeaderClassName = "border-b border-slate-200 px-3 py-3 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600";
 const laneTableCellClassName = "px-3 py-3 align-middle text-sm text-[var(--text-primary)]";
+
+type VehicleCorrectionAction = {
+  type: "placeholder" | "plate";
+  lane: LaneSnapshot;
+};
 
 function signalDotClassName(signal: SignalState) {
   if (signal === "GREEN") {
@@ -36,6 +41,83 @@ function SignalDot({ signal }: { signal: SignalState }) {
   );
 }
 
+function VehicleCorrectionModal({
+  action,
+  value,
+  error,
+  busy,
+  onValueChange,
+  onCancel,
+  onConfirm,
+}: {
+  action: VehicleCorrectionAction | null;
+  value: string;
+  error: string | null;
+  busy: boolean;
+  onValueChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!action) {
+    return null;
+  }
+
+  const isPlaceholder = action.type === "placeholder";
+  const remainingCapacity = Math.max(0, action.lane.capacity - action.lane.vehicleCount);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/18 p-4 backdrop-blur-sm">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onConfirm();
+        }}
+        className="panel-surface w-full max-w-md rounded-sm p-6"
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">车辆校正</p>
+        <h2 className="mt-3 text-2xl font-semibold text-[var(--text-primary)]">
+          {isPlaceholder ? "新增占位车牌" : "新增真实车牌"}
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+          {action.lane.name} 当前车辆数 {action.lane.vehicleCount} / {action.lane.capacity}，最多可新增 {remainingCapacity} 辆。
+        </p>
+        <label className="mt-5 block text-sm font-semibold text-[var(--text-primary)]" htmlFor="vehicle-correction-input">
+          {isPlaceholder ? "新增数量" : "车牌号"}
+        </label>
+        <input
+          id="vehicle-correction-input"
+          autoFocus
+          type={isPlaceholder ? "number" : "text"}
+          inputMode={isPlaceholder ? "numeric" : "text"}
+          min={isPlaceholder ? 1 : undefined}
+          max={isPlaceholder ? remainingCapacity : undefined}
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          placeholder={isPlaceholder ? "请输入新增占位数量" : "请输入车牌号"}
+          className="mt-2 w-full rounded-sm border border-[var(--border-soft)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
+        />
+        {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-sm border border-[var(--border-soft)] px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+          >
+            取消
+          </button>
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-sm bg-[var(--brand)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {busy ? "处理中..." : "确认"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function SignalsPage() {
   const role = useAuthStore((state) => state.user?.role);
   const readOnly = !canOperateSignals(role);
@@ -47,6 +129,9 @@ export default function SignalsPage() {
     exitSignal: SignalState;
     reason: string;
   } | null>(null);
+  const [vehicleCorrectionAction, setVehicleCorrectionAction] = useState<VehicleCorrectionAction | null>(null);
+  const [vehicleCorrectionValue, setVehicleCorrectionValue] = useState("");
+  const [vehicleCorrectionError, setVehicleCorrectionError] = useState<string | null>(null);
 
   const lanesQuery = useQuery({
     queryKey: ["lanes"],
@@ -78,6 +163,81 @@ export default function SignalsPage() {
     },
   });
 
+  const vehicleCorrectionMutation = useMutation({
+    mutationFn: (payload: ManualDispatchRequest) => api.dispatch(payload),
+    onSuccess: async () => {
+      setVehicleCorrectionAction(null);
+      setVehicleCorrectionValue("");
+      setVehicleCorrectionError(null);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["lanes"], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["dispatch-board"], type: "active" }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
+    onError: (error) => {
+      setVehicleCorrectionError(error instanceof Error ? error.message : "操作失败");
+    },
+  });
+
+  function openVehicleCorrection(lane: LaneSnapshot, type: VehicleCorrectionAction["type"]) {
+    const remainingCapacity = Math.max(0, lane.capacity - lane.vehicleCount);
+    if (remainingCapacity <= 0) {
+      window.alert("当前车道已满");
+      return;
+    }
+    setVehicleCorrectionAction({ lane, type });
+    setVehicleCorrectionValue(type === "placeholder" ? "1" : "");
+    setVehicleCorrectionError(null);
+  }
+
+  function submitVehicleCorrection() {
+    if (!vehicleCorrectionAction) {
+      return;
+    }
+    const { lane, type } = vehicleCorrectionAction;
+    const remainingCapacity = Math.max(0, lane.capacity - lane.vehicleCount);
+    if (remainingCapacity <= 0) {
+      setVehicleCorrectionError("当前车道已满");
+      return;
+    }
+
+    let payload: ManualDispatchRequest;
+    if (type === "placeholder") {
+      const count = Number(vehicleCorrectionValue);
+      if (!Number.isInteger(count) || count <= 0) {
+        setVehicleCorrectionError("请输入大于 0 的整数");
+        return;
+      }
+      if (count > remainingCapacity) {
+        setVehicleCorrectionError(`当前车道最多只能新增 ${remainingCapacity} 个占位车牌`);
+        return;
+      }
+      payload = {
+        laneId: lane.id,
+        commandType: "ADD_PLACEHOLDER_PLATES",
+        placeholderCount: count,
+        reason: `信号灯控制台新增${count}个占位车牌：${lane.name}`,
+      };
+    } else {
+      const plate = vehicleCorrectionValue.trim();
+      if (!plate) {
+        setVehicleCorrectionError("请输入车牌号");
+        return;
+      }
+      payload = {
+        laneId: lane.id,
+        commandType: "ADD_REAL_PLATE",
+        plate,
+        reason: `信号灯控制台新增真实车牌${plate}：${lane.name}`,
+        vehicleType: "出租车",
+      };
+    }
+
+    setVehicleCorrectionError(null);
+    vehicleCorrectionMutation.mutate(payload);
+  }
+
   if (lanesQuery.isLoading || !lanesQuery.data) {
     return <div className="rounded-sm border border-[var(--border-soft)] px-5 py-6 text-sm text-[var(--text-secondary)]">正在加载信号灯控制面板...</div>;
   }
@@ -92,6 +252,24 @@ export default function SignalsPage() {
         busy={signalMutation.isPending}
         onCancel={() => setPendingAction(null)}
         onConfirm={() => signalMutation.mutate()}
+      />
+      <VehicleCorrectionModal
+        action={vehicleCorrectionAction}
+        value={vehicleCorrectionValue}
+        error={vehicleCorrectionError}
+        busy={vehicleCorrectionMutation.isPending}
+        onValueChange={(value) => {
+          setVehicleCorrectionValue(value);
+          setVehicleCorrectionError(null);
+        }}
+        onCancel={() => {
+          if (!vehicleCorrectionMutation.isPending) {
+            setVehicleCorrectionAction(null);
+            setVehicleCorrectionValue("");
+            setVehicleCorrectionError(null);
+          }
+        }}
+        onConfirm={submitVehicleCorrection}
       />
 
       <div className="space-y-6">
@@ -145,19 +323,20 @@ export default function SignalsPage() {
           eyebrow="点击车道后在右侧执行信号控制"
         >
           <div className="overflow-x-auto rounded-sm border border-[var(--border-soft)] bg-white">
-            <table className="min-w-[820px] w-full table-fixed border-collapse text-sm">
+            <table className="min-w-[1040px] w-full table-fixed border-collapse text-sm">
 	              <colgroup>
-	                <col className="w-[8%]" />
-	                <col className="w-[18%]" />
-	                <col className="w-[12%]" />
-	                <col className="w-[12%]" />
-	                <col className="w-[17%]" />
+	                <col className="w-[7%]" />
 	                <col className="w-[16%]" />
-	                <col className="w-[17%]" />
+	                <col className="w-[10%]" />
+	                <col className="w-[10%]" />
+	                <col className="w-[13%]" />
+	                <col className="w-[13%]" />
+	                <col className="w-[13%]" />
+	                <col className="w-[18%]" />
 	              </colgroup>
               <thead className="bg-slate-50/85">
                 <tr className="text-left">
-                  {["序号", "车道", "入口灯", "出口灯", "车辆在场", "待入道预留", "传感"].map((header) => (
+                  {["序号", "车道", "入口灯", "出口灯", "车辆在场", "待入道预留", "传感", "操作"].map((header) => (
                     <th
                       key={header}
                       scope="col"
@@ -201,6 +380,34 @@ export default function SignalsPage() {
                       <td className={cn(laneTableCellClassName, "text-center font-medium whitespace-nowrap")}>{lane.vehicleCount} / {lane.capacity}</td>
                       <td className={cn(laneTableCellClassName, "text-center font-medium whitespace-nowrap")}>{lane.reservedCount} 辆</td>
                       <td className={cn(laneTableCellClassName, "text-center font-medium whitespace-nowrap")}>{sensorStatusLabel(lane.sensorStatus)}</td>
+                      <td className={cn(laneTableCellClassName, "text-center")}>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          <button
+                            type="button"
+                            disabled={readOnly || vehicleCorrectionMutation.isPending}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openVehicleCorrection(lane, "placeholder");
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Plus className="size-3.5" />
+                            新增占位车牌
+                          </button>
+                          <button
+                            type="button"
+                            disabled={readOnly || vehicleCorrectionMutation.isPending}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openVehicleCorrection(lane, "plate");
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Car className="size-3.5" />
+                            新增真实车牌
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

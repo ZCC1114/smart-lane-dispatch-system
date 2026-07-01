@@ -6,7 +6,17 @@ export type LaneMode = "AUTO" | "MANUAL" | "OFFLINE";
 export type SignalState = "RED" | "GREEN" | "OFFLINE";
 export type SensorStatus = "ONLINE" | "DEGRADED" | "OFFLINE";
 export type RelayControlTarget = "ENTRY_RED" | "ENTRY_GREEN" | "EXIT_RED" | "EXIT_GREEN";
-export type LogStatus = "PASSED" | "REJECTED" | "MANUAL";
+export type LogStatus =
+  | "PASSED"
+  | "REJECTED"
+  | "MANUAL"
+  | "ASSIGNED"
+  | "ENTERED"
+  | "ENTERED_MISMATCH"
+  | "EXPIRED"
+  | "NO_LANE_AVAILABLE"
+  | "NOT_WHITELISTED"
+  | "DIRECT_ENTERED";
 export type BlacklistLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type DispatchCommandType =
   | "FORCE_OPEN_GATE"
@@ -14,6 +24,8 @@ export type DispatchCommandType =
   | "PLATE_CORRECTION"
   | "TEMP_ALLOW"
   | "CORRECT_COUNT"
+  | "ADD_PLACEHOLDER_PLATES"
+  | "ADD_REAL_PLATE"
   | "SET_PRIORITY";
 
 export interface UserSession {
@@ -57,6 +69,7 @@ export interface LaneSnapshot {
   lastEntryAt: string | null;
   reservedCount: number;
   availableSlots: number;
+  dispatchEnabled?: boolean;
 }
 
 export interface EntryLog {
@@ -181,6 +194,7 @@ export interface ManualDispatchRequest {
   reason: string;
   vehicleType?: string;
   correctedVehicleCount?: number;
+  placeholderCount?: number;
   markPriority?: boolean;
 }
 

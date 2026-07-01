@@ -1,5 +1,7 @@
 # 部署说明
 
+线上服务器业务升级、离线镜像打包、`sudo docker` 部署、校验文件和常见坑处理见: [ONLINE_SERVER_DEPLOYMENT.md](./ONLINE_SERVER_DEPLOYMENT.md)。
+
 Ubuntu 25.10 生产服务器的完整 Docker 部署、启动、设备配置和运维手册见: [UBUNTU_25_10_DOCKER_DEPLOY.md](./UBUNTU_25_10_DOCKER_DEPLOY.md)。
 
 ## 方式一: 本地开发

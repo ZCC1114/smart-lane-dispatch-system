@@ -27,7 +27,7 @@ public class DailyResetScheduler {
 		this.zoneId = ZoneId.of(zone);
 	}
 
-	@Scheduled(cron = "${app.dispatch.daily-reset-cron:0 30 4 * * *}", zone = "${app.dispatch.daily-reset-zone:Asia/Shanghai}")
+	@Scheduled(cron = "${app.dispatch.daily-reset-cron:0 30 5 * * *}", zone = "${app.dispatch.daily-reset-zone:Asia/Shanghai}")
 	public void runDailyReset() {
 		if (!enabled) {
 			return;

@@ -27,6 +27,13 @@ export function StatusBadge({
               PASSED: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700",
               REJECTED: "border-rose-500/20 bg-rose-500/10 text-rose-700",
               MANUAL: "border-amber-500/20 bg-amber-500/10 text-amber-700",
+              ASSIGNED: "border-sky-500/20 bg-sky-500/10 text-sky-700",
+              ENTERED: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700",
+              ENTERED_MISMATCH: "border-amber-500/20 bg-amber-500/10 text-amber-700",
+              EXPIRED: "border-sky-500/20 bg-sky-500/10 text-sky-700",
+              NO_LANE_AVAILABLE: "border-rose-500/20 bg-rose-500/10 text-rose-700",
+              NOT_WHITELISTED: "border-orange-500/20 bg-orange-500/10 text-orange-700",
+              DIRECT_ENTERED: "border-emerald-500/20 bg-emerald-500/10 text-emerald-700",
             }
           : {
               LOW: "border-slate-400/30 bg-slate-100 text-slate-600",

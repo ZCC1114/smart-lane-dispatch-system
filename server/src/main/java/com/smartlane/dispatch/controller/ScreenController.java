@@ -54,6 +54,7 @@ public class ScreenController {
 
 	@GetMapping("/events")
 	public PageResult<ScreenEventView> getEvents(
+			@RequestParam(required = false) String query,
 			@RequestParam(required = false) String type,
 			@RequestParam(required = false) Boolean handled,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtFrom,
@@ -61,7 +62,17 @@ public class ScreenController {
 			@RequestParam(defaultValue = "false") boolean includeHandled,
 			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize) {
-		return operationsService.getScreenEvents(type, occurredAtFrom, occurredAtTo, includeHandled, handled, page, pageSize);
+		return operationsService.getScreenEvents(type, query, occurredAtFrom, occurredAtTo, includeHandled, handled, page, pageSize);
+	}
+
+	@GetMapping("/events/export")
+	public List<ScreenEventView> exportEvents(
+			@RequestParam(required = false) String query,
+			@RequestParam(required = false) String type,
+			@RequestParam(required = false) Boolean handled,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtTo) {
+		return operationsService.exportScreenEvents(type, query, occurredAtFrom, occurredAtTo, handled);
 	}
 
 	@PostMapping("/events/{eventId}/handle")
@@ -72,6 +83,15 @@ public class ScreenController {
 	@PostMapping("/events/handle")
 	public void handleEvents(@Valid @org.springframework.web.bind.annotation.RequestBody ScreenEventIdsRequest request) {
 		operationsService.handleScreenEvents(request.ids());
+	}
+
+	@PostMapping("/events/handle-unhandled")
+	public void handleUnhandledEvents(
+			@RequestParam(required = false) String query,
+			@RequestParam(required = false) String type,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime occurredAtTo) {
+		operationsService.handleUnhandledScreenEvents(type, query, occurredAtFrom, occurredAtTo);
 	}
 
 	@PostMapping("/events/{eventId}/acknowledge")

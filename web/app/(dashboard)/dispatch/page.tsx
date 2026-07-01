@@ -38,6 +38,7 @@ export default function DispatchPage() {
     queryFn: api.getDispatchConfig,
   });
   const [configDraft, setConfigDraft] = useState<OrderDraft>({});
+  const [dispatchEnabledDraft, setDispatchEnabledDraft] = useState<Record<string, boolean>>({});
   const [reserveMinutesDraftOverride, setReserveMinutesDraftOverride] = useState<string | null>(null);
   const [capacityDraft, setCapacityDraft] = useState<Record<string, number>>({});
   const [selectedLaneIds, setSelectedLaneIds] = useState<string[]>([]);
@@ -83,6 +84,23 @@ export default function DispatchPage() {
     [capacityDraft, lanes],
   );
   const invalidCapacityEntries = changedCapacityEntries.filter((entry) => !entry.valid);
+  const changedDispatchEnabledEntries = useMemo(
+    () =>
+      lanes.flatMap((lane) => {
+        const draftEnabled = dispatchEnabledDraft[lane.id];
+        const currentEnabled = lane.dispatchEnabled ?? true;
+        if (draftEnabled === undefined || draftEnabled === currentEnabled) {
+          return [];
+        }
+        return [
+          {
+            laneId: lane.id,
+            dispatchEnabled: draftEnabled,
+          },
+        ];
+      }),
+    [dispatchEnabledDraft, lanes],
+  );
 
   async function saveLaneCapacities(entries: Array<{ laneId: string; capacity: number }>) {
     const updatedLanes: LaneSnapshot[] = [];
@@ -92,8 +110,26 @@ export default function DispatchPage() {
     return updatedLanes;
   }
 
+  async function saveLaneDispatchEnabled(entries: Array<{ laneId: string; dispatchEnabled: boolean }>) {
+    const updatedLanes: LaneSnapshot[] = [];
+    for (const entry of entries) {
+      updatedLanes.push(await api.updateLaneDispatchEnabled(entry.laneId, entry.dispatchEnabled));
+    }
+    return updatedLanes;
+  }
+
   function clearSavedCapacityDraft(updatedLanes: LaneSnapshot[]) {
     setCapacityDraft((current) => {
+      const next = { ...current };
+      updatedLanes.forEach((lane) => {
+        delete next[lane.id];
+      });
+      return next;
+    });
+  }
+
+  function clearSavedDispatchEnabledDraft(updatedLanes: LaneSnapshot[]) {
+    setDispatchEnabledDraft((current) => {
       const next = { ...current };
       updatedLanes.forEach((lane) => {
         delete next[lane.id];
@@ -112,6 +148,7 @@ export default function DispatchPage() {
     setConfigDraft({});
     setReserveMinutesDraftOverride(null);
     clearSavedCapacityDraft(updatedLanes);
+    clearSavedDispatchEnabledDraft(updatedLanes);
     queryClient.setQueryData(["dispatch-config"], nextConfig);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["dispatch-config"] }),
@@ -128,16 +165,26 @@ export default function DispatchPage() {
         .filter((entry) => entry.valid)
         .map((entry) => ({ laneId: entry.laneId, capacity: entry.capacity }));
       const updatedLanes = capacityEntries.length > 0 ? await saveLaneCapacities(capacityEntries) : [];
-      return { nextConfig, updatedLanes };
+      const dispatchEnabledEntries = changedDispatchEnabledEntries.map((entry) => ({
+        laneId: entry.laneId,
+        dispatchEnabled: entry.dispatchEnabled,
+      }));
+      const updatedDispatchEnabledLanes =
+        dispatchEnabledEntries.length > 0 ? await saveLaneDispatchEnabled(dispatchEnabledEntries) : [];
+      return { nextConfig, updatedLanes: [...updatedLanes, ...updatedDispatchEnabledLanes], capacityEntries, dispatchEnabledEntries };
     },
-    onSuccess: async ({ nextConfig, updatedLanes }) => {
+    onSuccess: async ({ nextConfig, updatedLanes, capacityEntries, dispatchEnabledEntries }) => {
       await handleSettingsSaveSuccess(nextConfig, updatedLanes);
+      const changedParts = ["入口开放顺序", "未进车道判定时间"];
+      if (capacityEntries.length > 0) {
+        changedParts.push(`${capacityEntries.length} 条车道容量`);
+      }
+      if (dispatchEnabledEntries.length > 0) {
+        changedParts.push(`${dispatchEnabledEntries.length} 条车道参与分配状态`);
+      }
       setSuccessNotice({
         title: "保存成功",
-        description:
-          updatedLanes.length > 0
-            ? `入口开放顺序、未进车道判定时间和 ${updatedLanes.length} 条车道容量已更新。`
-            : "入口开放顺序和未进车道判定时间已更新。",
+        description: `${changedParts.join("、")}已更新。`,
       });
     },
   });
@@ -160,6 +207,23 @@ export default function DispatchPage() {
       });
     },
   });
+
+  function toggleLaneDispatchEnabled(laneId: string, dispatchEnabled: boolean) {
+    if (disabled || configMutation.isPending) {
+      return;
+    }
+    setDispatchEnabledDraft((current) => {
+      const lane = lanes.find((candidate) => candidate.id === laneId);
+      const currentEnabled = lane?.dispatchEnabled ?? true;
+      const next = { ...current };
+      if (dispatchEnabled === currentEnabled) {
+        delete next[laneId];
+      } else {
+        next[laneId] = dispatchEnabled;
+      }
+      return next;
+    });
+  }
 
   const capacityMutationPending = configMutation.isPending;
 
@@ -375,6 +439,8 @@ export default function DispatchPage() {
               allSelected={allSelected}
               capacityDraft={capacityDraft}
               capacityMutationPending={capacityMutationPending}
+              dispatchEnabledDraft={dispatchEnabledDraft}
+              onToggleLaneDispatchEnabled={toggleLaneDispatchEnabled}
               onDragStart={(orderKey, laneId) => setDraggingLane({ orderKey, laneId })}
               onDragEnd={() => setDraggingLane(null)}
               onDropLane={handleDropLane}
@@ -420,6 +486,7 @@ function LaneOrderCapacityEditor({
   allSelected,
   capacityDraft,
   capacityMutationPending,
+  dispatchEnabledDraft,
   onDragStart,
   onDragEnd,
   onDropLane,
@@ -427,6 +494,7 @@ function LaneOrderCapacityEditor({
   onToggleLaneSelection,
   onToggleAllLaneSelection,
   onCapacityChange,
+  onToggleLaneDispatchEnabled,
 }: {
   orderKey: DispatchOrderKey;
   lanes: LaneSnapshot[];
@@ -438,6 +506,7 @@ function LaneOrderCapacityEditor({
   allSelected: boolean;
   capacityDraft: Record<string, number>;
   capacityMutationPending: boolean;
+  dispatchEnabledDraft: Record<string, boolean>;
   onDragStart: (orderKey: DispatchOrderKey, laneId: string) => void;
   onDragEnd: () => void;
   onDropLane: (orderKey: DispatchOrderKey, laneId: string) => void;
@@ -445,6 +514,7 @@ function LaneOrderCapacityEditor({
   onToggleLaneSelection: (laneId: string) => void;
   onToggleAllLaneSelection: () => void;
   onCapacityChange: (laneId: string, capacity: number) => void;
+  onToggleLaneDispatchEnabled: (laneId: string, dispatchEnabled: boolean) => void;
 }) {
   const lanesById = new Map(lanes.map((lane) => [lane.id, lane]));
   const orderedLanes = order.map((laneId) => lanesById.get(laneId)).filter((lane): lane is LaneSnapshot => Boolean(lane));
@@ -479,6 +549,10 @@ function LaneOrderCapacityEditor({
             const draftCapacity = capacityDraft[lane.id] ?? lane.capacity;
             const changed = draftCapacity !== lane.capacity;
             const invalid = !Number.isInteger(draftCapacity) || draftCapacity < 1;
+            const savedDispatchEnabled = lane.dispatchEnabled ?? true;
+            const dispatchEnabled = dispatchEnabledDraft[lane.id] ?? savedDispatchEnabled;
+            const dispatchEnabledChanged = dispatchEnabled !== savedDispatchEnabled;
+            const laneBusy = disabled || capacityMutationPending;
             return (
               <div
                 key={lane.id}
@@ -512,7 +586,7 @@ function LaneOrderCapacityEditor({
                     type="checkbox"
                     checked={selectedLaneSet.has(lane.id)}
                     onChange={() => onToggleLaneSelection(lane.id)}
-                    disabled={disabled || capacityMutationPending}
+                    disabled={laneBusy}
                     aria-label={`选择${lane.name}`}
                     className="size-4 rounded border-slate-300 text-slate-900 focus:ring-sky-200"
                   />
@@ -529,17 +603,30 @@ function LaneOrderCapacityEditor({
                     <span className="font-mono">{lane.code}</span>
                     <span>当前容量 {lane.capacity}</span>
                     {changed ? <span className="font-semibold text-sky-700">待保存</span> : null}
+                    {dispatchEnabledChanged ? <span className="font-semibold text-sky-700">参与分配待保存</span> : null}
+                    {!dispatchEnabled ? <span className="font-semibold text-rose-700">不参与分配</span> : null}
                   </div>
                 </div>
 
                 <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
+                    <input
+                      type="checkbox"
+                      checked={dispatchEnabled}
+                      onChange={() => onToggleLaneDispatchEnabled(lane.id, !dispatchEnabled)}
+                      disabled={laneBusy}
+                      aria-label={`${lane.name}参与入口分配`}
+                      className="size-4 rounded border-slate-300 text-slate-900 focus:ring-sky-200"
+                    />
+                    参与入口分配
+                  </label>
                   <input
                     type="number"
                     min={1}
                     value={Number.isFinite(draftCapacity) ? draftCapacity : ""}
                     aria-label={`${lane.name}可停车辆总数`}
                     placeholder="容量"
-                    disabled={disabled || capacityMutationPending}
+                    disabled={laneBusy}
                     onChange={(event) => onCapacityChange(lane.id, Number(event.target.value))}
                     className="h-11 w-full rounded-xl border border-[var(--border-soft)] bg-white px-3 text-center text-sm font-medium tabular-nums text-[var(--text-primary)] outline-none focus:border-sky-400/40 disabled:opacity-60"
                   />
@@ -549,7 +636,7 @@ function LaneOrderCapacityEditor({
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    disabled={disabled || index === 0}
+                    disabled={laneBusy || index === 0}
                     onClick={() => onMoveLane(lane.id, -1)}
                     className="inline-flex size-8 items-center justify-center rounded-xl border border-[var(--border-soft)] text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-40"
                     aria-label={`${lane.name} 上移`}
@@ -558,7 +645,7 @@ function LaneOrderCapacityEditor({
                   </button>
                   <button
                     type="button"
-                    disabled={disabled || index === orderedLanes.length - 1}
+                    disabled={laneBusy || index === orderedLanes.length - 1}
                     onClick={() => onMoveLane(lane.id, 1)}
                     className="inline-flex size-8 items-center justify-center rounded-xl border border-[var(--border-soft)] text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-40"
                     aria-label={`${lane.name} 下移`}

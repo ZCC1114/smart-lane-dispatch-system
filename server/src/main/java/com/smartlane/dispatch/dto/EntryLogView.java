@@ -43,6 +43,23 @@ public record EntryLogView(
 				alarmType);
 	}
 
+	public static EntryLogView from(DispatchTicket ticket, String alarmType) {
+		return new EntryLogView(
+				ticket.getId(),
+				ticket.getPlate(),
+				ticket.getLaneEntryTime() == null ? null : ticket.getActualLaneId(),
+				ticket.getLaneEntryTime() == null ? null : ticket.getActualLaneName(),
+				ticket.getAssignedLaneId(),
+				ticket.getAssignedLaneName(),
+				ticket.getYardEntryTime(),
+				ticket.getExitTime(),
+				ticket.getVehicleType(),
+				ticket.getStatus(),
+				ticket.getSource(),
+				ticket.getOperator(),
+				alarmType);
+	}
+
 	private static OffsetDateTime displayEntryTime(EntryLog log, DispatchTicket ticket) {
 		if (ticket != null && ticket.getYardEntryTime() != null) {
 			return ticket.getYardEntryTime();

@@ -53,6 +53,7 @@ function createPreviewLanes(): LaneSnapshot[] {
     ledStatus: "SYNCED",
     priority: preset.priority,
     sensorStatus: "ONLINE",
+    dispatchEnabled: true,
     lastSensorAt: now,
     lastEntryPlate: preset.vehicleCount > 0 ? `苏A${String(8300 + index).padStart(5, "0")}` : null,
     lastEntryAt: now,
@@ -174,6 +175,7 @@ function SignalTerminal({
   open,
   onToggleOpen,
   onChooseSignal,
+  laneDispatchEnabled,
 }: {
   lane: LaneSnapshot | null;
   signalKey: SignalKey;
@@ -181,9 +183,11 @@ function SignalTerminal({
   open: boolean;
   onToggleOpen: () => void;
   onChooseSignal: (signal: SignalState) => void;
+  laneDispatchEnabled: boolean;
 }) {
   const signal = normalizeSignal(lane ? lane[signalKey] : "OFFLINE");
   const disabled = !lane || !canOperate || lane.status === "OFFLINE";
+  const canOpenGreen = laneDispatchEnabled;
   const label = signalKey === "entrySignal" ? "入口灯" : "出口灯";
 
   return (
@@ -208,10 +212,13 @@ function SignalTerminal({
               <button
                 key={option}
                 type="button"
+                disabled={option === "GREEN" && !canOpenGreen}
                 onClick={() => onChooseSignal(option)}
                 className={cn(
                   "rounded-xl border px-2 py-1.5 text-xs font-semibold transition-colors",
-                  signalOptionClasses(option),
+                  option === "GREEN" && !canOpenGreen
+                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                    : signalOptionClasses(option),
                 )}
               >
                 {signalLabel(option)}
@@ -394,6 +401,7 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
                       lane={lane}
                       signalKey="entrySignal"
                       canOperate={canOperate}
+                      laneDispatchEnabled={lane?.dispatchEnabled ?? true}
                       open={Boolean(editor && lane && editor.laneId === lane.id && editor.signalKey === "entrySignal")}
                       onToggleOpen={() => setEditor(editor && lane && editor.laneId === lane.id && editor.signalKey === "entrySignal" ? null : lane ? { laneId: lane.id, signalKey: "entrySignal" } : null)}
                       onChooseSignal={(signal) => {
@@ -411,6 +419,7 @@ export function LaneYardMap({ lanes, canOperate }: { lanes: LaneSnapshot[]; canO
                       lane={lane}
                       signalKey="exitSignal"
                       canOperate={canOperate}
+                      laneDispatchEnabled={lane?.dispatchEnabled ?? true}
                       open={Boolean(editor && lane && editor.laneId === lane.id && editor.signalKey === "exitSignal")}
                       onToggleOpen={() => setEditor(editor && lane && editor.laneId === lane.id && editor.signalKey === "exitSignal" ? null : lane ? { laneId: lane.id, signalKey: "exitSignal" } : null)}
                       onChooseSignal={(signal) => {

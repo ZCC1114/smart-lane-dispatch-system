@@ -66,6 +66,13 @@ export function signalColor(signal: SignalState) {
 export function logStatusLabel(status: LogStatus) {
   if (status === "PASSED") return "正常放行";
   if (status === "REJECTED") return "拦截拒绝";
+  if (status === "ASSIGNED") return "已分配";
+  if (status === "ENTERED") return "已入道";
+  if (status === "ENTERED_MISMATCH") return "走错车道";
+  if (status === "EXPIRED") return "未进车道";
+  if (status === "NO_LANE_AVAILABLE") return "无可分配车道";
+  if (status === "NOT_WHITELISTED") return "非白名单";
+  if (status === "DIRECT_ENTERED") return "直接入道";
   return "人工处理";
 }
 
@@ -100,6 +107,7 @@ export function logSourceLabel(source: string) {
     CORRECTION: "人工更正",
     YARD_CAMERA: "场地入口抓拍",
     LANE_CAMERA: "车道入口抓拍",
+    MANUAL_CORRECTION: "人工校正",
   };
   return mapping[normalized] ?? source;
 }
@@ -127,6 +135,7 @@ export function dispatchTicketSourceLabel(source: string) {
     ALPR: "车牌识别设备",
     MANUAL: "人工录入",
     CORRECTION: "人工更正",
+    MANUAL_CORRECTION: "人工校正",
   };
   return mapping[normalized] ?? source;
 }

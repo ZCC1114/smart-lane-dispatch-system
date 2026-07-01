@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RotateCcw, Settings2, Shield, TriangleAlert, Maximize2, Minimize2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
@@ -302,14 +302,14 @@ function saveDismissedDailyResetSlots(slots: Record<string, true>) {
 
 function currentDailyResetSlot(value: Date, lastDailyResetAt?: string | null, dismissedSlots: Record<string, true> = {}) {
   const todayKey = shanghaiDateKey(value);
-  if (dateKeyFromIso(lastDailyResetAt) === todayKey) {
+  if (isDailyResetCompletedToday(value, lastDailyResetAt)) {
     return null;
   }
 
   const parts = shanghaiDateParts(value);
   const hour = Number(parts.hour);
   const minute = Number(parts.minute);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 3 || hour > 5 || (hour === 5 && minute >= 30)) {
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour > 5 || (hour === 5 && minute >= 30)) {
     return null;
   }
 
@@ -323,6 +323,20 @@ function currentDailyResetSlot(value: Date, lastDailyResetAt?: string | null, di
     slotKey,
     label: `${String(slotHour).padStart(2, "0")}:${String(slotMinute).padStart(2, "0")}`,
   };
+}
+
+function isDailyResetCompletedToday(value: Date, lastDailyResetAt?: string | null) {
+  return dateKeyFromIso(lastDailyResetAt) === shanghaiDateKey(value);
+}
+
+function isDailyResetReminderExpired(value: Date) {
+  const parts = shanghaiDateParts(value);
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return false;
+  }
+  return hour > 5 || (hour === 5 && minute >= 30);
 }
 
 function laneNumber(label?: string | null) {
@@ -766,15 +780,24 @@ function LaneVehicleStack({
   }
 
   const { capacity } = lanePlateMetrics(lane);
-  const rows = vehicles
+  const realRows = vehicles
     .filter((ticket) => ticket.plate)
     .slice(0, capacity)
-    .map((ticket) => ({ id: ticket.id, plate: ticket.plate }));
+    .map((ticket) => ({ id: ticket.id, plate: ticket.plate, placeholder: false }));
+  const placeholderCount = Math.max(0, Math.min(lane.vehicleCount, capacity) - realRows.length);
+  const rows = [
+    ...realRows,
+    ...Array.from({ length: placeholderCount }, (_, index) => ({
+      id: `placeholder-${lane.id}-${index}`,
+      plate: "",
+      placeholder: true,
+    })),
+  ].slice(0, capacity);
 
   return (
     <>
       {rows.map((vehicle, index) => {
-        if (hiddenVehicleIds?.has(vehicle.id)) {
+        if (!vehicle.placeholder && hiddenVehicleIds?.has(vehicle.id)) {
           return null;
         }
         const placement = lanePlatePlacement(lane, centerX, index, vehicle.plate);
@@ -783,7 +806,7 @@ function LaneVehicleStack({
             <div
               className={[
                 "absolute flex items-center justify-center overflow-hidden px-[3px] font-sans font-black leading-none tracking-normal",
-                plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
+                vehicle.placeholder ? BLUE_PLATE_CLASS : plateTone(vehicle.plate) === "green" ? GREEN_PLATE_CLASS : BLUE_PLATE_CLASS,
               ].join(" ")}
               style={{
                 left: placement.left,
@@ -793,7 +816,7 @@ function LaneVehicleStack({
                 fontSize: placement.fontSize,
               }}
             >
-              <span className="max-w-full whitespace-nowrap">{placement.displayPlate}</span>
+              {vehicle.placeholder ? null : <span className="max-w-full whitespace-nowrap">{placement.displayPlate}</span>}
             </div>
           </div>
         );
@@ -1119,14 +1142,14 @@ function DailyResetConfirmDialog({
 
   return (
     <div className="absolute inset-0 z-[92] grid place-items-center bg-[#020b16]/68">
-      <div className="relative flex h-[292px] w-[560px] flex-col border border-[#ffb53d] bg-[#07182a]/96 shadow-[0_0_30px_rgba(255,181,61,0.42)]">
+      <div className="relative flex h-[292px] w-[780px] flex-col border border-[#ffb53d] bg-[#07182a]/96 shadow-[0_0_30px_rgba(255,181,61,0.42)]">
         <div className="h-[58px] border-b border-[#b7791f]/70 bg-[linear-gradient(90deg,#9b4b08_0%,#23355c_100%)] px-7 text-[25px] font-black leading-[58px] text-white [text-shadow:0_0_8px_rgba(255,181,61,0.72)]">
           完成保障
         </div>
         <div className="px-7 pt-6 text-[17px] leading-[31px] text-white">
           <p className="font-black text-[#ffdf8a]">{scheduled ? `${dialog.label} 完成保障提醒` : "确认执行完成保障"}</p>
           <p className="mt-3 text-[15px] leading-[27px] text-[#d8eefc]">
-            确认后将清空当前车道车辆信息并重启调度流程，首条车道的入口与出口绿灯会重新打开。
+            确认后将清空全场车道车辆信息并重启调度流程，首条车道的入口与出口绿灯会重新打开。
           </p>
         </div>
         <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
@@ -1134,17 +1157,17 @@ function DailyResetConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="h-[36px] w-[96px] border border-[#5a8cad] bg-[#08223d] text-[16px] font-bold text-[#d8eefc] disabled:opacity-50"
+            className="h-[38px] w-[340px] whitespace-nowrap border border-[#5a8cad] bg-[#08223d] px-2 text-[14px] font-bold text-[#d8eefc] disabled:opacity-50"
           >
-            取消
+            因航延车道暂不清空，保持现状
           </button>
           <button
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="h-[36px] w-[136px] border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
+            className="h-[38px] w-[340px] whitespace-nowrap border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] px-2 text-[14px] font-black text-white disabled:opacity-60"
           >
-            {busy ? "执行中" : "确认重置"}
+            {busy ? "执行中" : "已完成保障，恢复车道初始入口和出口"}
           </button>
         </div>
       </div>
@@ -1293,8 +1316,43 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     });
   }, [board]);
 
+  const confirmDailyReset = useCallback(async () => {
+    setDailyResetBusy(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/screen/daily-reset`, { method: "POST" });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+      const refreshedBoard = await fetchScreenBoard();
+      setBoard(refreshedBoard);
+      setPendingClearLane(null);
+      setDailyResetDialog(null);
+      setActionMessage("完成保障已执行，车道已清空并重新进入调度流程");
+    } catch (resetError) {
+      setActionMessage(`完成保障失败: ${resetError instanceof Error ? resetError.message : "请求失败"}`);
+    } finally {
+      setDailyResetBusy(false);
+    }
+  }, [setBoard]);
+
   useEffect(() => {
-    if (!board || dailyResetDialog || dailyResetBusy) {
+    if (!board || dailyResetBusy) {
+      return;
+    }
+
+    if (dailyResetDialog?.source === "scheduled") {
+      if (isDailyResetCompletedToday(now, board.lastDailyResetAt)) {
+        setDailyResetDialog(null);
+        return;
+      }
+      if (isDailyResetReminderExpired(now)) {
+        setDailyResetDialog(null);
+      }
+      return;
+    }
+
+    if (dailyResetDialog) {
       return;
     }
 
@@ -1388,26 +1446,6 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       saveDismissedDailyResetSlots(nextDismissed);
     }
     setDailyResetDialog(null);
-  }
-
-  async function confirmDailyReset() {
-    setDailyResetBusy(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/screen/daily-reset`, { method: "POST" });
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-      const refreshedBoard = await fetchScreenBoard();
-      setBoard(refreshedBoard);
-      setPendingClearLane(null);
-      setDailyResetDialog(null);
-      setActionMessage("完成保障已执行，车道已清空并重新进入调度流程");
-    } catch (resetError) {
-      setActionMessage(`完成保障失败: ${resetError instanceof Error ? resetError.message : "请求失败"}`);
-    } finally {
-      setDailyResetBusy(false);
-    }
   }
 
   async function confirmHandleEvent() {
@@ -1630,17 +1668,17 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
                   type="button"
                   onClick={() => setPendingClearLane(null)}
                   disabled={clearingLaneId !== null}
-                  className="h-[34px] w-[96px] border border-[#5a8cad] bg-[#08223d] text-[16px] font-bold text-[#d8eefc] disabled:opacity-50"
+                  className="h-[34px] w-[154px] whitespace-nowrap border border-[#5a8cad] bg-[#08223d] text-[16px] font-bold text-[#d8eefc] disabled:opacity-50"
                 >
-                  暂不确认
+                  当前车道还有车辆
                 </button>
                 <button
                   type="button"
                   onClick={confirmClearLaneRemaining}
                   disabled={clearingLaneId === pendingClearLane.id || !pendingClearLaneClearable}
-                  className="h-[34px] w-[154px] border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
+                  className="h-[34px] w-[154px] whitespace-nowrap border border-[#ffcf66] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
                 >
-                  {clearingLaneId === pendingClearLane.id ? "清空中" : "确认已驶出"}
+                  {clearingLaneId === pendingClearLane.id ? "清空中" : "当前车道已清空"}
                 </button>
               </div>
             </div>

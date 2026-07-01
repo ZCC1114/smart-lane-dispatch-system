@@ -45,18 +45,23 @@ function eventTypeClass(type: string) {
   return "border-slate-200 bg-slate-100 text-slate-700";
 }
 
+function normalizePlateQuery(value: string) {
+  return value.replace(/[·\s]/g, "").toUpperCase();
+}
+
 export default function VehicleAlertsPage() {
   const queryClient = useQueryClient();
   const defaultTimeRange = todayRange();
+  const [query, setQuery] = useState("");
   const [type, setType] = useState("");
   const [handledStatus, setHandledStatus] = useState<AlertHandledStatus>("");
   const [occurredAtFrom, setOccurredAtFrom] = useState(defaultTimeRange.from);
   const [occurredAtTo, setOccurredAtTo] = useState(defaultTimeRange.to);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [selectedAlertIds, setSelectedAlertIds] = useState<string[]>([]);
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
   const [filters, setFilters] = useState({
+    query: "",
     type: "",
     handledStatus: "" as AlertHandledStatus,
     occurredAtFrom: defaultTimeRange.from,
@@ -67,11 +72,12 @@ export default function VehicleAlertsPage() {
     queryKey: ["screen-events", filters, page, pageSize],
     queryFn: () =>
       api.getScreenEvents({
+        query: filters.query,
         type: filters.type,
         handled: filters.handledStatus === "" ? undefined : filters.handledStatus === "handled" ? "true" : "false",
         occurredAtFrom: toApiDateTime(filters.occurredAtFrom),
         occurredAtTo: toApiDateTime(filters.occurredAtTo),
-        includeHandled: filters.handledStatus === "unhandled" ? "false" : "true",
+        includeHandled: "true",
         page,
         pageSize,
       }),
@@ -81,13 +87,8 @@ export default function VehicleAlertsPage() {
   const alertsPage = alertsQuery.data;
   const alerts = useMemo(() => alertsPage?.items ?? [], [alertsPage?.items]);
   const totalAlerts = alertsPage?.total ?? 0;
-  const selectedAlertSet = useMemo(() => new Set(selectedAlertIds), [selectedAlertIds]);
-  const unhandledAlertIds = useMemo(() => new Set(alerts.filter((alert) => !alert.handled).map((alert) => alert.id)), [alerts]);
-  const selectedUnhandledAlertIds = selectedAlertIds.filter((id) => unhandledAlertIds.has(id));
   const currentPage = alertsPage?.page ?? page;
   const pageStartIndex = (currentPage - 1) * pageSize;
-  const pagedUnhandledAlertIds = alerts.filter((alert) => !alert.handled).map((alert) => alert.id);
-  const currentPageAllSelected = pagedUnhandledAlertIds.length > 0 && pagedUnhandledAlertIds.every((id) => selectedAlertSet.has(id));
 
   function markAlertsHandledInCache(ids: string[]) {
     const handledIds = new Set(ids);
@@ -117,64 +118,132 @@ export default function VehicleAlertsPage() {
     }
   }
 
+  function matchesCurrentBatchFilters(alert: ScreenEvent) {
+    const normalizedQuery = normalizePlateQuery(filters.query);
+    if (normalizedQuery && !normalizePlateQuery(alert.plate ?? "").includes(normalizedQuery)) {
+      return false;
+    }
+    if (filters.type && alert.type !== filters.type) {
+      return false;
+    }
+    if (!alert.occurredAt) {
+      return true;
+    }
+    const occurredAtMs = new Date(alert.occurredAt).getTime();
+    const occurredAtFromMs = filters.occurredAtFrom ? new Date(filters.occurredAtFrom).getTime() : undefined;
+    const occurredAtToMs = filters.occurredAtTo ? new Date(filters.occurredAtTo).getTime() : undefined;
+    if (occurredAtFromMs !== undefined && occurredAtMs < occurredAtFromMs) {
+      return false;
+    }
+    if (occurredAtToMs !== undefined && occurredAtMs > occurredAtToMs) {
+      return false;
+    }
+    return true;
+  }
+
+  function markFilteredUnhandledAlertsHandledInCache() {
+    const handledAt = new Date().toISOString();
+    queryClient.setQueryData<PageResult<ScreenEvent>>(["screen-events", filters, page, pageSize], (current) => {
+      if (!current) {
+        return current;
+      }
+      if (filters.handledStatus === "unhandled") {
+        return {
+          ...current,
+          total: 0,
+          items: [],
+        };
+      }
+      return {
+        ...current,
+        items: current.items.map((alert) =>
+          !alert.handled && matchesCurrentBatchFilters(alert) ? { ...alert, handled: true, handledAt } : alert,
+        ),
+      };
+    });
+  }
+
   const handleAlertMutation = useMutation({
     mutationFn: (id: string) => api.handleScreenEvent(id),
     onSuccess: async (_result, id) => {
       markAlertsHandledInCache([id]);
-      setSelectedAlertIds((current) => current.filter((selectedId) => selectedId !== id));
       await queryClient.refetchQueries({ queryKey: ["screen-events"], type: "active" });
     },
   });
 
   const batchHandleMutation = useMutation({
-    mutationFn: (ids: string[]) => api.handleScreenEvents(ids),
-    onSuccess: async (_result, ids) => {
-      markAlertsHandledInCache(ids);
-      setSelectedAlertIds([]);
+    mutationFn: () =>
+      api.handleUnhandledScreenEvents({
+        query: filters.query,
+        type: filters.type,
+        occurredAtFrom: toApiDateTime(filters.occurredAtFrom),
+        occurredAtTo: toApiDateTime(filters.occurredAtTo),
+      }),
+    onSuccess: async () => {
+      markFilteredUnhandledAlertsHandledInCache();
       setBatchConfirmOpen(false);
-      await queryClient.refetchQueries({ queryKey: ["screen-events"], type: "active" });
+      await queryClient.invalidateQueries({ queryKey: ["screen-events"] });
+      await alertsQuery.refetch();
     },
   });
+
+  const exportAlertsMutation = useMutation({
+    mutationFn: () =>
+      api.getScreenEventsExport({
+        query: filters.query,
+        type: filters.type,
+        handled: filters.handledStatus === "" ? undefined : filters.handledStatus === "handled" ? "true" : "false",
+        occurredAtFrom: toApiDateTime(filters.occurredAtFrom),
+        occurredAtTo: toApiDateTime(filters.occurredAtTo),
+      }),
+    onSuccess: (exportAlerts) => {
+      downloadCsv(
+        "vehicle-alerts.csv",
+        [
+          ["序号", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
+          ...exportAlerts.map((alert, index) => [
+            String(index + 1),
+            screenEventTypeLabel(alert.type),
+            alert.plate,
+            alert.handled ? "已处理" : "未处理",
+            alert.message,
+            alert.occurredAt,
+            alert.handledAt ?? "",
+            alert.sourceId ?? "",
+            alert.sourceName ?? "",
+          ]),
+        ],
+      );
+    },
+  });
+
+  const canHandleAllUnhandled = filters.handledStatus !== "handled" && !batchHandleMutation.isPending;
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPage(1);
-    setSelectedAlertIds([]);
-    setFilters({ type, handledStatus, occurredAtFrom, occurredAtTo });
+    setFilters({ query, type, handledStatus, occurredAtFrom, occurredAtTo });
+    void queryClient.invalidateQueries({ queryKey: ["screen-events"] });
   }
 
   function handlePageChange(nextPage: number) {
-    setSelectedAlertIds([]);
     setPage(nextPage);
   }
 
   function handlePageSizeChange(nextPageSize: number) {
-    setSelectedAlertIds([]);
     setPageSize(nextPageSize);
     setPage(1);
-  }
-
-  function toggleAlertSelection(alertId: string) {
-    setSelectedAlertIds((current) => (current.includes(alertId) ? current.filter((id) => id !== alertId) : [...current, alertId]));
-  }
-
-  function toggleCurrentPageSelection() {
-    if (currentPageAllSelected) {
-      setSelectedAlertIds((current) => current.filter((id) => !pagedUnhandledAlertIds.includes(id)));
-      return;
-    }
-    setSelectedAlertIds((current) => Array.from(new Set([...current, ...pagedUnhandledAlertIds])));
   }
 
   return (
     <div className="space-y-5">
       <ConfirmModal
         open={batchConfirmOpen}
-        title="批量处理告警"
-        description={`确认将已选择的 ${selectedUnhandledAlertIds.length} 条告警标记为已处理？处理后将从大屏左侧告警框中移除。`}
-        confirmText="确认处理"
+        title="全部处理告警"
+        description="确认将当前筛选范围内的所有未处理告警标记为已处理？处理后将从大屏左侧告警框中移除。"
+        confirmText="全部处理"
         busy={batchHandleMutation.isPending}
-        onConfirm={() => batchHandleMutation.mutate(selectedUnhandledAlertIds)}
+        onConfirm={() => batchHandleMutation.mutate()}
         onCancel={() => setBatchConfirmOpen(false)}
       />
       <Panel
@@ -184,43 +253,39 @@ export default function VehicleAlertsPage() {
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              disabled={selectedUnhandledAlertIds.length === 0 || batchHandleMutation.isPending}
+              disabled={!canHandleAllUnhandled}
               onClick={() => setBatchConfirmOpen(true)}
               className="inline-flex items-center gap-2 rounded-sm bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <CheckCircle2 className="size-3.5" />
-              批量处理
+              全部处理
             </button>
             <button
               type="button"
-              onClick={() =>
-                downloadCsv(
-                  "vehicle-alerts.csv",
-                  [
-                    ["序号", "类型", "车牌号码", "处理状态", "告警内容", "发生时间", "处理时间", "来源ID", "来源名称"],
-                    ...alerts.map((alert, index) => [
-                      String(pageStartIndex + index + 1),
-                      screenEventTypeLabel(alert.type),
-                      alert.plate,
-                      alert.handled ? "已处理" : "未处理",
-                      alert.message,
-                      alert.occurredAt,
-                      alert.handledAt ?? "",
-                      alert.sourceId ?? "",
-                      alert.sourceName ?? "",
-                    ]),
-                  ],
-                )
-              }
-              className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+              disabled={exportAlertsMutation.isPending}
+              onClick={() => exportAlertsMutation.mutate()}
+              className="inline-flex items-center gap-2 rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Download className="size-3.5" />
-              导出当前页
+              {exportAlertsMutation.isPending ? "正在导出" : "导出全部"}
             </button>
           </div>
         }
       >
-        <form onSubmit={handleSearch} className="grid gap-4 md:grid-cols-[180px_180px_220px_220px_120px_minmax(0,1fr)]">
+        <form
+          onSubmit={handleSearch}
+          className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_180px_220px_220px_120px_minmax(0,1fr)]"
+        >
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="w-full rounded-sm border border-[var(--border-soft)] bg-white py-3 pl-11 pr-4 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
+              placeholder="模糊搜索车牌号"
+            />
+          </label>
+
           <FilterSelect
             value={type}
             onChange={setType}
@@ -267,22 +332,12 @@ export default function VehicleAlertsPage() {
           </button>
 
           <div className="flex items-center justify-end text-sm text-[var(--text-secondary)]">
-            当前共 {totalAlerts} 条告警，已选择 {selectedUnhandledAlertIds.length} 条
+            当前共 {totalAlerts} 条告警
           </div>
         </form>
 
         <div className="mt-5 overflow-hidden rounded-sm border border-[var(--border-soft)]">
-          <div className="grid grid-cols-[42px_0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr_0.65fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
-            <span>
-              <input
-                type="checkbox"
-                checked={currentPageAllSelected}
-                disabled={pagedUnhandledAlertIds.length === 0}
-                onChange={toggleCurrentPageSelection}
-                className="size-4 rounded-sm border-slate-300 text-blue-600"
-                aria-label="选择当前页未处理告警"
-              />
-            </span>
+          <div className="grid grid-cols-[0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr_0.65fr] gap-3 bg-slate-100 px-5 py-4 text-[12px] font-bold uppercase tracking-[0.18em] text-slate-600">
             <span>序号</span>
             <span>类型</span>
             <span>车牌号码</span>
@@ -294,17 +349,7 @@ export default function VehicleAlertsPage() {
           </div>
           <div className="divide-y divide-[var(--border-soft)]">
             {alerts.map((alert, index) => (
-              <div key={alert.id} className="grid grid-cols-[42px_0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr_0.65fr] gap-3 px-5 py-4 text-sm">
-                <span>
-                  <input
-                    type="checkbox"
-                    checked={selectedAlertSet.has(alert.id)}
-                    disabled={alert.handled}
-                    onChange={() => toggleAlertSelection(alert.id)}
-                    className="size-4 rounded-sm border-slate-300 text-blue-600 disabled:opacity-40"
-                    aria-label={`选择告警 ${alert.id}`}
-                  />
-                </span>
+              <div key={alert.id} className="grid grid-cols-[0.45fr_0.7fr_0.8fr_0.75fr_minmax(0,1.45fr)_1fr_0.8fr_0.65fr] gap-3 px-5 py-4 text-sm">
                 <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
                 <span>
                   <span className={cn("inline-flex rounded-sm border px-2 py-1 text-xs font-semibold", eventTypeClass(alert.type))}>

@@ -278,6 +278,45 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void outOfWindowLaneEntryShouldBeAuditedWithoutCountingOrConsumingTicket() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(3);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(3);
+		Lane thirdLane = buildLane("L03", "L03", "3号车道");
+		thirdLane.setCapacity(3);
+		laneRepository.saveAll(List.of(firstLane, secondLane, thirdLane));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A99999", "2026-04-20T08:00:00+08:00");
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+
+		postVehicleEntry(token, "L03", "沪A99999", "2026-04-20T08:01:00+08:00");
+
+		DispatchTicket ticket = dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().getFirst();
+		assertThat(ticket.getStatus()).isEqualTo("ENTRY_OUT_OF_WINDOW");
+		assertThat(ticket.getAssignedLaneId()).isEqualTo("L01");
+		assertThat(ticket.getActualLaneId()).isNull();
+		assertThat(ticket.getLaneEntryTime()).isNull();
+		assertThat(ticket.getClosedAt()).isNotNull();
+		assertThat(ticket.getNotes()).contains("非当前/下一入口放行车道");
+
+		Lane ignoredLane = laneRepository.findById("L03").orElseThrow();
+		assertThat(ignoredLane.getVehicleCount()).isZero();
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L03")).isEmpty();
+		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L03")).isEmpty();
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
+				.filter(log -> "沪A99999".equals(log.getPlate())))
+			.singleElement()
+			.satisfies(log -> {
+				assertThat(log.getLaneId()).isEqualTo("L03");
+				assertThat(log.getStatus()).isEqualTo("IGNORED_OUT_OF_WINDOW");
+				assertThat(log.getExitTime()).isNotNull();
+			});
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+	}
+
+	@Test
 	void entryHandoffShouldAdvanceAfterTwoDifferentVehiclesEnterNextLane() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(6);
@@ -482,6 +521,82 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void manualPlaceholderCorrectionShouldIncreaseLaneCountWithoutFakeVehicleRecords() throws Exception {
+		Lane lane = buildLane("L01", "L01", "1号车道");
+		lane.setCapacity(3);
+		lane.setVehicleCount(1);
+		laneRepository.save(lane);
+		String token = loginAndGetToken();
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "commandType": "ADD_PLACEHOLDER_PLATES",
+					  "placeholderCount": 2,
+					  "reason": "测试新增占位车牌"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(3);
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc()).isEmpty();
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc()).isEmpty();
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "commandType": "ADD_PLACEHOLDER_PLATES",
+					  "placeholderCount": 1,
+					  "reason": "测试满位拦截"
+					}
+					"""))
+			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void manualRealPlateCorrectionShouldCreateVehicleRecordWithoutMovingEntryCursor() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L02",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B12345",
+					  "vehicleType": "出租车",
+					  "reason": "测试新增真实车牌"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L02"))
+				.extracting(EntryLog::getPlate, EntryLog::getSource)
+				.containsExactly(org.assertj.core.groups.Tuple.tuple("苏B12345", "MANUAL_CORRECTION"));
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc())
+				.singleElement()
+				.satisfies(ticket -> {
+					assertThat(ticket.getPlate()).isEqualTo("苏B12345");
+					assertThat(ticket.getActualLaneId()).isEqualTo("L02");
+					assertThat(ticket.getSource()).isEqualTo("MANUAL_CORRECTION");
+					assertThat(ticket.getStatus()).isEqualTo("DIRECT_ENTERED");
+				});
+	}
+
+	@Test
 	void exitLaneShouldAdvanceWhenCurrentLaneCountReachesZero() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);
@@ -560,6 +675,7 @@ class LaneOperationsFlowTests {
 
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:02:00+08:00");
+		openEntrySignal(token, "L02");
 		postVehicleEntry(token, "L03", "沪A30001", "2026-04-20T08:04:00+08:00");
 		openExitSignal(token, "L01");
 
@@ -675,6 +791,62 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void exitHandoffShouldKeepVehiclesEnteredAfterPreviousLaneReopenedForEntry() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		firstLane.setCapacity(8);
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		secondLane.setCapacity(8);
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10002", "2026-04-20T08:02:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20002", "2026-04-20T08:06:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20003", "2026-04-20T08:08:00+08:00");
+		postVehicleEntry(token, "L02", "沪A20004", "2026-04-20T08:10:00+08:00");
+		openExitSignal(token, "L01");
+		saveConfig("exit_lane_opened_at_L01", "2026-04-20T08:20:00+08:00");
+		saveConfig("entry_lane_opened_at_L01", "2026-04-20T08:30:00+08:00");
+
+		postVehicleEntry(token, "L01", "沪A10003", "2026-04-20T08:31:00+08:00");
+		postVehicleEntry(token, "L01", "沪A10004", "2026-04-20T08:32:00+08:00");
+
+		operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:40:00+08:00"));
+		operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:41:00+08:00"));
+		OperationsService.LaneExitTriggerResult thirdTrigger =
+				operationsService.applyLaneExitTriggerWithResult("L02", OffsetDateTime.parse("2026-04-20T08:42:00+08:00"));
+
+		assertThat(thirdTrigger.action()).isEqualTo(OperationsService.LaneExitTriggerAction.HANDOFF_COMPLETED);
+		assertThat(thirdTrigger.activeExitLaneIdBefore()).isEqualTo("L01");
+		assertThat(thirdTrigger.activeExitLaneIdAfter()).isEqualTo("L02");
+		assertThat(laneRepository.findById("L01").orElseThrow())
+				.satisfies(lane -> {
+					assertThat(lane.getVehicleCount()).isEqualTo(2);
+					assertThat(lane.getCurrentPlate()).isEqualTo("沪A10003");
+				});
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A10003", "沪A10004");
+		assertThat(dispatchTicketRepository.findByActualLaneIdAndExitTimeIsNullAndClosedAtIsNullOrderByLaneEntryTimeAsc("L01"))
+				.extracting(DispatchTicket::getPlate)
+				.containsExactly("沪A10003", "沪A10004");
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "L01".equals(ticket.getActualLaneId()))
+				.filter(ticket -> List.of("沪A10001", "沪A10002").contains(ticket.getPlate())))
+			.allSatisfy(ticket -> {
+				assertThat(ticket.getStatus()).isEqualTo("EXITED");
+				assertThat(ticket.getExitTime()).isNotNull();
+				assertThat(ticket.getClosedAt()).isNotNull();
+			});
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L02"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("沪A20004");
+		assertSingleGreenSignal("L02", "EXIT");
+	}
+
+	@Test
 	void screenClearRemainingVehiclesShouldCloseLaneQueueAndAdvanceExitLane() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);
@@ -757,8 +929,10 @@ class LaneOperationsFlowTests {
 		String token = loginAndGetToken();
 
 		postVehicleEntry(token, "L01", "沪A10001", "2026-04-20T08:00:00+08:00");
+		openEntrySignal(token, "L07");
 		postVehicleEntry(token, "L07", "沪A70001", "2026-04-20T08:02:00+08:00");
 		postVehicleEntry(token, "L08", "沪A80001", "2026-04-20T08:04:00+08:00");
+		openEntrySignal(token, "L08");
 		openExitSignal(token, "L07");
 
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L07");
@@ -1112,6 +1286,90 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void screenEventsShouldExportAllFilteredRowsAndHandleAllUnhandledByFilter() throws Exception {
+		laneRepository.save(buildLane("L01", "L01", "1号车道"));
+		blacklistRecordRepository.saveAll(List.of(
+				BlacklistRecord.builder()
+						.id("BL-EXPORT-1")
+						.plate("沪A77881")
+						.reason("重点关注车辆")
+						.level("HIGH")
+						.effectiveDate(now())
+						.operator("ops")
+						.active(true)
+						.build(),
+				BlacklistRecord.builder()
+						.id("BL-EXPORT-2")
+						.plate("沪A77882")
+						.reason("重点关注车辆")
+						.level("HIGH")
+						.effectiveDate(now())
+						.operator("ops")
+						.active(true)
+						.build(),
+				BlacklistRecord.builder()
+						.id("BL-EXPORT-3")
+						.plate("沪A77883")
+						.reason("重点关注车辆")
+						.level("HIGH")
+						.effectiveDate(now())
+						.operator("ops")
+						.active(true)
+						.build()));
+		String token = loginAndGetToken();
+
+		postYardEntry(token, "沪A77881", "2026-04-20T08:00:00+08:00");
+		postYardEntry(token, "沪A77882", "2026-04-20T08:05:00+08:00");
+		postYardEntry(token, "沪A77883", "2026-04-21T08:00:00+08:00");
+		saveConfig("last_daily_reset_at", "2026-04-21T04:30:00+08:00");
+
+		mockMvc.perform(get("/api/screen/events")
+				.param("type", "blacklist")
+				.param("includeHandled", "true")
+				.param("occurredAtFrom", "2026-04-20T00:00:00+08:00")
+				.param("occurredAtTo", "2026-04-20T23:59:59+08:00")
+				.param("page", "1")
+				.param("pageSize", "1")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.total").value(2))
+			.andExpect(jsonPath("$.items.length()").value(1));
+
+		mockMvc.perform(get("/api/screen/events/export")
+				.param("type", "blacklist")
+				.param("occurredAtFrom", "2026-04-20T00:00:00+08:00")
+				.param("occurredAtTo", "2026-04-20T23:59:59+08:00")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(2))
+			.andExpect(jsonPath("$[?(@.plate=='沪A77881')]").exists())
+			.andExpect(jsonPath("$[?(@.plate=='沪A77882')]").exists());
+
+		mockMvc.perform(post("/api/screen/events/handle-unhandled")
+				.param("type", "blacklist")
+				.param("occurredAtFrom", "2026-04-20T00:00:00+08:00")
+				.param("occurredAtTo", "2026-04-20T23:59:59+08:00")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk());
+
+		assertThat(operationsService.getScreenEvents(null, null, null, true))
+				.filteredOn(item -> item.plate().startsWith("沪A7788") && "blacklist".equals(item.type()))
+				.satisfiesExactlyInAnyOrder(
+						item -> {
+							assertThat(item.plate()).isEqualTo("沪A77881");
+							assertThat(item.handled()).isTrue();
+						},
+						item -> {
+							assertThat(item.plate()).isEqualTo("沪A77882");
+							assertThat(item.handled()).isTrue();
+						},
+						item -> {
+							assertThat(item.plate()).isEqualTo("沪A77883");
+							assertThat(item.handled()).isFalse();
+						});
+	}
+
+	@Test
 	void blacklistedVehicleEntryShouldStillCreateRealtimeLog() throws Exception {
 		laneRepository.save(buildLane("L01", "L01", "1号车道"));
 		blacklistRecordRepository.save(BlacklistRecord.builder()
@@ -1337,6 +1595,15 @@ class LaneOperationsFlowTests {
 				.map(Lane::getEntrySignal)
 				.orElse("OFFLINE");
 		postSignalOverride(token, laneId, entrySignal, "GREEN", "测试切换出口放行游标");
+	}
+
+	private void openEntrySignal(String token, String laneId) throws Exception {
+		String exitSignal = operationsService.getLanes().stream()
+				.filter(lane -> laneId.equals(lane.getId()))
+				.findFirst()
+				.map(Lane::getExitSignal)
+				.orElse("OFFLINE");
+		postSignalOverride(token, laneId, "GREEN", exitSignal, "测试切换入口放行游标");
 	}
 
 	private void assertSingleGreenSignal(String laneId, String direction) {

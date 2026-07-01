@@ -163,6 +163,7 @@ export const api = {
     return request<EntryLog[]>(`/logs/export${buildQuery(filters)}`);
   },
   getScreenEvents(filters: {
+    query?: string;
     type?: string;
     handled?: string;
     occurredAtFrom?: string;
@@ -173,6 +174,15 @@ export const api = {
   }) {
     return request<PageResult<ScreenEvent>>(`/screen/events${buildQuery(filters)}`);
   },
+  getScreenEventsExport(filters: {
+    query?: string;
+    type?: string;
+    handled?: string;
+    occurredAtFrom?: string;
+    occurredAtTo?: string;
+  }) {
+    return request<ScreenEvent[]>(`/screen/events/export${buildQuery(filters)}`);
+  },
   handleScreenEvent(id: string) {
     return request<void>(`/screen/events/${encodeURIComponent(id)}/handle`, {
       method: "POST",
@@ -182,6 +192,16 @@ export const api = {
     return request<void>("/screen/events/handle", {
       method: "POST",
       body: JSON.stringify({ ids }),
+    });
+  },
+  handleUnhandledScreenEvents(filters: {
+    query?: string;
+    type?: string;
+    occurredAtFrom?: string;
+    occurredAtTo?: string;
+  }) {
+    return request<void>(`/screen/events/handle-unhandled${buildQuery(filters)}`, {
+      method: "POST",
     });
   },
   getBlacklist(filters: { query?: string; page?: number; pageSize?: number } = {}) {
@@ -300,6 +320,13 @@ export const api = {
     return request<LaneSnapshot>(`/lanes/${laneId}/capacity`, {
       method: "PUT",
       body: JSON.stringify({ capacity }),
+    });
+  },
+
+  updateLaneDispatchEnabled(laneId: string, dispatchEnabled: boolean) {
+    return request<LaneSnapshot>(`/lanes/${laneId}/dispatch-enabled`, {
+      method: "PUT",
+      body: JSON.stringify({ dispatchEnabled }),
     });
   },
 };

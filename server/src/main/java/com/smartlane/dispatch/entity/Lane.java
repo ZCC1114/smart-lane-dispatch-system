@@ -70,6 +70,9 @@ public class Lane {
     @Transient
     private int availableSlots;
 
+    @Transient
+    private boolean dispatchEnabled;
+
     @Column(nullable = false)
     private boolean priority;
 

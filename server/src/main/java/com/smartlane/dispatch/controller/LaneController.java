@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.smartlane.dispatch.dto.LaneCapacityRequest;
+import com.smartlane.dispatch.dto.LaneDispatchEnabledRequest;
 import com.smartlane.dispatch.entity.Lane;
 import com.smartlane.dispatch.service.OperationsService;
 
@@ -35,5 +36,13 @@ public class LaneController {
 	@PreAuthorize("hasAnyRole('ADMIN','DISPATCHER')")
 	public Lane updateCapacity(@PathVariable("laneId") String laneId, @Valid @RequestBody LaneCapacityRequest request) {
 		return operationsService.updateLaneCapacity(laneId, request.capacity());
+	}
+
+	@PutMapping("/{laneId}/dispatch-enabled")
+	@PreAuthorize("hasAnyRole('ADMIN','DISPATCHER')")
+	public Lane updateDispatchEnabled(
+			@PathVariable("laneId") String laneId,
+			@Valid @RequestBody LaneDispatchEnabledRequest request) {
+		return operationsService.updateLaneDispatchEnabled(laneId, request.dispatchEnabled());
 	}
 }

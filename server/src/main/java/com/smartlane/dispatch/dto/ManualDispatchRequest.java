@@ -9,5 +9,6 @@ public record ManualDispatchRequest(
 		@NotBlank(message = "调度原因不能为空") String reason,
 		String vehicleType,
 		Integer correctedVehicleCount,
+		Integer placeholderCount,
 		Boolean markPriority) {
 }
