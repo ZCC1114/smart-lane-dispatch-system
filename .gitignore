@@ -8,6 +8,11 @@ web/.next
 
 server/target
 server/data
+server/logs/
+
+# Generated local reports and previews
+artifacts/
+outputs/
 
 # Local offline deployment bundles and update packages
 smart-lane-offline/
