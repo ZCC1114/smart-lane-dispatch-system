@@ -274,7 +274,7 @@ export default function VehicleAlertsPage() {
       >
         <form
           onSubmit={handleSearch}
-          className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.1fr)_180px_180px_220px_220px_120px_minmax(0,1fr)]"
+          className="grid gap-4 md:grid-cols-2 min-[1600px]:grid-cols-[minmax(190px,1.1fr)_180px_180px_220px_220px_120px_minmax(0,1fr)]"
         >
           <label className="relative block">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
