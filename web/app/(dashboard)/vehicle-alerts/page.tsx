@@ -274,9 +274,9 @@ export default function VehicleAlertsPage() {
       >
         <form
           onSubmit={handleSearch}
-          className="grid gap-4 md:grid-cols-2 min-[1600px]:grid-cols-[minmax(190px,1.1fr)_180px_180px_220px_220px_120px_minmax(0,1fr)]"
+          className="flex flex-wrap items-center gap-3"
         >
-          <label className="relative block">
+          <label className="relative block w-full sm:w-[180px] sm:flex-none">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               value={query}
@@ -287,6 +287,7 @@ export default function VehicleAlertsPage() {
           </label>
 
           <FilterSelect
+            className="w-full sm:w-[140px] sm:flex-none"
             value={type}
             onChange={setType}
             icon={Filter}
@@ -297,6 +298,7 @@ export default function VehicleAlertsPage() {
           />
 
           <FilterSelect
+            className="w-full sm:w-[140px] sm:flex-none"
             value={handledStatus}
             onChange={(value) => setHandledStatus(value as AlertHandledStatus)}
             icon={CheckCircle2}
@@ -312,7 +314,7 @@ export default function VehicleAlertsPage() {
             value={occurredAtFrom}
             max={occurredAtTo || undefined}
             onChange={(event) => setOccurredAtFrom(event.target.value)}
-            className="rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40"
+            className="w-full rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40 sm:w-[200px] sm:flex-none"
           />
 
           <input
@@ -320,18 +322,18 @@ export default function VehicleAlertsPage() {
             value={occurredAtTo}
             min={occurredAtFrom || undefined}
             onChange={(event) => setOccurredAtTo(event.target.value)}
-            className="rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40"
+            className="w-full rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none focus:border-sky-400/40 sm:w-[200px] sm:flex-none"
           />
 
           <button
             type="submit"
-            className="inline-flex items-center justify-center gap-2 rounded-sm bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-sm bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 sm:w-[88px] sm:flex-none"
           >
             <Search className="size-4" />
             查询
           </button>
 
-          <div className="flex items-center justify-end text-sm text-[var(--text-secondary)]">
+          <div className="ml-auto flex min-w-[130px] items-center justify-end whitespace-nowrap text-sm text-[var(--text-secondary)]">
             当前共 {totalAlerts} 条告警
           </div>
         </form>

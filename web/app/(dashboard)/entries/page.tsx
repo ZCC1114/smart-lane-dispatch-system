@@ -173,9 +173,9 @@ export default function EntriesPage() {
       >
         <form
           onSubmit={handleSearch}
-          className="grid gap-4 md:grid-cols-2 min-[1600px]:grid-cols-[minmax(190px,1.1fr)_180px_180px_220px_220px_minmax(160px,220px)]"
+          className="flex flex-wrap items-center gap-3"
         >
-          <label className="relative block">
+          <label className="relative block w-full sm:w-[180px] sm:flex-none">
             <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               value={query}
@@ -185,15 +185,15 @@ export default function EntriesPage() {
             />
           </label>
 
-          <FilterSelect value={laneId} options={laneOptions} onChange={setLaneId} />
-          <FilterSelect value={alarmType} options={ALARM_TYPE_OPTIONS} onChange={setAlarmType} />
+          <FilterSelect className="w-full sm:w-[130px] sm:flex-none" value={laneId} options={laneOptions} onChange={setLaneId} />
+          <FilterSelect className="w-full sm:w-[160px] sm:flex-none" value={alarmType} options={ALARM_TYPE_OPTIONS} onChange={setAlarmType} />
 
           <input
             type="datetime-local"
             value={entryTimeFrom}
             max={entryTimeTo || undefined}
             onChange={(event) => setEntryTimeFrom(event.target.value)}
-            className="rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
+            className="w-full rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40 sm:w-[200px] sm:flex-none"
             placeholder="入场开始时间"
           />
 
@@ -202,13 +202,13 @@ export default function EntriesPage() {
             value={entryTimeTo}
             min={entryTimeFrom || undefined}
             onChange={(event) => setEntryTimeTo(event.target.value)}
-            className="rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40"
+            className="w-full rounded-sm border border-[var(--border-soft)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-sky-400/40 sm:w-[200px] sm:flex-none"
             placeholder="入场结束时间"
           />
 
           <button
             type="submit"
-            className="inline-flex items-center justify-center gap-2 rounded-sm bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-sm bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 sm:w-[88px] sm:flex-none"
           >
             <Search className="size-4" />
             查询
