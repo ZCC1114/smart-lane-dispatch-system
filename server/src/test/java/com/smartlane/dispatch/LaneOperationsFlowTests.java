@@ -597,6 +597,198 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
+	void manualRealPlateCorrectionShouldReplaceStalePlateRecordOnlyAfterExplicitConfirmation() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "苏B10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "苏B2T603", "2026-04-20T08:02:00+08:00");
+		operationsService.simulateScreenLaneExit("L01", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+
+		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc("L01"))
+				.extracting(EntryLog::getPlate)
+				.containsExactly("苏B2T603");
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L02",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B2T603",
+					  "vehicleType": "出租车",
+					  "reason": "测试默认拦截未出场车牌"
+					}
+					"""))
+			.andExpect(status().isConflict());
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L02",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B2T603",
+					  "vehicleType": "出租车",
+					  "closeExistingActiveRecord": true,
+					  "reason": "测试关闭地感错位旧记录后新增"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		assertThat(laneRepository.findById("L01").orElseThrow())
+				.satisfies(lane -> {
+					assertThat(lane.getVehicleCount()).isEqualTo(1);
+					assertThat(lane.getCurrentPlate()).isNull();
+				});
+		assertThat(laneRepository.findById("L02").orElseThrow().getVehicleCount()).isEqualTo(1);
+		assertThat(entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T603"))
+				.extracting(EntryLog::getLaneId, EntryLog::getSource)
+				.containsExactly(org.assertj.core.groups.Tuple.tuple("L02", "MANUAL_CORRECTION"));
+		assertThat(entryLogRepository.findAllByOrderByEntryTimeDesc().stream()
+				.filter(log -> "苏B2T603".equals(log.getPlate())))
+				.hasSize(2)
+				.filteredOn(log -> "L01".equals(log.getLaneId()))
+				.singleElement()
+				.satisfies(log -> assertThat(log.getExitTime()).isNotNull());
+		assertThat(dispatchTicketRepository.findAllByOrderByYardEntryTimeDesc().stream()
+				.filter(ticket -> "苏B2T603".equals(ticket.getPlate())))
+				.hasSize(2)
+				.anySatisfy(ticket -> {
+					assertThat(ticket.getActualLaneId()).isEqualTo("L01");
+					assertThat(ticket.getStatus()).isEqualTo("EXITED");
+					assertThat(ticket.getNotes()).contains("人工车牌校正时关闭旧未出场记录");
+				})
+				.anySatisfy(ticket -> {
+					assertThat(ticket.getActualLaneId()).isEqualTo("L02");
+					assertThat(ticket.getStatus()).isEqualTo("DIRECT_ENTERED");
+					assertThat(ticket.getExitTime()).isNull();
+				});
+	}
+
+	@Test
+	void activeManualPlateShouldBeCorrectableAcrossLogTicketAndLaneState() throws Exception {
+		Lane lane = buildLane("L01", "L01", "1号车道");
+		laneRepository.save(lane);
+		String token = loginAndGetToken();
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B2T630",
+					  "vehicleType": "出租车",
+					  "reason": "测试新增错误车牌"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		EntryLog incorrectLog = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T630")
+				.getFirst();
+		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "plate": "苏B2T603"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		assertThat(entryLogRepository.findById(incorrectLog.getId()).orElseThrow())
+				.satisfies(log -> {
+					assertThat(log.getPlate()).isEqualTo("苏B2T603");
+					assertThat(log.getExitTime()).isNull();
+					assertThat(log.getEntryTime()).isEqualTo(incorrectLog.getEntryTime());
+				});
+		assertThat(dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc("苏B2T603"))
+				.singleElement()
+				.satisfies(ticket -> {
+					assertThat(ticket.getActualLaneId()).isEqualTo("L01");
+					assertThat(ticket.getNotes()).contains("人工更正车牌：苏B2T630→苏B2T603");
+				});
+		assertThat(dispatchTicketRepository.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc("苏B2T630")).isEmpty();
+		assertThat(laneRepository.findById("L01").orElseThrow())
+				.satisfies(updatedLane -> {
+					assertThat(updatedLane.getVehicleCount()).isEqualTo(1);
+					assertThat(updatedLane.getCurrentPlate()).isEqualTo("苏B2T603");
+					assertThat(updatedLane.getLastEntryPlate()).isEqualTo("苏B2T603");
+				});
+	}
+
+	@Test
+	void activePlateCorrectionShouldRequireConfirmationBeforeClosingTargetPlateStaleRecord() throws Exception {
+		Lane firstLane = buildLane("L01", "L01", "1号车道");
+		Lane secondLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(firstLane, secondLane));
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "苏B10001", "2026-04-20T08:00:00+08:00");
+		postVehicleEntry(token, "L01", "苏B2T603", "2026-04-20T08:02:00+08:00");
+		operationsService.simulateScreenLaneExit("L01", OffsetDateTime.parse("2026-04-20T08:10:00+08:00"));
+
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L02",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B2T630",
+					  "vehicleType": "出租车",
+					  "reason": "测试新增错误车牌"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+		EntryLog incorrectLog = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T630")
+				.getFirst();
+
+		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "plate": "苏B2T603"
+					}
+					"""))
+			.andExpect(status().isConflict());
+
+		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "plate": "苏B2T603",
+					  "closeExistingActiveRecord": true
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		assertThat(laneRepository.findById("L01").orElseThrow())
+				.satisfies(updatedLane -> {
+					assertThat(updatedLane.getVehicleCount()).isEqualTo(1);
+					assertThat(updatedLane.getCurrentPlate()).isNull();
+				});
+		assertThat(laneRepository.findById("L02").orElseThrow())
+				.satisfies(updatedLane -> {
+					assertThat(updatedLane.getVehicleCount()).isEqualTo(1);
+					assertThat(updatedLane.getCurrentPlate()).isEqualTo("苏B2T603");
+				});
+		assertThat(entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T603"))
+				.extracting(EntryLog::getId, EntryLog::getLaneId)
+				.containsExactly(org.assertj.core.groups.Tuple.tuple(incorrectLog.getId(), "L02"));
+		assertThat(entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T630")).isEmpty();
+	}
+
+	@Test
 	void exitLaneShouldAdvanceWhenCurrentLaneCountReachesZero() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		firstLane.setCapacity(2);

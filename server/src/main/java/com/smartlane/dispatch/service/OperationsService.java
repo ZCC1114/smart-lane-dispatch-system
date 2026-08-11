@@ -813,6 +813,96 @@ public class OperationsService {
 		return filterEntriesByAlarmType(allItems, normalizedAlarmType);
 	}
 
+	@Transactional
+	public void correctEntryLogPlate(String entryLogId, String plate, boolean closeExistingActiveRecord) {
+		OffsetDateTime referenceTime = now();
+		correctEntryLogPlate(entryLogId, plate, closeExistingActiveRecord, referenceTime);
+		refreshLaneRuntime(referenceTime);
+		invalidateRuntimeViews("manual_plate_corrected");
+	}
+
+	private void correctEntryLogPlate(
+			String entryLogId,
+			String plate,
+			boolean closeExistingActiveRecord,
+			OffsetDateTime referenceTime) {
+		EntryLog entryLog = entryLogRepository.findById(entryLogId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "车辆流水不存在"));
+		if (entryLog.getExitTime() != null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能修改仍在场的车辆车牌");
+		}
+
+		String previousPlate = normalizePlate(entryLog.getPlate());
+		String correctedPlate = normalizePlate(plate);
+		if (isBlank(correctedPlate)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车牌号码不能为空");
+		}
+		if (correctedPlate.equals(previousPlate)) {
+			return;
+		}
+
+		List<DispatchTicket> previousPlateTickets = dispatchTicketRepository
+				.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(previousPlate);
+		DispatchTicket matchedTicket = findDispatchTicketForLog(entryLog, previousPlateTickets);
+		List<EntryLog> conflictingLogs = entryLogRepository
+				.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(correctedPlate).stream()
+				.filter(log -> !Objects.equals(log.getId(), entryLog.getId()))
+				.toList();
+		List<DispatchTicket> conflictingTickets = dispatchTicketRepository
+				.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(correctedPlate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> !"NOT_WHITELISTED".equals(ticket.getStatus()))
+				.filter(ticket -> matchedTicket == null || !Objects.equals(ticket.getId(), matchedTicket.getId()))
+				.toList();
+		if ((!conflictingLogs.isEmpty() || !conflictingTickets.isEmpty()) && !closeExistingActiveRecord) {
+			throw new ResponseStatusException(
+					HttpStatus.CONFLICT,
+					"修改后的车牌已有未出场记录；如确认车辆已实际离场，请勾选“关闭旧记录后修改”");
+		}
+
+		if (!conflictingLogs.isEmpty() || !conflictingTickets.isEmpty()) {
+			closeExistingPlateRecordsForManualPlateChange(
+					correctedPlate,
+					conflictingLogs,
+					conflictingTickets,
+					referenceTime);
+		}
+
+		entryLog.setPlate(correctedPlate);
+		entryLogRepository.save(entryLog);
+		if (matchedTicket != null) {
+			matchedTicket.setPlate(correctedPlate);
+			String correctionNote = "人工更正车牌：" + previousPlate + "→" + correctedPlate;
+			if (isBlank(matchedTicket.getNotes())) {
+				matchedTicket.setNotes(correctionNote);
+			} else if (!matchedTicket.getNotes().contains(correctionNote)) {
+				matchedTicket.setNotes(matchedTicket.getNotes() + "；" + correctionNote);
+			}
+			dispatchTicketRepository.save(matchedTicket);
+		}
+
+		Lane lane = requireLane(entryLog.getLaneId());
+		if (previousPlate.equals(normalizePlate(lane.getCurrentPlate()))) {
+			lane.setCurrentPlate(correctedPlate);
+		}
+		if (previousPlate.equals(normalizePlate(lane.getLastEntryPlate()))) {
+			lane.setLastEntryPlate(correctedPlate);
+		}
+		lane.setLastActionAt(referenceTime);
+
+		flowLog.warn(
+				"节点=人工修改在场车牌 event=MANUAL_ACTIVE_PLATE_CORRECTED entryLogId={} laneId={} laneName={} previousPlate={} correctedPlate={} ticketId={} closedConflictLogs={} closedConflictTickets={} observedAt={}",
+				entryLog.getId(),
+				lane.getId(),
+				lane.getName(),
+				previousPlate,
+				correctedPlate,
+				matchedTicket == null ? "" : matchedTicket.getId(),
+				conflictingLogs.size(),
+				conflictingTickets.size(),
+				referenceTime);
+	}
+
 	public PageResult<BlacklistRecord> getBlacklist(String query, int page, int pageSize) {
 		int normalizedPage = normalizePage(page);
 		int normalizedPageSize = normalizePageSize(pageSize);
@@ -1350,11 +1440,18 @@ public class OperationsService {
 				}
 			}
 			case "PLATE_CORRECTION" -> {
-				if (!isBlank(normalizedPlate)) {
-					lane.setCurrentPlate(normalizedPlate);
-					lane.setLastEntryPlate(normalizedPlate);
-					lane.setLastEntryAt(referenceTime);
+				if (isBlank(normalizedPlate)) {
+					throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车牌号码不能为空");
 				}
+				EntryLog currentEntryLog = findActiveEntryLogInLane(lane.getId(), normalizePlate(lane.getCurrentPlate()));
+				if (currentEntryLog == null) {
+					throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道没有可修改的在场车牌流水");
+				}
+				correctEntryLogPlate(
+						currentEntryLog.getId(),
+						normalizedPlate,
+						Boolean.TRUE.equals(request.closeExistingActiveRecord()),
+						referenceTime);
 			}
 			case "CORRECT_COUNT" -> {
 				int correctedCount = request.correctedVehicleCount() == null ? lane.getVehicleCount() : Math.max(0, request.correctedVehicleCount());
@@ -1364,7 +1461,13 @@ public class OperationsService {
 				advanceExitSignalIfCurrentCleared(lane, referenceTime);
 			}
 			case "ADD_PLACEHOLDER_PLATES" -> addPlaceholderPlateCount(lane, request.placeholderCount(), previousVehicleCount, referenceTime);
-			case "ADD_REAL_PLATE" -> addManualCorrectedPlate(lane, request.plate(), vehicleType, previousVehicleCount, referenceTime);
+			case "ADD_REAL_PLATE" -> addManualCorrectedPlate(
+					lane,
+					request.plate(),
+					vehicleType,
+					previousVehicleCount,
+					Boolean.TRUE.equals(request.closeExistingActiveRecord()),
+					referenceTime);
 			case "SET_PRIORITY" -> lane.setPriority(request.markPriority() == null ? !lane.isPriority() : request.markPriority());
 			default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的指令类型");
 		}
@@ -1399,17 +1502,37 @@ public class OperationsService {
 				referenceTime);
 	}
 
-	private void addManualCorrectedPlate(Lane lane, String plate, String vehicleType, int previousVehicleCount, OffsetDateTime referenceTime) {
+	private void addManualCorrectedPlate(
+			Lane lane,
+			String plate,
+			String vehicleType,
+			int previousVehicleCount,
+			boolean closeExistingActiveRecord,
+			OffsetDateTime referenceTime) {
 		String normalizedPlate = normalizePlate(plate);
 		if (isBlank(normalizedPlate)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "车牌号码不能为空");
 		}
-		if (findLatestOpenTicketByPlate(normalizedPlate) != null
-				|| !entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(normalizedPlate).isEmpty()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "该车牌已有未出场记录");
-		}
 		if (lane.getVehicleCount() >= lane.getCapacity()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道已满");
+		}
+		List<EntryLog> existingActiveLogs = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc(normalizedPlate);
+		List<DispatchTicket> existingOpenTickets = dispatchTicketRepository
+				.findByPlateIgnoreCaseAndClosedAtIsNullOrderByYardEntryTimeDesc(normalizedPlate).stream()
+				.filter(ticket -> ticket.getExitTime() == null)
+				.filter(ticket -> !"NOT_WHITELISTED".equals(ticket.getStatus()))
+				.toList();
+		if ((!existingActiveLogs.isEmpty() || !existingOpenTickets.isEmpty()) && !closeExistingActiveRecord) {
+			throw new ResponseStatusException(
+					HttpStatus.CONFLICT,
+					"该车牌已有未出场记录；如确认车辆已实际离场，请勾选“关闭旧记录后新增”");
+		}
+		if (!existingActiveLogs.isEmpty() || !existingOpenTickets.isEmpty()) {
+				closeExistingPlateRecordsForManualPlateChange(
+					normalizedPlate,
+					existingActiveLogs,
+					existingOpenTickets,
+					referenceTime);
 		}
 		lane.setVehicleCount(lane.getVehicleCount() + 1);
 		updateQueueHeadAtForObservedCountChange(lane, previousVehicleCount, lane.getVehicleCount(), referenceTime);
@@ -1442,6 +1565,55 @@ public class OperationsService {
 				normalizedPlate,
 				previousVehicleCount,
 				lane.getVehicleCount(),
+				referenceTime);
+	}
+
+	private void closeExistingPlateRecordsForManualPlateChange(
+			String plate,
+			List<EntryLog> activeLogs,
+			List<DispatchTicket> openTickets,
+			OffsetDateTime referenceTime) {
+		Set<String> affectedLaneIds = new LinkedHashSet<>();
+		for (EntryLog log : activeLogs) {
+			log.setExitTime(referenceTime);
+			affectedLaneIds.add(log.getLaneId());
+		}
+		if (!activeLogs.isEmpty()) {
+			entryLogRepository.saveAll(activeLogs);
+		}
+
+		String correctionNote = "人工车牌校正时关闭旧未出场记录（出口地感无法识别实际车牌）";
+		for (DispatchTicket ticket : openTickets) {
+			if (!isBlank(ticket.getActualLaneId())) {
+				affectedLaneIds.add(ticket.getActualLaneId());
+			}
+			if (isBlank(ticket.getNotes())) {
+				ticket.setNotes(correctionNote);
+			} else if (!ticket.getNotes().contains(correctionNote)) {
+				ticket.setNotes(ticket.getNotes() + "；" + correctionNote);
+			}
+			closeDispatchTicket(ticket, referenceTime);
+		}
+
+		for (String affectedLaneId : affectedLaneIds) {
+			laneRepository.findById(affectedLaneId).ifPresent(affectedLane -> {
+				List<EntryLog> remainingLogs = entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(affectedLaneId);
+				if (remainingLogs.isEmpty()) {
+					affectedLane.setCurrentPlate(null);
+					affectedLane.setQueueHeadAt(null);
+				} else {
+					affectedLane.setCurrentPlate(remainingLogs.getFirst().getPlate());
+					affectedLane.setQueueHeadAt(remainingLogs.getFirst().getEntryTime());
+				}
+			});
+		}
+
+		flowLog.warn(
+				"节点=人工车牌校正清理旧记录 event=MANUAL_PLATE_STALE_RECORDS_CLOSED plate={} closedLogs={} closedTickets={} affectedLanes={} observedAt={} reason=EXIT_LOOP_CANNOT_IDENTIFY_ACTUAL_PLATE",
+				plate,
+				activeLogs.size(),
+				openTickets.size(),
+				affectedLaneIds,
 				referenceTime);
 	}
 

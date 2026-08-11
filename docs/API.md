@@ -30,6 +30,7 @@
 | GET | `/api/lanes` | 登录即可 | 获取全部车道实时状态 |
 | GET | `/api/dispatch/board` | 登录即可 | 获取当前入口车道、出口车道、大屏待入道列表与最近调度记录 |
 | GET | `/api/logs` | 登录即可 | 车辆入场记录查询，支持 `query/status/laneId/entryTimeFrom/entryTimeTo` |
+| PUT | `/api/logs/{id}/plate` | `ADMIN`,`DISPATCHER` | 修改仍在场车辆的车牌，并同步关联调度记录和车道状态 |
 | GET | `/api/blacklist` | `ADMIN` | 黑名单检索 |
 | POST | `/api/blacklist` | `ADMIN` | 新增黑名单 |
 | PUT | `/api/blacklist/{id}` | `ADMIN` | 更新黑名单 |

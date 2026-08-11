@@ -13,6 +13,7 @@ import type {
   LaneSnapshot,
   ManualDispatchRequest,
   PageResult,
+  PlateCorrectionRequest,
   RelayControlRequest,
   ScreenEvent,
   SignalOverrideRequest,
@@ -161,6 +162,12 @@ export const api = {
     alarmType?: string;
   }) {
     return request<EntryLog[]>(`/logs/export${buildQuery(filters)}`);
+  },
+  correctEntryLogPlate(id: string, payload: PlateCorrectionRequest) {
+    return request<void>(`/logs/${encodeURIComponent(id)}/plate`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
   },
   getScreenEvents(filters: {
     query?: string;

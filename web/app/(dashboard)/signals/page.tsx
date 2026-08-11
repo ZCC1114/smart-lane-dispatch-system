@@ -46,7 +46,9 @@ function VehicleCorrectionModal({
   value,
   error,
   busy,
+  closeExistingActiveRecord,
   onValueChange,
+  onCloseExistingActiveRecordChange,
   onCancel,
   onConfirm,
 }: {
@@ -54,7 +56,9 @@ function VehicleCorrectionModal({
   value: string;
   error: string | null;
   busy: boolean;
+  closeExistingActiveRecord: boolean;
   onValueChange: (value: string) => void;
+  onCloseExistingActiveRecordChange: (value: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -96,6 +100,22 @@ function VehicleCorrectionModal({
           placeholder={isPlaceholder ? "请输入新增占位数量" : "请输入车牌号"}
           className="mt-2 w-full rounded-sm border border-[var(--border-soft)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
         />
+        {!isPlaceholder ? (
+          <label className="mt-4 flex items-start gap-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+            <input
+              type="checkbox"
+              checked={closeExistingActiveRecord}
+              onChange={(event) => onCloseExistingActiveRecordChange(event.target.checked)}
+              className="mt-0.5 size-4 shrink-0 rounded border-amber-300 text-amber-700 focus:ring-amber-200"
+            />
+            <span>
+              <span className="block font-semibold">关闭旧记录后新增</span>
+              <span className="mt-1 block text-xs leading-5 text-amber-800">
+                仅在确认该车已实际离场、但出口地感关闭了错误车牌记录时勾选。系统不会再次扣减旧车道车辆数。
+              </span>
+            </span>
+          </label>
+        ) : null}
         {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-3">
           <button
@@ -132,6 +152,7 @@ export default function SignalsPage() {
   const [vehicleCorrectionAction, setVehicleCorrectionAction] = useState<VehicleCorrectionAction | null>(null);
   const [vehicleCorrectionValue, setVehicleCorrectionValue] = useState("");
   const [vehicleCorrectionError, setVehicleCorrectionError] = useState<string | null>(null);
+  const [closeExistingActiveRecord, setCloseExistingActiveRecord] = useState(false);
 
   const lanesQuery = useQuery({
     queryKey: ["lanes"],
@@ -169,6 +190,7 @@ export default function SignalsPage() {
       setVehicleCorrectionAction(null);
       setVehicleCorrectionValue("");
       setVehicleCorrectionError(null);
+      setCloseExistingActiveRecord(false);
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ["lanes"], type: "active" }),
         queryClient.refetchQueries({ queryKey: ["dispatch-board"], type: "active" }),
@@ -189,6 +211,7 @@ export default function SignalsPage() {
     setVehicleCorrectionAction({ lane, type });
     setVehicleCorrectionValue(type === "placeholder" ? "1" : "");
     setVehicleCorrectionError(null);
+    setCloseExistingActiveRecord(false);
   }
 
   function submitVehicleCorrection() {
@@ -231,6 +254,7 @@ export default function SignalsPage() {
         plate,
         reason: `信号灯控制台新增真实车牌${plate}：${lane.name}`,
         vehicleType: "出租车",
+        closeExistingActiveRecord,
       };
     }
 
@@ -258,8 +282,13 @@ export default function SignalsPage() {
         value={vehicleCorrectionValue}
         error={vehicleCorrectionError}
         busy={vehicleCorrectionMutation.isPending}
+        closeExistingActiveRecord={closeExistingActiveRecord}
         onValueChange={(value) => {
           setVehicleCorrectionValue(value);
+          setVehicleCorrectionError(null);
+        }}
+        onCloseExistingActiveRecordChange={(value) => {
+          setCloseExistingActiveRecord(value);
           setVehicleCorrectionError(null);
         }}
         onCancel={() => {
@@ -267,6 +296,7 @@ export default function SignalsPage() {
             setVehicleCorrectionAction(null);
             setVehicleCorrectionValue("");
             setVehicleCorrectionError(null);
+            setCloseExistingActiveRecord(false);
           }
         }}
         onConfirm={submitVehicleCorrection}
