@@ -21,6 +21,7 @@ import com.smartlane.dispatch.service.OperationsService;
 class LedGuideDisplayServiceTests {
 
 	private static final String PROMPT_TEXT = "请按照车道指示进行停车等待！";
+	private static final String DUTY_PHONE_TEXT = "24小时服务电话：13306168246";
 
 	private LedGuideDisplayProperties properties;
 	private OperationsService operationsService;
@@ -59,8 +60,17 @@ class LedGuideDisplayServiceTests {
 				"苏B11111 请驶入 1车道",
 				"苏B22222 请驶入 11车道",
 				"苏B33333 请驶入 3车道",
-				PROMPT_TEXT);
-		assertThat(segments).extracting(Segment::fontSize).containsExactly(14, 14, 14, 11);
+				PROMPT_TEXT,
+				DUTY_PHONE_TEXT);
+		assertThat(segments).extracting(Segment::fontSize).containsExactly(14, 14, 14, 11, 10);
+
+		List<LedGuideDisplayFrame.Region> regions = service.buildGuideFrame().toRegions(192, 96);
+		assertThat(regions).extracting(LedGuideDisplayFrame.Region::y).containsExactly(0, 19, 38, 57, 76);
+		assertThat(regions).extracting(LedGuideDisplayFrame.Region::height).containsExactly(19, 19, 19, 19, 20);
+		assertThat(regions).allSatisfy(region -> {
+			assertThat(region.x()).isZero();
+			assertThat(region.width()).isEqualTo(192);
+		});
 	}
 
 	@Test
@@ -76,6 +86,11 @@ class LedGuideDisplayServiceTests {
 				"请驶入11车道",
 				PROMPT_TEXT);
 		assertThat(segments).extracting(Segment::fontSize).containsExactly(28, 22, 11);
+		assertThat(segments).extracting(Segment::text).doesNotContain(DUTY_PHONE_TEXT);
+
+		List<LedGuideDisplayFrame.Region> regions = service.buildGuideFrame().toRegions(192, 96);
+		assertThat(regions).extracting(LedGuideDisplayFrame.Region::y).containsExactly(0, 36, 72);
+		assertThat(regions).extracting(LedGuideDisplayFrame.Region::height).containsExactly(36, 36, 24);
 	}
 
 	@Test
@@ -92,7 +107,8 @@ class LedGuideDisplayServiceTests {
 				"苏B11111 请驶入 1车道",
 				"",
 				"",
-				PROMPT_TEXT);
+				PROMPT_TEXT,
+				DUTY_PHONE_TEXT);
 	}
 
 	@Test
@@ -107,7 +123,7 @@ class LedGuideDisplayServiceTests {
 		ArgumentCaptor<LedGuideDisplayFrame> frameCaptor = ArgumentCaptor.captor();
 		verify(displayWriter).write(frameCaptor.capture(), eq(true));
 		assertThat(frameCaptor.getValue().mode()).isEqualTo(LedGuideDisplayFrame.Mode.LIST);
-		assertThat(frameCaptor.getValue().rows()).hasSize(4);
+		assertThat(frameCaptor.getValue().rows()).hasSize(5);
 	}
 
 	private DispatchTicket ticket(String id, String plate, String laneName) {

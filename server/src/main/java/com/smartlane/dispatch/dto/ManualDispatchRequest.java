@@ -10,6 +10,5 @@ public record ManualDispatchRequest(
 		String vehicleType,
 		Integer correctedVehicleCount,
 		Integer placeholderCount,
-		Boolean closeExistingActiveRecord,
 		Boolean markPriority) {
 }

@@ -88,9 +88,17 @@ export interface EntryLog {
   alarmType: string | null;
 }
 
-export interface PlateCorrectionRequest {
+export interface LaneActivePlate {
+  id: string;
   plate: string;
-  closeExistingActiveRecord?: boolean;
+  entryTime: string;
+  vehicleType: string;
+  source: string;
+  operator: string;
+}
+
+export interface LanePlateCorrectionRequest {
+  plate: string;
 }
 
 export type ScreenEventType = "blacklist" | "not_whitelisted" | "wrong_lane" | "not_entered" | "other";
@@ -200,7 +208,6 @@ export interface ManualDispatchRequest {
   vehicleType?: string;
   correctedVehicleCount?: number;
   placeholderCount?: number;
-  closeExistingActiveRecord?: boolean;
   markPriority?: boolean;
 }
 

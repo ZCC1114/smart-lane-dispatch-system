@@ -28,9 +28,10 @@
 | POST | `/api/auth/login` | 公开 | 用户登录，返回 JWT 与用户信息 |
 | GET | `/api/dashboard` | 登录即可 | 获取首页总览、吞吐趋势与车道摘要 |
 | GET | `/api/lanes` | 登录即可 | 获取全部车道实时状态 |
+| GET | `/api/lanes/{laneId}/active-plates` | 登录即可 | 获取指定车道内全部真实在场车牌，包含设备识别和人工新增记录 |
+| PUT | `/api/lanes/{laneId}/active-plates/{entryLogId}` | `ADMIN`,`DISPATCHER` | 修改指定车道内的在场车牌；同牌旧记录会自动关闭，不改变车辆数和进出时间 |
 | GET | `/api/dispatch/board` | 登录即可 | 获取当前入口车道、出口车道、大屏待入道列表与最近调度记录 |
 | GET | `/api/logs` | 登录即可 | 车辆入场记录查询，支持 `query/status/laneId/entryTimeFrom/entryTimeTo` |
-| PUT | `/api/logs/{id}/plate` | `ADMIN`,`DISPATCHER` | 修改仍在场车辆的车牌，并同步关联调度记录和车道状态 |
 | GET | `/api/blacklist` | `ADMIN` | 黑名单检索 |
 | POST | `/api/blacklist` | `ADMIN` | 新增黑名单 |
 | PUT | `/api/blacklist/{id}` | `ADMIN` | 更新黑名单 |

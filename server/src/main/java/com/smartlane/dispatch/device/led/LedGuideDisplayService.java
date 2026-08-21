@@ -30,12 +30,13 @@ public class LedGuideDisplayService {
 
 	private static final Logger log = LoggerFactory.getLogger(LedGuideDisplayService.class);
 	private static final Pattern FIRST_NUMBER = Pattern.compile("\\d+");
-	private static final int LIST_ROWS = 4;
+	private static final int LIST_ROWS = 5;
 	private static final int LIST_LIMIT = 3;
 	private static final int HIGHLIGHT_TOTAL_UNITS = 8;
 	private static final int HIGHLIGHT_GUIDE_LINE_UNITS = 3;
 	private static final int HIGHLIGHT_PROMPT_LINE_UNITS = 2;
 	private static final String ACTION_TEXT = "请驶入";
+	private static final String DUTY_PHONE_TEXT = "24小时服务电话：13306168246";
 
 	private final LedGuideDisplayProperties properties;
 	private final OperationsService operationsService;
@@ -148,7 +149,7 @@ public class LedGuideDisplayService {
 				List.of(
 						new LedGuideDisplayFrame.Line(state.plate(), highlightPlateFontSize(), properties.getColor(), HIGHLIGHT_GUIDE_LINE_UNITS),
 						new LedGuideDisplayFrame.Line(ACTION_TEXT + state.laneText(), highlightInstructionFontSize(), properties.getColor(), HIGHLIGHT_GUIDE_LINE_UNITS),
-						new LedGuideDisplayFrame.Line(promptText(), promptFontSize(), properties.getColor(), HIGHLIGHT_PROMPT_LINE_UNITS)));
+						new LedGuideDisplayFrame.Line(promptText(), highlightPromptFontSize(), properties.getColor(), HIGHLIGHT_PROMPT_LINE_UNITS)));
 	}
 
 	private LedGuideDisplayFrame buildListFrame() {
@@ -158,7 +159,8 @@ public class LedGuideDisplayService {
 			String text = index < tickets.size() ? guideText(tickets.get(index)) : "";
 			rows.add(new LedGuideDisplayFrame.Line(text, listFontSize(), properties.getColor()));
 		}
-		rows.add(new LedGuideDisplayFrame.Line(promptText(), promptFontSize(), properties.getColor()));
+		rows.add(new LedGuideDisplayFrame.Line(promptText(), listPromptFontSize(), properties.getColor()));
+		rows.add(new LedGuideDisplayFrame.Line(DUTY_PHONE_TEXT, dutyPhoneFontSize(), properties.getColor()));
 		return new LedGuideDisplayFrame(LedGuideDisplayFrame.Mode.LIST, rows);
 	}
 
@@ -219,8 +221,16 @@ public class LedGuideDisplayService {
 		return scaledFontSizeForHeightUnits(22, 0.7, HIGHLIGHT_GUIDE_LINE_UNITS, HIGHLIGHT_TOTAL_UNITS);
 	}
 
-	private int promptFontSize() {
+	private int listPromptFontSize() {
 		return scaledFontSize(11, 0.7);
+	}
+
+	private int dutyPhoneFontSize() {
+		return scaledFontSize(10, 0.7);
+	}
+
+	private int highlightPromptFontSize() {
+		return scaledFontSizeForHeightUnits(11, 0.7, HIGHLIGHT_PROMPT_LINE_UNITS, HIGHLIGHT_TOTAL_UNITS);
 	}
 
 	private int scaledFontSize(int baseSizeAt192x96, double maxRowRatio) {

@@ -10,10 +10,11 @@ import type {
   DispatchConfig,
   DispatchRuntimeState,
   EntryLog,
+  LaneActivePlate,
+  LanePlateCorrectionRequest,
   LaneSnapshot,
   ManualDispatchRequest,
   PageResult,
-  PlateCorrectionRequest,
   RelayControlRequest,
   ScreenEvent,
   SignalOverrideRequest,
@@ -141,6 +142,18 @@ export const api = {
   getLanes() {
     return request<LaneSnapshot[]>("/lanes");
   },
+  getLaneActivePlates(laneId: string) {
+    return request<LaneActivePlate[]>(`/lanes/${encodeURIComponent(laneId)}/active-plates`);
+  },
+  updateLaneActivePlate(laneId: string, entryLogId: string, payload: LanePlateCorrectionRequest) {
+    return request<void>(
+      `/lanes/${encodeURIComponent(laneId)}/active-plates/${encodeURIComponent(entryLogId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
   getLogs(filters: {
     query?: string;
     status?: string;
@@ -162,12 +175,6 @@ export const api = {
     alarmType?: string;
   }) {
     return request<EntryLog[]>(`/logs/export${buildQuery(filters)}`);
-  },
-  correctEntryLogPlate(id: string, payload: PlateCorrectionRequest) {
-    return request<void>(`/logs/${encodeURIComponent(id)}/plate`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
   },
   getScreenEvents(filters: {
     query?: string;

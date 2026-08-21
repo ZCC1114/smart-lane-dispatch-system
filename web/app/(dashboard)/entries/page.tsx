@@ -1,17 +1,14 @@
 "use client";
 
 import { type FormEvent, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, PencilLine, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Download, Search } from "lucide-react";
 import { FilterSelect } from "@/components/filter-select";
 import { Panel } from "@/components/panel";
 import { StatusBadge } from "@/components/status-badge";
 import { TablePagination } from "@/components/table-pagination";
 import { api } from "@/lib/api";
-import { canOperateSignals } from "@/lib/permissions";
-import type { EntryLog } from "@/lib/types";
 import { downloadCsv, formatDateTime, formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
-import { useAuthStore } from "@/stores/auth-store";
 
 function toApiDateTime(value: string) {
   return value ? new Date(value).toISOString() : undefined;
@@ -39,9 +36,6 @@ const ALARM_TYPE_OPTIONS = [
 ];
 
 export default function EntriesPage() {
-  const role = useAuthStore((state) => state.user?.role);
-  const canCorrectPlate = canOperateSignals(role);
-  const queryClient = useQueryClient();
   const defaultTimeRange = todayRange();
   const [query, setQuery] = useState("");
   const [laneId, setLaneId] = useState("");
@@ -52,10 +46,6 @@ export default function EntriesPage() {
   const [pageSize, setPageSize] = useState(10);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
-  const [editingLog, setEditingLog] = useState<EntryLog | null>(null);
-  const [correctedPlate, setCorrectedPlate] = useState("");
-  const [closeExistingActiveRecord, setCloseExistingActiveRecord] = useState(false);
-  const [plateCorrectionError, setPlateCorrectionError] = useState("");
   const [filters, setFilters] = useState({
     query: "",
     laneId: "",
@@ -81,29 +71,6 @@ export default function EntriesPage() {
         page,
         pageSize,
       }),
-  });
-
-  const plateCorrectionMutation = useMutation({
-    mutationFn: () =>
-      api.correctEntryLogPlate(editingLog!.id, {
-        plate: correctedPlate.trim(),
-        closeExistingActiveRecord,
-      }),
-    onSuccess: async () => {
-      setEditingLog(null);
-      setCorrectedPlate("");
-      setCloseExistingActiveRecord(false);
-      setPlateCorrectionError("");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["logs"] }),
-        queryClient.invalidateQueries({ queryKey: ["lanes"] }),
-        queryClient.invalidateQueries({ queryKey: ["dispatch-board"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-      ]);
-    },
-    onError: (error) => {
-      setPlateCorrectionError(error instanceof Error ? error.message : "修改车牌失败");
-    },
   });
 
   const lanes = lanesQuery.data ?? [];
@@ -186,106 +153,8 @@ export default function EntriesPage() {
     }
   }
 
-  function openPlateCorrection(log: EntryLog) {
-    setEditingLog(log);
-    setCorrectedPlate(log.plate);
-    setCloseExistingActiveRecord(false);
-    setPlateCorrectionError("");
-    plateCorrectionMutation.reset();
-  }
-
-  function submitPlateCorrection() {
-    const normalizedPlate = correctedPlate.replace(/[·\s]/g, "").toUpperCase();
-    const previousPlate = editingLog?.plate.replace(/[·\s]/g, "").toUpperCase();
-    if (!normalizedPlate) {
-      setPlateCorrectionError("请输入正确车牌号");
-      return;
-    }
-    if (normalizedPlate === previousPlate) {
-      setPlateCorrectionError("车牌号没有发生变化");
-      return;
-    }
-    setPlateCorrectionError("");
-    plateCorrectionMutation.mutate();
-  }
-
   return (
     <>
-      {editingLog ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/18 p-4 backdrop-blur-sm">
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitPlateCorrection();
-            }}
-            className="panel-surface w-full max-w-md rounded-sm p-6"
-          >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">车辆校正</p>
-            <h2 className="mt-3 text-2xl font-semibold text-[var(--text-primary)]">修改在场车牌</h2>
-            <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
-              {editingLog.laneName ?? editingLog.laneId} · 原车牌 {formatPlateDisplay(editingLog.plate) || editingLog.plate}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-              保存后将同步修改车辆流水、调度记录和车道当前车牌，不改变车辆数和进出时间。
-            </p>
-            <label className="mt-5 block text-sm font-semibold text-[var(--text-primary)]" htmlFor="corrected-plate-input">
-              正确车牌号
-            </label>
-            <input
-              id="corrected-plate-input"
-              autoFocus
-              type="text"
-              value={correctedPlate}
-              onChange={(event) => {
-                setCorrectedPlate(event.target.value);
-                setPlateCorrectionError("");
-              }}
-              className="mt-2 w-full rounded-sm border border-[var(--border-soft)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
-            />
-            <label className="mt-4 flex items-start gap-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-              <input
-                type="checkbox"
-                checked={closeExistingActiveRecord}
-                onChange={(event) => {
-                  setCloseExistingActiveRecord(event.target.checked);
-                  setPlateCorrectionError("");
-                }}
-                className="mt-0.5 size-4 shrink-0 rounded border-amber-300 text-amber-700 focus:ring-amber-200"
-              />
-              <span>
-                <span className="block font-semibold">关闭正确车牌的旧记录后修改</span>
-                <span className="mt-1 block text-xs leading-5 text-amber-800">
-                  仅在正确车牌也因出口地感错位而遗留未出场记录时勾选，不会再次扣减旧车道车辆数。
-                </span>
-              </span>
-            </label>
-            {plateCorrectionError ? <p className="mt-3 text-sm text-rose-600">{plateCorrectionError}</p> : null}
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                disabled={plateCorrectionMutation.isPending}
-                onClick={() => {
-                  setEditingLog(null);
-                  setCorrectedPlate("");
-                  setCloseExistingActiveRecord(false);
-                  setPlateCorrectionError("");
-                }}
-                className="rounded-sm border border-[var(--border-soft)] px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-60"
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                disabled={plateCorrectionMutation.isPending}
-                className="rounded-sm bg-[var(--brand)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {plateCorrectionMutation.isPending ? "处理中..." : "确认修改"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-
       <div className="space-y-5">
         {exportError ? <div className="rounded-sm border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">导出失败：{exportError}</div> : null}
         <Panel
@@ -364,20 +233,7 @@ export default function EntriesPage() {
               {logs.map((log, index) => (
                 <div key={log.id} className="grid grid-cols-[0.45fr_0.9fr_0.95fr_0.95fr_1fr_1fr_0.65fr_0.75fr_0.75fr] gap-3 px-5 py-4 text-sm">
                   <span className="font-mono text-[var(--text-secondary)]">{pageStartIndex + index + 1}</span>
-                  <span className="inline-flex items-center gap-2 font-mono font-semibold text-[var(--text-primary)]">
-                    <span>{formatPlateDisplay(log.plate) || log.plate}</span>
-                    {canCorrectPlate && !log.exitTime && log.laneId && log.id.startsWith("LOG-") ? (
-                      <button
-                        type="button"
-                        title="修改在场车牌"
-                        aria-label={`修改车牌 ${log.plate}`}
-                        onClick={() => openPlateCorrection(log)}
-                        className="inline-flex size-7 items-center justify-center rounded-sm border border-sky-200 bg-sky-50 text-sky-700 transition hover:border-sky-300 hover:bg-sky-100"
-                      >
-                        <PencilLine className="size-3.5" />
-                      </button>
-                    ) : null}
-                  </span>
+                  <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(log.plate) || log.plate}</span>
                   <span className="inline-flex items-center gap-2 text-[var(--text-primary)]">
                     <span>{log.laneName ?? "--"}</span>
                     {log.laneId ? <span className="text-xs text-[var(--text-secondary)]">{log.laneId}</span> : null}

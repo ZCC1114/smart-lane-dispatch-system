@@ -50,6 +50,7 @@ import com.smartlane.dispatch.dto.DispatchConfigRequest;
 import com.smartlane.dispatch.dto.DispatchConfigView;
 import com.smartlane.dispatch.dto.DispatchRuntimeRequest;
 import com.smartlane.dispatch.dto.EntryLogView;
+import com.smartlane.dispatch.dto.LaneActivePlateView;
 import com.smartlane.dispatch.dto.LaneSensorPayload;
 import com.smartlane.dispatch.dto.ManualDispatchRequest;
 import com.smartlane.dispatch.dto.PageResult;
@@ -813,23 +814,34 @@ public class OperationsService {
 		return filterEntriesByAlarmType(allItems, normalizedAlarmType);
 	}
 
+	public List<LaneActivePlateView> getActiveLanePlates(String laneId) {
+		requireLane(laneId);
+		return entryLogRepository.findByLaneIdAndExitTimeIsNullOrderByEntryTimeAsc(laneId).stream()
+				.map(LaneActivePlateView::from)
+				.toList();
+	}
+
 	@Transactional
-	public void correctEntryLogPlate(String entryLogId, String plate, boolean closeExistingActiveRecord) {
+	public void correctActiveLanePlate(String laneId, String entryLogId, String plate) {
 		OffsetDateTime referenceTime = now();
-		correctEntryLogPlate(entryLogId, plate, closeExistingActiveRecord, referenceTime);
+		Lane lane = requireLane(laneId);
+		correctActiveLanePlate(lane, entryLogId, plate, referenceTime);
 		refreshLaneRuntime(referenceTime);
 		invalidateRuntimeViews("manual_plate_corrected");
 	}
 
-	private void correctEntryLogPlate(
+	private void correctActiveLanePlate(
+			Lane lane,
 			String entryLogId,
 			String plate,
-			boolean closeExistingActiveRecord,
 			OffsetDateTime referenceTime) {
 		EntryLog entryLog = entryLogRepository.findById(entryLogId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "车辆流水不存在"));
 		if (entryLog.getExitTime() != null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "只能修改仍在场的车辆车牌");
+		}
+		if (!lane.getId().equals(entryLog.getLaneId())) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "该在场车牌不属于指定车道");
 		}
 
 		String previousPlate = normalizePlate(entryLog.getPlate());
@@ -854,12 +866,6 @@ public class OperationsService {
 				.filter(ticket -> !"NOT_WHITELISTED".equals(ticket.getStatus()))
 				.filter(ticket -> matchedTicket == null || !Objects.equals(ticket.getId(), matchedTicket.getId()))
 				.toList();
-		if ((!conflictingLogs.isEmpty() || !conflictingTickets.isEmpty()) && !closeExistingActiveRecord) {
-			throw new ResponseStatusException(
-					HttpStatus.CONFLICT,
-					"修改后的车牌已有未出场记录；如确认车辆已实际离场，请勾选“关闭旧记录后修改”");
-		}
-
 		if (!conflictingLogs.isEmpty() || !conflictingTickets.isEmpty()) {
 			closeExistingPlateRecordsForManualPlateChange(
 					correctedPlate,
@@ -881,7 +887,6 @@ public class OperationsService {
 			dispatchTicketRepository.save(matchedTicket);
 		}
 
-		Lane lane = requireLane(entryLog.getLaneId());
 		if (previousPlate.equals(normalizePlate(lane.getCurrentPlate()))) {
 			lane.setCurrentPlate(correctedPlate);
 		}
@@ -1447,10 +1452,10 @@ public class OperationsService {
 				if (currentEntryLog == null) {
 					throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前车道没有可修改的在场车牌流水");
 				}
-				correctEntryLogPlate(
+				correctActiveLanePlate(
+						lane,
 						currentEntryLog.getId(),
 						normalizedPlate,
-						Boolean.TRUE.equals(request.closeExistingActiveRecord()),
 						referenceTime);
 			}
 			case "CORRECT_COUNT" -> {
@@ -1466,7 +1471,6 @@ public class OperationsService {
 					request.plate(),
 					vehicleType,
 					previousVehicleCount,
-					Boolean.TRUE.equals(request.closeExistingActiveRecord()),
 					referenceTime);
 			case "SET_PRIORITY" -> lane.setPriority(request.markPriority() == null ? !lane.isPriority() : request.markPriority());
 			default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "不支持的指令类型");
@@ -1507,7 +1511,6 @@ public class OperationsService {
 			String plate,
 			String vehicleType,
 			int previousVehicleCount,
-			boolean closeExistingActiveRecord,
 			OffsetDateTime referenceTime) {
 		String normalizedPlate = normalizePlate(plate);
 		if (isBlank(normalizedPlate)) {
@@ -1522,11 +1525,6 @@ public class OperationsService {
 				.filter(ticket -> ticket.getExitTime() == null)
 				.filter(ticket -> !"NOT_WHITELISTED".equals(ticket.getStatus()))
 				.toList();
-		if ((!existingActiveLogs.isEmpty() || !existingOpenTickets.isEmpty()) && !closeExistingActiveRecord) {
-			throw new ResponseStatusException(
-					HttpStatus.CONFLICT,
-					"该车牌已有未出场记录；如确认车辆已实际离场，请勾选“关闭旧记录后新增”");
-		}
 		if (!existingActiveLogs.isEmpty() || !existingOpenTickets.isEmpty()) {
 				closeExistingPlateRecordsForManualPlateChange(
 					normalizedPlate,

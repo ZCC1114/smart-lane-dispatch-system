@@ -16,6 +16,7 @@ public class LedGuideDynamicAreaWriter {
 
 	private static final int DEFAULT_SCREEN_WIDTH = 192;
 	private static final int DEFAULT_SCREEN_HEIGHT = 96;
+	private static final int LEGACY_ROW_AREA_COUNT = 4;
 
 	private final LedGuideDisplayProperties properties;
 	private final LedGuideDynamicAreaClient client;
@@ -94,7 +95,7 @@ public class LedGuideDynamicAreaWriter {
 
 	private void deleteLegacyRowAreas(LedGuideDynamicAreaRequest request) throws Exception {
 		int areaStartId = Math.max(0, properties.getDynamicAreaStartId());
-		int[] legacyAreaIds = IntStream.range(1, LedGuideDisplayFrame.MAX_ROW_COUNT)
+		int[] legacyAreaIds = IntStream.range(1, LEGACY_ROW_AREA_COUNT)
 				.map(index -> areaStartId + index)
 				.toArray();
 		client.delete(request, legacyAreaIds);

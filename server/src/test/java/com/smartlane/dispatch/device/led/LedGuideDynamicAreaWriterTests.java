@@ -59,6 +59,32 @@ class LedGuideDynamicAreaWriterTests {
 	}
 
 	@Test
+	void rendersFiveListRowsInsideExistingFullScreenDynamicArea() {
+		LedGuideDisplayFrame frame = new LedGuideDisplayFrame(
+				LedGuideDisplayFrame.Mode.LIST,
+				List.of(
+						new LedGuideDisplayFrame.Line("苏B11111 请驶入 1车道", 14, "RED"),
+						new LedGuideDisplayFrame.Line("苏B22222 请驶入 2车道", 14, "RED"),
+						new LedGuideDisplayFrame.Line("苏B33333 请驶入 3车道", 14, "RED"),
+						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 11, "RED"),
+						new LedGuideDisplayFrame.Line("24小时服务电话：13306168246", 10, "RED")));
+
+		LedGuideDynamicAreaRequest request = writer.buildRequests(frame).getFirst();
+
+		assertThat(request.x()).isZero();
+		assertThat(request.y()).isZero();
+		assertThat(request.width()).isEqualTo(192);
+		assertThat(request.height()).isEqualTo(96);
+		assertThat(request.image().getWidth()).isEqualTo(192);
+		assertThat(request.image().getHeight()).isEqualTo(96);
+		assertThat(hasLitPixel(request, 0, 19)).isTrue();
+		assertThat(hasLitPixel(request, 19, 38)).isTrue();
+		assertThat(hasLitPixel(request, 38, 57)).isTrue();
+		assertThat(hasLitPixel(request, 57, 76)).isTrue();
+		assertThat(hasLitPixel(request, 76, 96)).isTrue();
+	}
+
+	@Test
 	void skipsUnchangedRowsUntilForceRefresh() throws Exception {
 		LedGuideDisplayFrame frame = frame();
 		writer.write(frame, false);
@@ -107,5 +133,16 @@ class LedGuideDynamicAreaWriterTests {
 						new LedGuideDisplayFrame.Line("苏B11111", 28, "RED", 3),
 						new LedGuideDisplayFrame.Line("请驶入11车道", 22, "RED", 3),
 						new LedGuideDisplayFrame.Line("请按照车道指示进行停车等待！", 11, "RED", 2)));
+	}
+
+	private boolean hasLitPixel(LedGuideDynamicAreaRequest request, int startY, int endY) {
+		for (int y = startY; y < endY; y++) {
+			for (int x = 0; x < request.image().getWidth(); x++) {
+				if ((request.image().getRGB(x, y) & 0x00ffffff) != 0) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 }

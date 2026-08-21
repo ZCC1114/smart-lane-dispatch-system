@@ -8,7 +8,7 @@ import com.smartlane.dispatch.controller.LedTestController.LedTestRequest.Segmen
 
 public record LedGuideDisplayFrame(Mode mode, List<Line> rows) {
 
-	public static final int MAX_ROW_COUNT = 4;
+	public static final int MAX_ROW_COUNT = 5;
 
 	public LedGuideDisplayFrame {
 		Objects.requireNonNull(mode, "mode must not be null");

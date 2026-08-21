@@ -1,15 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Car, LockKeyhole, Plus, Power } from "lucide-react";
+import { Car, LockKeyhole, PencilLine, Plus, Power } from "lucide-react";
 import { useState } from "react";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { Panel } from "@/components/panel";
 import { SignalStack } from "@/components/signal-stack";
 import { api } from "@/lib/api";
-import type { LaneSnapshot, ManualDispatchRequest, SignalState } from "@/lib/types";
+import type { LaneActivePlate, LaneSnapshot, ManualDispatchRequest, SignalState } from "@/lib/types";
 import { canOperateSignals } from "@/lib/permissions";
-import { cn, sensorStatusLabel, signalLabel } from "@/lib/utils";
+import { cn, formatDateTime, formatPlateDisplay, logSourceLabel, sensorStatusLabel, signalLabel } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 
 const signalOptions: SignalState[] = ["RED", "GREEN"];
@@ -46,9 +46,7 @@ function VehicleCorrectionModal({
   value,
   error,
   busy,
-  closeExistingActiveRecord,
   onValueChange,
-  onCloseExistingActiveRecordChange,
   onCancel,
   onConfirm,
 }: {
@@ -56,9 +54,7 @@ function VehicleCorrectionModal({
   value: string;
   error: string | null;
   busy: boolean;
-  closeExistingActiveRecord: boolean;
   onValueChange: (value: string) => void;
-  onCloseExistingActiveRecordChange: (value: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -101,20 +97,9 @@ function VehicleCorrectionModal({
           className="mt-2 w-full rounded-sm border border-[var(--border-soft)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
         />
         {!isPlaceholder ? (
-          <label className="mt-4 flex items-start gap-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
-            <input
-              type="checkbox"
-              checked={closeExistingActiveRecord}
-              onChange={(event) => onCloseExistingActiveRecordChange(event.target.checked)}
-              className="mt-0.5 size-4 shrink-0 rounded border-amber-300 text-amber-700 focus:ring-amber-200"
-            />
-            <span>
-              <span className="block font-semibold">关闭旧记录后新增</span>
-              <span className="mt-1 block text-xs leading-5 text-amber-800">
-                仅在确认该车已实际离场、但出口地感关闭了错误车牌记录时勾选。系统不会再次扣减旧车道车辆数。
-              </span>
-            </span>
-          </label>
+          <p className="mt-4 rounded-sm border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-800">
+            如该车牌存在未出场旧记录，系统将直接关闭旧流水和调度记录后新增，且不会再次扣减旧车道车辆数。
+          </p>
         ) : null}
         {error ? <p className="mt-3 text-sm text-rose-600">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-3">
@@ -138,6 +123,150 @@ function VehicleCorrectionModal({
   );
 }
 
+function ActivePlateManagerModal({
+  lane,
+  plates,
+  loading,
+  loadError,
+  editingPlate,
+  value,
+  error,
+  busy,
+  onEdit,
+  onValueChange,
+  onCancelEdit,
+  onSave,
+  onClose,
+}: {
+  lane: LaneSnapshot | null;
+  plates: LaneActivePlate[];
+  loading: boolean;
+  loadError: string | null;
+  editingPlate: LaneActivePlate | null;
+  value: string;
+  error: string | null;
+  busy: boolean;
+  onEdit: (plate: LaneActivePlate) => void;
+  onValueChange: (value: string) => void;
+  onCancelEdit: () => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  if (!lane) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/18 p-4 backdrop-blur-sm">
+      <div className="panel-surface w-full max-w-3xl rounded-sm p-6">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--text-muted)]">车辆校正</p>
+        <h2 className="mt-3 text-2xl font-semibold text-[var(--text-primary)]">调整车道内车牌</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+          {lane.name} 当前登记 {plates.length} 个真实在场车牌，车道车辆数 {lane.vehicleCount} / {lane.capacity}。
+        </p>
+        <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
+          可调整设备识别或人工新增的任意在场车牌。保存不改变车辆数和进出时间；若新车牌有其他未出场旧记录，系统会自动关闭旧记录。
+        </p>
+
+        <div className="mt-5 max-h-[52vh] overflow-y-auto rounded-sm border border-[var(--border-soft)]">
+          <div className="grid grid-cols-[1.05fr_0.9fr_1fr_0.6fr] gap-3 bg-slate-100 px-4 py-3 text-[12px] font-bold text-slate-600">
+            <span>车牌号码</span>
+            <span>来源</span>
+            <span>入场时间</span>
+            <span className="text-right">操作</span>
+          </div>
+          <div className="divide-y divide-[var(--border-soft)]">
+            {loading ? <div className="px-4 py-10 text-center text-sm text-[var(--text-secondary)]">正在加载在场车牌...</div> : null}
+            {!loading && loadError ? (
+              <div className="px-4 py-10 text-center text-sm text-rose-600">在场车牌加载失败：{loadError}</div>
+            ) : null}
+            {!loading && !loadError && plates.length === 0 ? (
+              <div className="px-4 py-10 text-center text-sm text-[var(--text-secondary)]">当前车道没有可调整的真实在场车牌。</div>
+            ) : null}
+            {!loadError
+              ? plates.map((plate) => {
+                  const editing = editingPlate?.id === plate.id;
+                  return (
+                    <div key={plate.id} className="px-4 py-4">
+                  {editing ? (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        onSave();
+                      }}
+                      className="flex flex-wrap items-start gap-3"
+                    >
+                      <div className="min-w-[220px] flex-1">
+                        <label className="text-xs font-semibold text-[var(--text-primary)]" htmlFor={`active-plate-${plate.id}`}>
+                          将 {formatPlateDisplay(plate.plate) || plate.plate} 修改为
+                        </label>
+                        <input
+                          id={`active-plate-${plate.id}`}
+                          autoFocus
+                          value={value}
+                          onChange={(event) => onValueChange(event.target.value)}
+                          className="mt-2 w-full rounded-sm border border-[var(--border-soft)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
+                        />
+                        {error ? <p className="mt-2 text-sm text-rose-600">{error}</p> : null}
+                      </div>
+                      <div className="mt-6 flex gap-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={onCancelEdit}
+                          className="rounded-sm border border-[var(--border-soft)] px-3 py-2 text-xs text-[var(--text-secondary)] disabled:opacity-60"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={busy}
+                          className="rounded-sm bg-[var(--brand)] px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {busy ? "保存中..." : "保存"}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="grid grid-cols-[1.05fr_0.9fr_1fr_0.6fr] items-center gap-3 text-sm">
+                      <span className="font-mono font-semibold text-[var(--text-primary)]">{formatPlateDisplay(plate.plate) || plate.plate}</span>
+                      <span className="text-[var(--text-secondary)]">{logSourceLabel(plate.source)}</span>
+                      <span className="text-[var(--text-secondary)]">{formatDateTime(plate.entryTime)}</span>
+                      <span className="text-right">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onEdit(plate)}
+                          className="inline-flex items-center gap-1.5 rounded-sm border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 disabled:opacity-50"
+                        >
+                          <PencilLine className="size-3.5" />
+                          修改
+                        </button>
+                      </span>
+                    </div>
+                  )}
+                    </div>
+                  );
+                })
+              : null}
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="rounded-sm border border-[var(--border-soft)] px-4 py-2 text-sm text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-60"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SignalsPage() {
   const role = useAuthStore((state) => state.user?.role);
   const readOnly = !canOperateSignals(role);
@@ -152,11 +281,19 @@ export default function SignalsPage() {
   const [vehicleCorrectionAction, setVehicleCorrectionAction] = useState<VehicleCorrectionAction | null>(null);
   const [vehicleCorrectionValue, setVehicleCorrectionValue] = useState("");
   const [vehicleCorrectionError, setVehicleCorrectionError] = useState<string | null>(null);
-  const [closeExistingActiveRecord, setCloseExistingActiveRecord] = useState(false);
+  const [plateManagerLane, setPlateManagerLane] = useState<LaneSnapshot | null>(null);
+  const [editingActivePlate, setEditingActivePlate] = useState<LaneActivePlate | null>(null);
+  const [correctedPlateValue, setCorrectedPlateValue] = useState("");
+  const [activePlateError, setActivePlateError] = useState<string | null>(null);
 
   const lanesQuery = useQuery({
     queryKey: ["lanes"],
     queryFn: api.getLanes,
+  });
+  const activePlatesQuery = useQuery({
+    queryKey: ["lane-active-plates", plateManagerLane?.id],
+    queryFn: () => api.getLaneActivePlates(plateManagerLane!.id),
+    enabled: Boolean(plateManagerLane),
   });
   const dispatchBoardQuery = useQuery({
     queryKey: ["dispatch-board"],
@@ -190,15 +327,35 @@ export default function SignalsPage() {
       setVehicleCorrectionAction(null);
       setVehicleCorrectionValue("");
       setVehicleCorrectionError(null);
-      setCloseExistingActiveRecord(false);
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ["lanes"], type: "active" }),
         queryClient.refetchQueries({ queryKey: ["dispatch-board"], type: "active" }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["logs"] }),
       ]);
     },
     onError: (error) => {
       setVehicleCorrectionError(error instanceof Error ? error.message : "操作失败");
+    },
+  });
+
+  const activePlateMutation = useMutation({
+    mutationFn: ({ laneId, entryLogId, plate }: { laneId: string; entryLogId: string; plate: string }) =>
+      api.updateLaneActivePlate(laneId, entryLogId, { plate }),
+    onSuccess: async (_, variables) => {
+      setEditingActivePlate(null);
+      setCorrectedPlateValue("");
+      setActivePlateError(null);
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["lane-active-plates", variables.laneId], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["lanes"], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["dispatch-board"], type: "active" }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["logs"] }),
+      ]);
+    },
+    onError: (error) => {
+      setActivePlateError(error instanceof Error ? error.message : "修改车牌失败");
     },
   });
 
@@ -211,7 +368,6 @@ export default function SignalsPage() {
     setVehicleCorrectionAction({ lane, type });
     setVehicleCorrectionValue(type === "placeholder" ? "1" : "");
     setVehicleCorrectionError(null);
-    setCloseExistingActiveRecord(false);
   }
 
   function submitVehicleCorrection() {
@@ -254,12 +410,47 @@ export default function SignalsPage() {
         plate,
         reason: `信号灯控制台新增真实车牌${plate}：${lane.name}`,
         vehicleType: "出租车",
-        closeExistingActiveRecord,
       };
     }
 
     setVehicleCorrectionError(null);
     vehicleCorrectionMutation.mutate(payload);
+  }
+
+  function openActivePlateManager(lane: LaneSnapshot) {
+    setPlateManagerLane(lane);
+    setEditingActivePlate(null);
+    setCorrectedPlateValue("");
+    setActivePlateError(null);
+  }
+
+  function openActivePlateEditor(plate: LaneActivePlate) {
+    setEditingActivePlate(plate);
+    setCorrectedPlateValue(plate.plate);
+    setActivePlateError(null);
+    activePlateMutation.reset();
+  }
+
+  function submitActivePlateCorrection() {
+    if (!plateManagerLane || !editingActivePlate) {
+      return;
+    }
+    const normalizedPlate = correctedPlateValue.replace(/[·\s]/g, "").toUpperCase();
+    const previousPlate = editingActivePlate.plate.replace(/[·\s]/g, "").toUpperCase();
+    if (!normalizedPlate) {
+      setActivePlateError("请输入正确车牌号");
+      return;
+    }
+    if (normalizedPlate === previousPlate) {
+      setActivePlateError("车牌号没有发生变化");
+      return;
+    }
+    setActivePlateError(null);
+    activePlateMutation.mutate({
+      laneId: plateManagerLane.id,
+      entryLogId: editingActivePlate.id,
+      plate: correctedPlateValue.trim(),
+    });
   }
 
   if (lanesQuery.isLoading || !lanesQuery.data) {
@@ -282,13 +473,8 @@ export default function SignalsPage() {
         value={vehicleCorrectionValue}
         error={vehicleCorrectionError}
         busy={vehicleCorrectionMutation.isPending}
-        closeExistingActiveRecord={closeExistingActiveRecord}
         onValueChange={(value) => {
           setVehicleCorrectionValue(value);
-          setVehicleCorrectionError(null);
-        }}
-        onCloseExistingActiveRecordChange={(value) => {
-          setCloseExistingActiveRecord(value);
           setVehicleCorrectionError(null);
         }}
         onCancel={() => {
@@ -296,10 +482,40 @@ export default function SignalsPage() {
             setVehicleCorrectionAction(null);
             setVehicleCorrectionValue("");
             setVehicleCorrectionError(null);
-            setCloseExistingActiveRecord(false);
           }
         }}
         onConfirm={submitVehicleCorrection}
+      />
+      <ActivePlateManagerModal
+        lane={plateManagerLane}
+        plates={activePlatesQuery.data ?? []}
+        loading={activePlatesQuery.isLoading}
+        loadError={activePlatesQuery.error instanceof Error ? activePlatesQuery.error.message : null}
+        editingPlate={editingActivePlate}
+        value={correctedPlateValue}
+        error={activePlateError}
+        busy={activePlateMutation.isPending}
+        onEdit={openActivePlateEditor}
+        onValueChange={(value) => {
+          setCorrectedPlateValue(value);
+          setActivePlateError(null);
+        }}
+        onCancelEdit={() => {
+          if (!activePlateMutation.isPending) {
+            setEditingActivePlate(null);
+            setCorrectedPlateValue("");
+            setActivePlateError(null);
+          }
+        }}
+        onSave={submitActivePlateCorrection}
+        onClose={() => {
+          if (!activePlateMutation.isPending) {
+            setPlateManagerLane(null);
+            setEditingActivePlate(null);
+            setCorrectedPlateValue("");
+            setActivePlateError(null);
+          }
+        }}
       />
 
       <div className="space-y-6">
@@ -435,6 +651,18 @@ export default function SignalsPage() {
                           >
                             <Car className="size-3.5" />
                             新增真实车牌
+                          </button>
+                          <button
+                            type="button"
+                            disabled={readOnly || activePlateMutation.isPending}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openActivePlateManager(lane);
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-sm border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <PencilLine className="size-3.5" />
+                            调整车牌
                           </button>
                         </div>
                       </td>

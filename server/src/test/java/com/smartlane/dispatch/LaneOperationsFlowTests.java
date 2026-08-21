@@ -597,7 +597,7 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void manualRealPlateCorrectionShouldReplaceStalePlateRecordOnlyAfterExplicitConfirmation() throws Exception {
+	void manualRealPlateCorrectionShouldAutomaticallyReplaceStalePlateRecord() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(firstLane, secondLane));
@@ -621,22 +621,7 @@ class LaneOperationsFlowTests {
 					  "commandType": "ADD_REAL_PLATE",
 					  "plate": "苏B2T603",
 					  "vehicleType": "出租车",
-					  "reason": "测试默认拦截未出场车牌"
-					}
-					"""))
-			.andExpect(status().isConflict());
-
-		mockMvc.perform(post("/api/dispatch/manual")
-				.header("Authorization", "Bearer " + token)
-				.contentType(MediaType.APPLICATION_JSON)
-				.content("""
-					{
-					  "laneId": "L02",
-					  "commandType": "ADD_REAL_PLATE",
-					  "plate": "苏B2T603",
-					  "vehicleType": "出租车",
-					  "closeExistingActiveRecord": true,
-					  "reason": "测试关闭地感错位旧记录后新增"
+					  "reason": "测试自动关闭地感错位旧记录后新增"
 					}
 					"""))
 			.andExpect(status().isNoContent());
@@ -672,9 +657,41 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void activeManualPlateShouldBeCorrectableAcrossLogTicketAndLaneState() throws Exception {
+	void laneActivePlatesShouldIncludeDeviceAndManuallyAddedVehicles() throws Exception {
 		Lane lane = buildLane("L01", "L01", "1号车道");
 		laneRepository.save(lane);
+		String token = loginAndGetToken();
+
+		postVehicleEntry(token, "L01", "苏B10001", "2026-04-20T08:00:00+08:00");
+		mockMvc.perform(post("/api/dispatch/manual")
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "laneId": "L01",
+					  "commandType": "ADD_REAL_PLATE",
+					  "plate": "苏B10002",
+					  "vehicleType": "出租车",
+					  "reason": "测试人工新增真实车牌"
+					}
+					"""))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/lanes/L01/active-plates")
+				.header("Authorization", "Bearer " + token))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(2))
+			.andExpect(jsonPath("$[0].plate").value("苏B10001"))
+			.andExpect(jsonPath("$[0].source").value("LANE-CAMERA"))
+			.andExpect(jsonPath("$[1].plate").value("苏B10002"))
+			.andExpect(jsonPath("$[1].source").value("MANUAL_CORRECTION"));
+	}
+
+	@Test
+	void activeManualPlateShouldBeCorrectableAcrossLogTicketAndLaneState() throws Exception {
+		Lane lane = buildLane("L01", "L01", "1号车道");
+		Lane otherLane = buildLane("L02", "L02", "2号车道");
+		laneRepository.saveAll(List.of(lane, otherLane));
 		String token = loginAndGetToken();
 
 		mockMvc.perform(post("/api/dispatch/manual")
@@ -693,7 +710,17 @@ class LaneOperationsFlowTests {
 
 		EntryLog incorrectLog = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T630")
 				.getFirst();
-		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
+		mockMvc.perform(put("/api/lanes/L02/active-plates/" + incorrectLog.getId())
+				.header("Authorization", "Bearer " + token)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+					{
+					  "plate": "苏B2T603"
+					}
+					"""))
+			.andExpect(status().isBadRequest());
+
+		mockMvc.perform(put("/api/lanes/L01/active-plates/" + incorrectLog.getId())
 				.header("Authorization", "Bearer " + token)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
@@ -725,7 +752,7 @@ class LaneOperationsFlowTests {
 	}
 
 	@Test
-	void activePlateCorrectionShouldRequireConfirmationBeforeClosingTargetPlateStaleRecord() throws Exception {
+	void activePlateCorrectionShouldAutomaticallyCloseTargetPlateStaleRecord() throws Exception {
 		Lane firstLane = buildLane("L01", "L01", "1号车道");
 		Lane secondLane = buildLane("L02", "L02", "2号车道");
 		laneRepository.saveAll(List.of(firstLane, secondLane));
@@ -751,23 +778,12 @@ class LaneOperationsFlowTests {
 		EntryLog incorrectLog = entryLogRepository.findByPlateIgnoreCaseAndExitTimeIsNullOrderByEntryTimeAsc("苏B2T630")
 				.getFirst();
 
-		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
+		mockMvc.perform(put("/api/lanes/L02/active-plates/" + incorrectLog.getId())
 				.header("Authorization", "Bearer " + token)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 					{
 					  "plate": "苏B2T603"
-					}
-					"""))
-			.andExpect(status().isConflict());
-
-		mockMvc.perform(put("/api/logs/" + incorrectLog.getId() + "/plate")
-				.header("Authorization", "Bearer " + token)
-				.contentType(MediaType.APPLICATION_JSON)
-				.content("""
-					{
-					  "plate": "苏B2T603",
-					  "closeExistingActiveRecord": true
 					}
 					"""))
 			.andExpect(status().isNoContent());

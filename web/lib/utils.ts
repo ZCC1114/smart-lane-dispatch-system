@@ -100,7 +100,7 @@ export function ledStatusLabel(status: "SYNCED" | "PENDING" | "FAILED") {
 }
 
 export function logSourceLabel(source: string) {
-  const normalized = source.trim().toUpperCase();
+  const normalized = source.trim().toUpperCase().replaceAll("-", "_");
   const mapping: Record<string, string> = {
     ALPR: "车牌识别设备",
     MANUAL: "人工录入",
