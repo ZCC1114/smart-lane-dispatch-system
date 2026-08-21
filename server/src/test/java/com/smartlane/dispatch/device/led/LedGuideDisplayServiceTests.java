@@ -1,18 +1,20 @@
 package com.smartlane.dispatch.device.led;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.scheduling.TaskScheduler;
 
 import com.smartlane.dispatch.controller.LedTestController.LedTestRequest.Segment;
 import com.smartlane.dispatch.entity.DispatchTicket;
@@ -26,6 +28,7 @@ class LedGuideDisplayServiceTests {
 	private LedGuideDisplayProperties properties;
 	private OperationsService operationsService;
 	private LedGuideDisplayWriter displayWriter;
+	private TaskScheduler taskScheduler;
 	private LedGuideDisplayService service;
 
 	@BeforeEach
@@ -39,12 +42,8 @@ class LedGuideDisplayServiceTests {
 		properties.setFullRefreshMs(60000);
 		operationsService = mock(OperationsService.class);
 		displayWriter = mock(LedGuideDisplayWriter.class);
-		service = new LedGuideDisplayService(properties, operationsService, displayWriter);
-	}
-
-	@AfterEach
-	void tearDown() {
-		service.shutdown();
+		taskScheduler = mock(TaskScheduler.class);
+		service = new LedGuideDisplayService(properties, operationsService, displayWriter, Runnable::run, taskScheduler);
 	}
 
 	@Test
@@ -91,6 +90,7 @@ class LedGuideDisplayServiceTests {
 		List<LedGuideDisplayFrame.Region> regions = service.buildGuideFrame().toRegions(192, 96);
 		assertThat(regions).extracting(LedGuideDisplayFrame.Region::y).containsExactly(0, 36, 72);
 		assertThat(regions).extracting(LedGuideDisplayFrame.Region::height).containsExactly(36, 36, 24);
+		verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 	}
 
 	@Test

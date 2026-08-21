@@ -5,11 +5,14 @@ import java.util.List;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
+import jakarta.validation.constraints.AssertTrue;
 import lombok.Data;
 
 @Data
 @Component
+@Validated
 @ConfigurationProperties(prefix = "app.device")
 public class DeviceGatewayProperties {
 
@@ -24,13 +27,14 @@ public class DeviceGatewayProperties {
 	@Data
 	public static class MqttProperties {
 		private boolean enabled = false;
-		private String host = "127.0.0.1";
+		private String host = "localhost";
 		private int port = 1883;
 		private String clientId = "smart-lane-dispatch-system";
 		private String username;
 		private String password;
 		private int keepAliveSeconds = 30;
 		private long reconnectDelayMs = 5000;
+		private int maxPacketBytes = SimpleMqttClient.DEFAULT_MAX_PACKET_BYTES;
 	}
 
 	@Data
@@ -71,7 +75,7 @@ public class DeviceGatewayProperties {
 
 	@Data
 	public static class DidoTcpProperties {
-		private String host = "192.168.1.18";
+		private String host;
 		private int port = 8080;
 		private int timeoutMs = 3000;
 		private String protocol = "A1";
@@ -99,5 +103,30 @@ public class DeviceGatewayProperties {
 		private String exitGreenRelay;
 		private String presenceInputKey;
 		private String exitTriggerInputKey;
+	}
+
+	@AssertTrue(message = "MQTT 网关启用时必须显式配置主机、用户名和密码")
+	public boolean isMqttConnectionConfigured() {
+		return !"mqtt".equalsIgnoreCase(gateway)
+				|| !mqtt.enabled
+				|| (hasText(mqtt.host) && hasText(mqtt.username) && hasText(mqtt.password));
+	}
+
+	@AssertTrue(message = "MQTT 单包上限必须大于 0 且不超过 8 MiB")
+	public boolean isMqttPacketLimitValid() {
+		return mqtt.maxPacketBytes > 0 && mqtt.maxPacketBytes <= SimpleMqttClient.HARD_MAX_PACKET_BYTES;
+	}
+
+	@AssertTrue(message = "TCP DIDO 网关启用时必须显式配置默认设备主机，或为每条车道配置入口和出口主机")
+	public boolean isDidoTcpConnectionConfigured() {
+		if (!"tcp-dido".equalsIgnoreCase(gateway) || hasText(didoTcp.host)) {
+			return true;
+		}
+		return !lanes.isEmpty() && lanes.stream().allMatch(binding ->
+				hasText(binding.entryDidoHost) && hasText(binding.exitDidoHost));
+	}
+
+	private static boolean hasText(String value) {
+		return value != null && !value.isBlank();
 	}
 }

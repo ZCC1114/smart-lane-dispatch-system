@@ -90,16 +90,16 @@ cp .env.example .env
 ```bash
 APP_DEVICE_GATEWAY=mqtt \
 APP_DEVICE_MQTT_ENABLED=true \
-APP_DEVICE_MQTT_HOST=192.168.1.10 \
+APP_DEVICE_MQTT_HOST='<MQTT Broker主机名或IP>' \
 APP_DEVICE_MQTT_PORT=1883 \
-APP_DEVICE_MQTT_USERNAME='jcadmin' \
-APP_DEVICE_MQTT_PASSWORD='jcadmin@12345' \
+APP_DEVICE_MQTT_USERNAME='<MQTT用户名>' \
+APP_DEVICE_MQTT_PASSWORD='<MQTT随机强密码>' \
 APP_DEVICE_DIDO_PAYLOAD_MODE=json \
 APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=DIDO-ENTRY-01 \
-APP_DEVICE_SHARED_ENTRY_DIDO_HOST=192.168.1.18 \
+APP_DEVICE_SHARED_ENTRY_DIDO_HOST='<入口DIDO主机名或IP>' \
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080 \
 APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=DIDO-EXIT-01 \
-APP_DEVICE_SHARED_EXIT_DIDO_HOST=192.168.1.19 \
+APP_DEVICE_SHARED_EXIT_DIDO_HOST='<出口DIDO主机名或IP>' \
 APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080 \
 SPRING_PROFILES_ACTIVE=mysql \
 ./mvnw spring-boot:run
@@ -125,7 +125,7 @@ SPRING_PROFILES_ACTIVE=mysql \
 ```properties
 app.device.gateway=mqtt
 app.device.mqtt.enabled=true
-app.device.mqtt.host=192.168.1.10
+app.device.mqtt.host=<MQTT Broker主机名或IP>
 app.device.mqtt.port=1883
 app.device.mqtt.username=mqtt-user
 app.device.mqtt.password=mqtt-password
@@ -178,13 +178,12 @@ app.device.dido.down-topic-template=/device/{didoDeviceId}/get
 
 - `deploy/mysql/init/01-bootstrap.sql` 用于创建默认数据库
 - `deploy/mysql/init/02-schema.sql` 用于创建业务表、索引与约束
-- `deploy/mysql/init/03-seed.sql` 用于初始化 `admin` 管理员、`L01` 到 `L11` 车道数据，以及默认入口/出口顺序配置
+- `deploy/mysql/init/03-seed.sql` 用于初始化 `L01` 到 `L11` 车道数据及默认入口/出口顺序配置，不包含固定管理员凭据
 - Docker Compose 会把 `deploy/mysql/init` 挂载到 MySQL 容器的 `/docker-entrypoint-initdb.d`，首次创建 `mysql-data` volume 时会自动执行这些 SQL
 - 后端默认使用 `spring.jpa.hibernate.ddl-auto=validate`，只校验表结构，不会自动建表或自动改表
 - 如果连接的是已有空数据库，或非 Docker 部署的本机 MySQL，需要先手动执行上述 SQL 脚本；否则后端会因表结构缺失启动失败
 - MySQL 官方镜像只会在数据目录为空时执行初始化脚本；已有 `mysql-data` volume 不会重复初始化
-- 初始化后的默认登录账号为 `admin / Admin@123`，正式交付前应立即改密或替换为现场账号
-- 如需运维兜底管理员，可显式开启 `APP_BOOTSTRAP_ADMIN_ENABLED=true`，系统会创建或重置一个受保护 `ADMIN` 账号
+- 首次部署和运维兜底均通过 `APP_BOOTSTRAP_ADMIN_ENABLED=true` 显式创建或重置受保护的 `ADMIN` 账号；用户名和强密码必须由部署人员注入
 
 本地 Docker 环境如需完全重置基础数据，可以删除 volume 后重启:
 
@@ -198,9 +197,9 @@ docker compose up -d --build
 本地 MySQL 手动初始化示例:
 
 ```bash
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/01-bootstrap.sql
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/02-schema.sql
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/03-seed.sql
+mysql -h localhost -uroot -p < deploy/mysql/init/01-bootstrap.sql
+mysql -h localhost -uroot -p < deploy/mysql/init/02-schema.sql
+mysql -h localhost -uroot -p < deploy/mysql/init/03-seed.sql
 ```
 
 ## Bootstrap Admin 使用方法

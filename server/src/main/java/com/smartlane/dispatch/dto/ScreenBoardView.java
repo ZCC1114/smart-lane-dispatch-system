@@ -1,6 +1,7 @@
 package com.smartlane.dispatch.dto;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,14 +17,14 @@ public record ScreenBoardView(
 		String activeExitLaneName,
 		boolean entryDispatchEnabled,
 		boolean exitDispatchEnabled,
-		List<DispatchTicket> waitingAssignments,
-		List<DispatchTicket> guideAssignments,
-		List<DispatchTicket> recentDispatches,
-		List<EntryLog> recentEntryLogs,
-		Map<String, List<DispatchTicket>> laneVehicles,
+		List<ScreenDispatchTicketView> waitingAssignments,
+		List<ScreenDispatchTicketView> guideAssignments,
+		List<ScreenDispatchTicketView> recentDispatches,
+		List<ScreenEntryLogView> recentEntryLogs,
+		Map<String, List<ScreenDispatchTicketView>> laneVehicles,
 		List<ScreenEventView> pendingEvents,
 		List<ScreenEventView> events,
-		List<Lane> lanes,
+		List<ScreenLaneView> lanes,
 		OffsetDateTime lastDailyResetAt) {
 
 	public static ScreenBoardView from(
@@ -44,14 +45,25 @@ public record ScreenBoardView(
 				board.activeExitLaneName(),
 				board.entryDispatchEnabled(),
 				board.exitDispatchEnabled(),
-				board.waitingAssignments(),
-				guideAssignments,
-				recentDispatches,
-				recentEntryLogs,
-				laneVehicles,
+				toTicketViews(board.waitingAssignments()),
+				toTicketViews(guideAssignments),
+				toTicketViews(recentDispatches),
+				recentEntryLogs.stream().map(ScreenEntryLogView::from).toList(),
+				toLaneVehicleViews(laneVehicles),
 				pendingEvents,
 				events,
-				lanes,
+				lanes.stream().map(ScreenLaneView::from).toList(),
 				lastDailyResetAt);
+	}
+
+	private static List<ScreenDispatchTicketView> toTicketViews(List<DispatchTicket> tickets) {
+		return tickets.stream().map(ScreenDispatchTicketView::from).toList();
+	}
+
+	private static Map<String, List<ScreenDispatchTicketView>> toLaneVehicleViews(
+			Map<String, List<DispatchTicket>> laneVehicles) {
+		Map<String, List<ScreenDispatchTicketView>> projected = new LinkedHashMap<>();
+		laneVehicles.forEach((laneId, tickets) -> projected.put(laneId, toTicketViews(tickets)));
+		return Map.copyOf(projected);
 	}
 }

@@ -1,19 +1,20 @@
 package com.smartlane.dispatch.device.led;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -22,8 +23,6 @@ import com.smartlane.dispatch.controller.LedTestController.LedTestRequest.Segmen
 import com.smartlane.dispatch.entity.DispatchTicket;
 import com.smartlane.dispatch.service.OperationsChangedEvent;
 import com.smartlane.dispatch.service.OperationsService;
-
-import jakarta.annotation.PreDestroy;
 
 @Service
 public class LedGuideDisplayService {
@@ -41,12 +40,9 @@ public class LedGuideDisplayService {
 	private final LedGuideDisplayProperties properties;
 	private final OperationsService operationsService;
 	private final LedGuideDisplayWriter displayWriter;
+	private final TaskExecutor taskExecutor;
+	private final TaskScheduler taskScheduler;
 	private final AtomicBoolean sending = new AtomicBoolean(false);
-	private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-		Thread thread = new Thread(runnable, "led-guide-display");
-		thread.setDaemon(true);
-		return thread;
-	});
 
 	private volatile String lastPayloadKey = "";
 	private volatile long lastSuccessfulWriteMillis = 0;
@@ -55,10 +51,14 @@ public class LedGuideDisplayService {
 	public LedGuideDisplayService(
 			LedGuideDisplayProperties properties,
 			OperationsService operationsService,
-			LedGuideDisplayWriter displayWriter) {
+			LedGuideDisplayWriter displayWriter,
+			@Qualifier("ledGuideTaskExecutor") TaskExecutor taskExecutor,
+			@Qualifier("ledGuideTaskScheduler") TaskScheduler taskScheduler) {
 		this.properties = properties;
 		this.operationsService = operationsService;
 		this.displayWriter = displayWriter;
+		this.taskExecutor = taskExecutor;
+		this.taskScheduler = taskScheduler;
 	}
 
 	@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
@@ -66,7 +66,7 @@ public class LedGuideDisplayService {
 		if (!properties.isEnabled() || !shouldRefresh(event.action())) {
 			return;
 		}
-		executor.execute(() -> {
+		taskExecutor.execute(() -> {
 			if (isYardEntryAction(event.action())) {
 				highlightLatestGuideAssignment();
 			}
@@ -103,16 +103,11 @@ public class LedGuideDisplayService {
 			} else {
 				log.warn("LED guide display refresh failed: {}", result.message());
 			}
-		} catch (Exception ex) {
+		} catch (RuntimeException ex) {
 			log.warn("LED guide display refresh failed", ex);
 		} finally {
 			sending.set(false);
 		}
-	}
-
-	@PreDestroy
-	public void shutdown() {
-		executor.shutdownNow();
 	}
 
 	List<Segment> buildGuideSegments() {
@@ -139,8 +134,9 @@ public class LedGuideDisplayService {
 		}
 
 		long durationMs = Math.max(1000, properties.getHighlightDurationMs());
-		highlightState = new HighlightState(ticket.getPlate(), laneText, System.currentTimeMillis() + durationMs);
-		executor.schedule(this::sendCurrentGuideDisplay, durationMs + 100, TimeUnit.MILLISECONDS);
+		long expiresAtMillis = System.currentTimeMillis() + durationMs;
+		highlightState = new HighlightState(ticket.getPlate(), laneText, expiresAtMillis);
+		taskScheduler.schedule(this::sendCurrentGuideDisplay, Instant.ofEpochMilli(expiresAtMillis + 100));
 	}
 
 	private LedGuideDisplayFrame buildHighlightFrame(HighlightState state) {

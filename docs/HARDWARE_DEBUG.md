@@ -59,10 +59,10 @@ docker run -d -p 1883:1883 -p 9001:9001 eclipse-mosquitto
 
 ```bash
 # 订阅测试主题
-mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "test/hello"
+mosquitto_sub -h localhost -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "test/hello"
 
 # 另开终端，发布消息
-mosquitto_pub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "test/hello" -m "broker ok"
+mosquitto_pub -h localhost -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "test/hello" -m "broker ok"
 
 # 如果订阅端收到 "broker ok"，Broker 正常
 ```
@@ -87,11 +87,11 @@ mosquitto_pub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "test/hello"
 # ============================================================
 app.device.gateway=mqtt
 app.device.mqtt.enabled=true
-app.device.mqtt.host=192.168.1.100      # 你的 MQTT Broker IP
+app.device.mqtt.host=<MQTT Broker主机名或IP>
 app.device.mqtt.port=1883
 app.device.mqtt.client-id=smart-lane-dispatch-system
-app.device.mqtt.username=jcadmin
-app.device.mqtt.password=jcadmin@12345
+app.device.mqtt.username=<MQTT用户名>
+app.device.mqtt.password=<MQTT密码>
 app.device.dido.exit-trigger-enabled=true
 
 # 总入口 MF 摄像头，只负责蓄车池入口预分配
@@ -124,7 +124,7 @@ app.device.lanes[1].exit-trigger-input-key=B02
 **重启后端**，观察日志：
 
 ```
-MQTT device gateway connected to 192.168.1.100:1883
+MQTT device gateway connected to broker.internal:1883
 MQTT device gateway indexed 11 lane bindings
 ```
 
@@ -156,7 +156,7 @@ MQTT device gateway indexed 11 lane bindings
 **Step 2：在 MQTT 客户端监听下发消息**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-ENTRY-01/get"
+mosquitto_sub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/DIDO-ENTRY-01/get"
 ```
 
 **预期结果**（收到 JSON）：
@@ -171,7 +171,7 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 **Step 3：模拟 DIDO 继电器状态反馈**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-ENTRY-01/update" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/DIDO-ENTRY-01/update" -m '{
   "A01": 110000
 }'
 ```
@@ -208,7 +208,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 **Step 1：模拟心跳（验证设备在线）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "heartbeat",
   "sn": "00E02721A3A7",
   "timestamp": 1713936000000,
@@ -225,7 +225,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
 **Step 2：模拟车牌识别（车辆进入蓄车池总入口）**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "plateResult",
   "sn": "00E02721A3A7",
   "msgId": "test-001",
@@ -249,7 +249,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
 **Step 3：验证抓拍确认下发**
 
 ```bash
-mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/down"
+mosquitto_sub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/00E02721A3A7/mf/down"
 ```
 
 **预期收到**：
@@ -290,7 +290,7 @@ mosquitto_sub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E027
 **Step 1：模拟心跳**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "heartbeat",
   "devId": "SMART-CAM-01",
   "utcTs": 1713936000000
@@ -302,7 +302,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 假设当前车道 1 有 3 辆车，现在出去了 1 辆：
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "passCount",
   "devId": "SMART-CAM-01",
   "msgId": "pc-001",
@@ -321,7 +321,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 **再次发送**（再出去 2 辆，清空车道）：
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "passCount",
   "devId": "SMART-CAM-01",
   "msgId": "pc-002",
@@ -340,7 +340,7 @@ mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device
 **Step 3：模拟地感在位检测**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/SMART-CAM-01/update" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/SMART-CAM-01/update" -m '{
   "cmd": "getHaveCarRsp",
   "devId": "SMART-CAM-01",
   "content": {
@@ -383,7 +383,7 @@ APP_DEVICE_PARKING_MF_YARD_ENTRY_DEVICE_NO=<总入口MF报文data.deviceNo>
 **Step 2：模拟或监听总入口 MQTT 抓拍**
 
 ```bash
-mosquitto_pub -h 192.168.1.100 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/00E02721A3A7/mf/up" -m '{
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/00E02721A3A7/mf/up" -m '{
   "cmd": "plateResult",
   "sn": "00E02721A3A7",
   "msgId": "yard-mf-001",
@@ -541,10 +541,10 @@ Step 1: 总入口再抓拍一辆车
 
 ```bash
 #!/bin/bash
-BROKER="192.168.1.100"
+BROKER="<MQTT Broker主机名或IP>"
 PORT="1883"
-USERNAME="jcadmin"
-PASSWORD="jcadmin@12345"
+USERNAME="<MQTT用户名>"
+PASSWORD="<MQTT密码>"
 
 # ---------- DIDO ----------
 pub_dido() {

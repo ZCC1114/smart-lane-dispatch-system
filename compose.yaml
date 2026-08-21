@@ -4,17 +4,17 @@ services:
     container_name: smart-lane-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-smart_lane_dispatch}
       MYSQL_USER: ${MYSQL_USER:-smartlane}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-smartlane}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
     ports:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -63,30 +63,31 @@ services:
       SPRING_PROFILES_ACTIVE: mysql
       APP_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-smart_lane_dispatch}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       APP_DATASOURCE_USERNAME: ${MYSQL_USER:-smartlane}
-      APP_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-smartlane}
+      APP_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in .env}
       APP_REDIS_HOST: redis
       APP_REDIS_PORT: 6379
       APP_REDIS_ENABLED: "true"
-      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3002,http://localhost:3000}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?APP_JWT_SECRET must be set in .env}
       APP_JPA_DDL_AUTO: validate
       APP_DEVICE_GATEWAY: ${APP_DEVICE_GATEWAY:-mqtt}
       APP_DEVICE_MQTT_ENABLED: ${APP_DEVICE_MQTT_ENABLED:-true}
       APP_DEVICE_MQTT_HOST: ${APP_DEVICE_MQTT_HOST:-mqtt}
       APP_DEVICE_MQTT_PORT: ${APP_DEVICE_MQTT_PORT:-1883}
       APP_DEVICE_MQTT_CLIENT_ID: ${APP_DEVICE_MQTT_CLIENT_ID:-smart-lane-dispatch-system}
-      APP_DEVICE_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-jcadmin}
-      APP_DEVICE_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-jcadmin@12345}
+      APP_DEVICE_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-}
+      APP_DEVICE_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-}
       APP_DEVICE_DIDO_PAYLOAD_MODE: ${APP_DEVICE_DIDO_PAYLOAD_MODE:-json}
       APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_REMOTE_CONFIG_ON_CONNECT:-false}
       APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT: ${APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT:-false}
       APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID: ${APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID:-DIDO-ENTRY-01}
-      APP_DEVICE_SHARED_ENTRY_DIDO_HOST: ${APP_DEVICE_SHARED_ENTRY_DIDO_HOST:-192.168.1.18}
+      APP_DEVICE_SHARED_ENTRY_DIDO_HOST: ${APP_DEVICE_SHARED_ENTRY_DIDO_HOST:-}
       APP_DEVICE_SHARED_ENTRY_DIDO_PORT: ${APP_DEVICE_SHARED_ENTRY_DIDO_PORT:-8080}
       APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID: ${APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID:-DIDO-EXIT-01}
-      APP_DEVICE_SHARED_EXIT_DIDO_HOST: ${APP_DEVICE_SHARED_EXIT_DIDO_HOST:-192.168.1.19}
+      APP_DEVICE_SHARED_EXIT_DIDO_HOST: ${APP_DEVICE_SHARED_EXIT_DIDO_HOST:-}
       APP_DEVICE_SHARED_EXIT_DIDO_PORT: ${APP_DEVICE_SHARED_EXIT_DIDO_PORT:-8080}
-      APP_LED_GUIDE_ENABLED: ${APP_LED_GUIDE_ENABLED:-true}
-      APP_LED_GUIDE_IP: ${APP_LED_GUIDE_IP:-172.17.2.70}
+      APP_LED_GUIDE_ENABLED: ${APP_LED_GUIDE_ENABLED:-false}
+      APP_LED_GUIDE_IP: ${APP_LED_GUIDE_IP:-}
       APP_LED_GUIDE_PORT: ${APP_LED_GUIDE_PORT:-5005}
       APP_LED_GUIDE_GENERATION: ${APP_LED_GUIDE_GENERATION:-6}
       APP_LED_GUIDE_MODEL: ${APP_LED_GUIDE_MODEL:-Bx6E}
@@ -106,7 +107,7 @@ services:
     expose:
       - "8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/actuator/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/actuator/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -119,10 +120,8 @@ services:
         DOCKER_IMAGE_REGISTRY: ${DOCKER_IMAGE_REGISTRY:-docker.m.daocloud.io/library}
         NEXT_PUBLIC_API_BASE_URL: /api
         NEXT_PUBLIC_WS_ENDPOINT: /ws
-        NEXT_PUBLIC_DEVICE_MQTT_HOST: ${APP_PUBLIC_HOST:-127.0.0.1}
-        NEXT_PUBLIC_MQTT_WS_HOST: ${APP_PUBLIC_HOST:-127.0.0.1}
-        NEXT_PUBLIC_MQTT_USERNAME: ${APP_DEVICE_MQTT_USERNAME:-jcadmin}
-        NEXT_PUBLIC_MQTT_PASSWORD: ${APP_DEVICE_MQTT_PASSWORD:-jcadmin@12345}
+        NEXT_PUBLIC_DEVICE_MQTT_HOST: ${APP_PUBLIC_HOST:-localhost}
+        NEXT_PUBLIC_MQTT_WS_HOST: ${APP_PUBLIC_HOST:-localhost}
     container_name: smart-lane-web
     restart: unless-stopped
     depends_on:
@@ -156,5 +155,5 @@ networks:
     name: smart-lane-dispatch-net
     ipam:
       config:
-        - subnet: ${COMPOSE_NETWORK_SUBNET:-10.88.0.0/16}
-          gateway: ${COMPOSE_NETWORK_GATEWAY:-10.88.0.1}
+        - subnet: ${COMPOSE_NETWORK_SUBNET:?COMPOSE_NETWORK_SUBNET must be set in .env}
+          gateway: ${COMPOSE_NETWORK_GATEWAY:?COMPOSE_NETWORK_GATEWAY must be set in .env}

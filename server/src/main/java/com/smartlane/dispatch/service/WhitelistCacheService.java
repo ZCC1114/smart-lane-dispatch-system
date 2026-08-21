@@ -5,6 +5,8 @@ import java.util.Locale;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.BeansException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -47,7 +49,7 @@ public class WhitelistCacheService {
 			}
 			return Boolean.TRUE.equals(template.opsForSet().isMember(WHITELIST_KEY, normalizedPlate));
 		}
-		catch (Exception ignored) {
+			catch (DataAccessException ignored) {
 			return whitelistRecordRepository.existsByPlate(normalizedPlate);
 		}
 	}
@@ -60,7 +62,7 @@ public class WhitelistCacheService {
 		try {
 			reload(template);
 		}
-		catch (Exception ignored) {
+		catch (DataAccessException ignored) {
 		}
 	}
 
@@ -85,7 +87,7 @@ public class WhitelistCacheService {
 		try {
 			return redisTemplateProvider.getIfAvailable();
 		}
-		catch (Exception ignored) {
+		catch (BeansException ignored) {
 			return null;
 		}
 	}

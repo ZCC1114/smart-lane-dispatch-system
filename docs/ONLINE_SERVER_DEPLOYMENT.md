@@ -98,9 +98,9 @@ grep -E '^(APP_PUBLIC_HOST|APP_CORS_ALLOWED_ORIGINS|APP_CORS_ALLOWED_ORIGIN_PATT
 示例：
 
 ```dotenv
-APP_PUBLIC_HOST=139.224.203.95
-APP_CORS_ALLOWED_ORIGINS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:3002,http://127.0.0.1:3002
-APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://139.224.203.95:3002,http://172.17.2.10:3002,http://localhost:*,http://127.0.0.1:*
+APP_PUBLIC_HOST=<公网或FRP地址>
+APP_CORS_ALLOWED_ORIGINS=http://<公网或FRP地址>:3002,http://<服务器局域网IP或域名>:3002,http://localhost:3002,http://localhost:3002
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://<公网或FRP地址>:3002,http://<服务器局域网IP或域名>:3002,http://localhost:*,http://localhost:*
 DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
 ```
 
@@ -254,13 +254,13 @@ du -sh "$PKG_DIR"
 本地执行：
 
 ```bash
-scp -P 6000 -r "$PKG_DIR" supervisor@139.224.203.95:/home/supervisor/
+scp -P 6000 -r "$PKG_DIR" supervisor@<公网或FRP地址>:/home/supervisor/
 ```
 
 服务器登录：
 
 ```bash
-ssh -p 6000 supervisor@139.224.203.95
+ssh -p 6000 supervisor@<公网或FRP地址>
 ```
 
 ## 7. 服务器校验升级包
@@ -484,8 +484,8 @@ sudo docker compose -p "$PROJECT_NAME" logs --tail=100 web
 健康检查：
 
 ```bash
-curl -f http://127.0.0.1:3002/actuator/health
-curl -I http://127.0.0.1:3002/
+curl -f http://localhost:3002/actuator/health
+curl -I http://localhost:3002/
 ```
 
 后端健康检查正常时通常返回：
@@ -499,7 +499,7 @@ curl -I http://127.0.0.1:3002/
 浏览器访问：
 
 ```text
-http://139.224.203.95:3002/
+http://<公网或FRP地址>:3002/
 ```
 
 现场功能检查：

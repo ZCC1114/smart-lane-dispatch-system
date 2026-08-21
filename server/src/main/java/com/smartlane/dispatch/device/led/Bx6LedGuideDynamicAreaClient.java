@@ -2,7 +2,6 @@ package com.smartlane.dispatch.device.led;
 
 import java.awt.Color;
 import java.awt.Font;
-import java.io.IOException;
 import java.util.Arrays;
 
 import org.slf4j.Logger;
@@ -41,11 +40,14 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 	public Bx6LedGuideDynamicAreaClient() {
 		try {
 			if (!Bx6GEnv.isLoaded()) {
-				Bx6GEnv.initial(30000);
+				LedSdkCall.invoke("六代 LED SDK 初始化", () -> {
+					Bx6GEnv.initial(30000);
+					return null;
+				});
 				log.info("Bx6GEnv initialized for LED guide dynamic area");
 			}
 			initialized = true;
-		} catch (Exception e) {
+		} catch (LedDeviceException e) {
 			log.warn("Bx6GEnv initialization for LED guide dynamic area failed: {}", e.getMessage());
 		}
 	}
@@ -58,13 +60,13 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 	}
 
 	@Override
-	public void write(LedGuideDynamicAreaRequest request) throws Exception {
+	public void write(LedGuideDynamicAreaRequest request) throws LedDeviceException {
 		long startNanos = System.nanoTime();
 		synchronized (monitor) {
 			ensureConnected(request);
 			try {
 				writeOnce(request);
-			} catch (Exception firstFailure) {
+			} catch (LedDeviceException firstFailure) {
 				log.warn("LED guide dynamic area write failed, reconnecting once: {}", firstFailure.getMessage());
 				closeConnectedScreen();
 				ensureConnected(request);
@@ -76,15 +78,17 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 	}
 
 	@Override
-	public void delete(LedGuideDynamicAreaRequest request, int... areaIds) throws Exception {
+	public void delete(LedGuideDynamicAreaRequest request, int... areaIds) throws LedDeviceException {
 		if (areaIds == null || areaIds.length == 0) {
 			return;
 		}
 		synchronized (monitor) {
 			ensureConnected(request);
-			Result<ACK> result = screen.deleteDynamic(areaIds);
+			Result<ACK> result = LedSdkCall.invoke(
+					"六代 LED 动态区删除",
+					() -> screen.deleteDynamic(areaIds));
 			if (result == null || !result.isOK()) {
-				throw new IOException("动态区删除未返回成功: " + result);
+				throw new LedDeviceException("动态区删除未返回成功");
 			}
 			log.info("LED guide dynamic areas deleted: {}", Arrays.toString(areaIds));
 		}
@@ -98,9 +102,9 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 		}
 	}
 
-	private void ensureConnected(LedGuideDynamicAreaRequest request) throws Exception {
+	private void ensureConnected(LedGuideDynamicAreaRequest request) throws LedDeviceException {
 		if (!initialized) {
-			throw new IllegalStateException("六代 LED SDK 未初始化");
+			throw new LedDeviceException("六代 LED SDK 未初始化");
 		}
 
 		String nextConnectionKey = request.ip() + ":" + request.port() + ":" + normalizeG6Model(request.model());
@@ -111,16 +115,19 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 		closeConnectedScreen();
 		card = createG6Card(request.model());
 		screen = new Bx6GScreenClient("LedGuideDynamic", card);
-		if (!screen.connect(request.ip(), request.port())) {
+		boolean connected = LedSdkCall.invoke(
+				"六代 LED 动态区连接",
+				() -> screen.connect(request.ip(), request.port()));
+		if (!connected) {
 			closeConnectedScreen();
-			throw new IOException("连接显示屏失败（六代动态区）");
+			throw new LedDeviceException("连接显示屏失败（六代动态区）");
 		}
 		connectionKey = nextConnectionKey;
 		connectionVersion++;
 		log.info("LED guide dynamic area connected to {}", nextConnectionKey);
 	}
 
-	private void writeOnce(LedGuideDynamicAreaRequest request) throws IOException {
+	private void writeOnce(LedGuideDynamicAreaRequest request) throws LedDeviceException {
 		Bx6GScreenProfile profile = LedScreenProfiles.withSize(screen.getProfile(), card, request.screenWidth(), request.screenHeight());
 		DynamicBxAreaRule rule = new DynamicBxAreaRule();
 		rule.setId(request.areaId());
@@ -145,17 +152,22 @@ public class Bx6LedGuideDynamicAreaClient implements LedGuideDynamicAreaClient {
 			area.addPage(page);
 		}
 
-		Result<ACK> result = screen.writeDynamic(rule, area);
+		Result<ACK> result = LedSdkCall.invoke(
+				"六代 LED 动态区写入",
+				() -> screen.writeDynamic(rule, area));
 		if (result == null || !result.isOK()) {
-			throw new IOException("动态区写入未返回成功: " + result);
+			throw new LedDeviceException("动态区写入未返回成功");
 		}
 	}
 
 	private void closeConnectedScreen() {
 		if (screen != null) {
 			try {
-				screen.disconnect();
-			} catch (Exception e) {
+				LedSdkCall.invoke("六代 LED 动态区断开连接", () -> {
+					screen.disconnect();
+					return null;
+				});
+			} catch (LedDeviceException e) {
 				log.debug("LED guide dynamic area disconnect ignored: {}", e.getMessage());
 			}
 		}

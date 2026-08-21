@@ -34,7 +34,7 @@ interface LogEntry {
   laneLabel?: string;
 }
 
-const DEFAULT_BROKER_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "127.0.0.1";
+const DEFAULT_BROKER_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "localhost";
 const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? DEFAULT_BROKER_HOST;
 const DEFAULT_CAMERA_ID = "18030023535D";
 const DEFAULT_MF_SN = "00E02721A3A7";

@@ -85,7 +85,6 @@ function failedImportProgress(jobId: string, message: string): WhitelistImportPr
 export default function WhitelistPage() {
   const currentUser = useAuthStore((state) => state.user);
   const canManage = canAccessWhitelist(currentUser?.role);
-  const operatorName = currentUser?.displayName || currentUser?.username || "系统管理员";
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -144,7 +143,7 @@ export default function WhitelistPage() {
   });
 
   const importMutation = useMutation({
-    mutationFn: ({ file, jobId }: { file: File; jobId: string }) => api.importWhitelist(file, operatorName, jobId),
+    mutationFn: ({ file, jobId }: { file: File; jobId: string }) => api.importWhitelist(file, jobId),
     onSuccess: async (result, variables) => {
       setImportResult(result);
       setImportProgress(completeImportProgress(variables.jobId, result));

@@ -1,6 +1,9 @@
 package com.smartlane.dispatch.security;
 
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Base64;
@@ -23,6 +26,12 @@ public class JwtService {
 	public JwtService(
 			@Value("${app.jwt.secret}") String secret,
 			@Value("${app.jwt.expire-hours}") int expireHours) {
+		if (secret == null || secret.length() < 32) {
+			throw new IllegalStateException("JWT secret must contain at least 32 characters");
+		}
+		if (expireHours < 1 || expireHours > 24) {
+			throw new IllegalStateException("JWT expiry must be between 1 and 24 hours");
+		}
 		this.secret = secret;
 		this.expireHours = expireHours;
 	}
@@ -44,6 +53,9 @@ public class JwtService {
 	}
 
 	public Optional<AuthenticatedUser> parse(String token) {
+		if (token == null || token.isBlank() || token.length() > 8192) {
+			return Optional.empty();
+		}
 		try {
 			String decoded = new String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8);
 			String[] parts = decoded.split("\\|", 6);
@@ -53,7 +65,9 @@ public class JwtService {
 
 			String payload = String.join("|", parts[0], parts[1], parts[2], parts[3], parts[4]);
 			String signature = parts[5];
-			if (!sign(payload).equals(signature)) {
+			if (!MessageDigest.isEqual(
+					sign(payload).getBytes(StandardCharsets.US_ASCII),
+					signature.getBytes(StandardCharsets.US_ASCII))) {
 				return Optional.empty();
 			}
 
@@ -64,7 +78,7 @@ public class JwtService {
 
 			return Optional.of(new AuthenticatedUser(parts[0], parts[1], parts[2], parts[3]));
 		}
-		catch (Exception ignored) {
+		catch (IllegalArgumentException ignored) {
 			return Optional.empty();
 		}
 	}
@@ -76,7 +90,7 @@ public class JwtService {
 			byte[] digest = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
 			return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
 		}
-		catch (Exception exception) {
+		catch (NoSuchAlgorithmException | InvalidKeyException exception) {
 			throw new IllegalStateException("Unable to sign token", exception);
 		}
 	}

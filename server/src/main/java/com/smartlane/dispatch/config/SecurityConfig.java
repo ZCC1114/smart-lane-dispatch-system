@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.Customizer;
@@ -49,8 +50,6 @@ public class SecurityConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(
 								"/api/auth/login",
-								"/api/hardware-debug/**",
-								"/api/screen/**",
 								"/actuator/health",
 								"/actuator/info",
 								"/v3/api-docs/**",
@@ -60,6 +59,10 @@ public class SecurityConfig {
 								"/ws",
 								"/error")
 						.permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/screen/board")
+						.permitAll()
+						.requestMatchers(HttpMethod.POST, "/api/screen/**")
+						.hasAnyRole("ADMIN", "DISPATCHER")
 						.anyRequest().authenticated())
 				.exceptionHandling(exception -> exception
 						.authenticationEntryPoint((request, response, authException) -> response.sendError(HttpStatus.UNAUTHORIZED.value()))

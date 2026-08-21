@@ -63,18 +63,21 @@ smart-lane-dispatch-system/
 
 - 已安装 `Node.js 23.x`
 - 已安装 `JDK 21+`
-- 已启动本机 MySQL，默认连接 `127.0.0.1:3306/smart_lane_dispatch`
+- 已启动本机 MySQL，默认连接 `localhost:3306/smart_lane_dispatch`
 - 本地开发若不使用 Docker，前端默认访问 `http://localhost:8080` 后端
-- 首次运行前执行 `deploy/mysql/init` 下的初始化 SQL；默认账号为 `admin / Admin@123`
+- 首次运行前执行 `deploy/mysql/init` 下的初始化 SQL，并通过环境变量提供数据库凭据和 JWT 密钥
 
 ```bash
 nvm use
 
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/01-bootstrap.sql
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/02-schema.sql
-mysql -h 127.0.0.1 -uroot -p < deploy/mysql/init/03-seed.sql
+mysql -h localhost -u '<MySQL用户名>' -p < deploy/mysql/init/01-bootstrap.sql
+mysql -h localhost -u '<MySQL用户名>' -p < deploy/mysql/init/02-schema.sql
+mysql -h localhost -u '<MySQL用户名>' -p < deploy/mysql/init/03-seed.sql
 
 cd server
+export APP_DATASOURCE_USERNAME='<MySQL用户名>'
+export APP_DATASOURCE_PASSWORD='<MySQL密码>'
+export APP_JWT_SECRET='<至少32字节的随机密钥>'
 ./mvnw spring-boot:run
 
 cd ../web
@@ -94,6 +97,8 @@ npm run dev
 
 ```bash
 cp .env.example .env
+# 先填写 APP_JWT_SECRET、MYSQL_ROOT_PASSWORD 和 MYSQL_PASSWORD；
+# 需要 MQTT 时还要填写 APP_DEVICE_MQTT_USERNAME/APP_DEVICE_MQTT_PASSWORD。
 ./scripts/start-stack.sh
 ```
 
@@ -116,16 +121,17 @@ DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
 
 - `01-bootstrap.sql`：创建默认数据库 `smart_lane_dispatch`
 - `02-schema.sql`：创建业务表、索引与约束
-- `03-seed.sql`：写入默认管理员账号、`L01-L11` 共 11 条车道，以及默认调度配置
+- `03-seed.sql`：写入 `L01-L11` 共 11 条车道及默认调度配置，不写入固定管理员凭据
 
-默认登录账号：
+首次部署通过 `.env` 显式创建管理员：
 
-```text
-用户名：admin
-密码：Admin@123
+```dotenv
+APP_BOOTSTRAP_ADMIN_ENABLED=true
+APP_BOOTSTRAP_ADMIN_USERNAME=<管理员用户名>
+APP_BOOTSTRAP_ADMIN_PASSWORD=<至少12位的随机强密码>
 ```
 
-生产环境首次登录后应立即修改或替换现场管理员账号。
+管理员创建完成后将 `APP_BOOTSTRAP_ADMIN_ENABLED` 改回 `false`，避免后续重启重复重置密码。
 
 注意：`deploy/mysql/init` 只会在 MySQL 数据目录为空时自动执行一次。如果本地测试需要重建基础数据，可以删除容器 volume 后重新启动：
 
@@ -144,9 +150,9 @@ docker compose up -d --build
 
 ```dotenv
 APP_HTTP_PORT=3002
-APP_PUBLIC_HOST=<服务器局域网IP，例如192.168.124.3>
-APP_CORS_ALLOWED_ORIGINS=http://<服务器局域网IP>:3002,http://localhost:3002,http://127.0.0.1:3002,http://localhost:3000,http://127.0.0.1:3000
-APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://<服务器局域网IP>:3002,http://localhost:*,http://127.0.0.1:*
+APP_PUBLIC_HOST=<服务器局域网IP或域名>
+APP_CORS_ALLOWED_ORIGINS=http://<服务器局域网IP或域名>:3002,http://localhost:3002,http://localhost:3000
+APP_CORS_ALLOWED_ORIGIN_PATTERNS=http://<服务器局域网IP或域名>:3002,http://localhost:*
 APP_JWT_SECRET=<生产环境随机长密钥，不要用示例值>
 
 DOCKER_IMAGE_REGISTRY=docker.m.daocloud.io/library
@@ -165,8 +171,8 @@ APP_DEVICE_GATEWAY=mqtt
 APP_DEVICE_MQTT_ENABLED=true
 APP_DEVICE_MQTT_HOST=mqtt
 APP_DEVICE_MQTT_PORT=1883
-APP_DEVICE_MQTT_USERNAME=jcadmin
-APP_DEVICE_MQTT_PASSWORD=jcadmin@12345
+APP_DEVICE_MQTT_USERNAME=<MQTT用户名>
+APP_DEVICE_MQTT_PASSWORD=<MQTT随机强密码>
 ```
 
 如果改用外部 MQTT Broker，再把 `APP_DEVICE_MQTT_HOST` 改成外部 Broker 的 IP。
@@ -226,11 +232,11 @@ APP_DEVICE_L11_CAMERA_DEV_ID=<11号车道Smart Camera设备码>
 
 ```dotenv
 APP_DEVICE_SHARED_ENTRY_DIDO_DEVICE_ID=<入口DIDO设备ID，例如DIDO-ENTRY-01>
-APP_DEVICE_SHARED_ENTRY_DIDO_HOST=<入口DIDO IP，例如192.168.1.18>
+APP_DEVICE_SHARED_ENTRY_DIDO_HOST=<入口DIDO主机名或IP>
 APP_DEVICE_SHARED_ENTRY_DIDO_PORT=8080
 
 APP_DEVICE_SHARED_EXIT_DIDO_DEVICE_ID=<出口DIDO设备ID，例如DIDO-EXIT-01>
-APP_DEVICE_SHARED_EXIT_DIDO_HOST=<出口DIDO IP，例如192.168.1.19>
+APP_DEVICE_SHARED_EXIT_DIDO_HOST=<出口DIDO主机名或IP>
 APP_DEVICE_SHARED_EXIT_DIDO_PORT=8080
 ```
 
@@ -333,14 +339,14 @@ docker compose up -d --build
 
 ```bash
 docker compose logs -f server
-docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadmin@12345' -t '#' -v
+docker compose exec mqtt mosquitto_sub -h localhost -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t '#' -v
 ```
 
 ## 说明
 
 - 后端本地和 Compose 部署都默认使用 MySQL，不再使用 H2 内存库或 `create-drop`
 - Compose 部署模式使用 `MySQL + Redis + Mosquitto + Nginx`
-- Docker 首次创建 `mysql-data` volume 时会初始化默认账号、11 条车道和基础调度配置
+- Docker 首次创建 `mysql-data` volume 时会初始化 11 条车道和基础调度配置；管理员需通过 `APP_BOOTSTRAP_ADMIN_*` 显式创建
 - 如果连接的是已有空数据库，需要手动执行 `deploy/mysql/init` 下的 SQL；否则后端会因表结构缺失启动失败
 - 如需运维引导管理员，可通过 `APP_BOOTSTRAP_ADMIN_*` 环境变量显式创建受保护管理员账号
 - bootstrap admin 的启用方式、轮换和保护规则见 `docs/DEPLOY.md`
@@ -350,11 +356,11 @@ docker compose exec mqtt mosquitto_sub -h 127.0.0.1 -p 1883 -u jcadmin -P 'jcadm
 - 前端构建与静态检查已通过：`npm run build`、`npm run lint`
 
 ## 临时修改本机电脑 ip （DIDO设备）
-sudo networksetup -setmanual "Wi-Fi" 192.168.0.100 255.255.255.0 192.168.0.1
+sudo networksetup -setmanual "Wi-Fi" <本机临时DIDO网段IP> <子网掩码> <网关IP>
 
 ## 恢复自动获取ip
 sudo networksetup -setdhcp "Wi-Fi"
 
 
 ## 临时修改本机电脑 ip （摄像头）
-sudo ifconfig en0 alias 192.168.55.101 255.255.255.0
+sudo ifconfig en0 alias <本机临时摄像机网段IP> <子网掩码>

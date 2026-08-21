@@ -26,7 +26,9 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -67,6 +69,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 	private final TcpDidoCommandService tcpDidoCommandService;
 	private final ObjectProvider<OperationsService> operationsServiceProvider;
 	private final LaneRuntimeStateService laneRuntimeStateService;
+	private final TaskExecutor mqttReaderTaskExecutor;
 	private final AtomicBoolean connecting = new AtomicBoolean(false);
 	private final AtomicLong messageCounter = new AtomicLong(System.currentTimeMillis());
 	private final Map<String, DeviceGatewayProperties.LaneBinding> bindingsByLaneId = new ConcurrentHashMap<>();
@@ -90,12 +93,14 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			ObjectMapper objectMapper,
 			TcpDidoCommandService tcpDidoCommandService,
 			ObjectProvider<OperationsService> operationsServiceProvider,
-			LaneRuntimeStateService laneRuntimeStateService) {
+			LaneRuntimeStateService laneRuntimeStateService,
+			@Qualifier("mqttReaderTaskExecutor") TaskExecutor mqttReaderTaskExecutor) {
 		this.properties = properties;
 		this.objectMapper = objectMapper;
 		this.tcpDidoCommandService = tcpDidoCommandService;
 		this.operationsServiceProvider = operationsServiceProvider;
 		this.laneRuntimeStateService = laneRuntimeStateService;
+		this.mqttReaderTaskExecutor = mqttReaderTaskExecutor;
 	}
 
 	@PostConstruct
@@ -156,7 +161,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					syncParkingCamera(client, lane, binding, ledMessage);
 					lastLaneSyncStates.put(lane.getId(), nextSyncState);
 				}
-			} catch (Exception ex) {
+			} catch (IOException ex) {
 				laneRuntimeStateService.markCommandFailed(lane.getId(), "灯控指令下发失败", now());
 				log.warn("Failed to sync parking camera for lane {}", lane.getId(), ex);
 			}
@@ -180,7 +185,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 				for (Lane lane : deviceLanes) {
 					laneRuntimeStateService.markCommandPublished(lane.getId(), "灯控指令已下发，等待设备反馈", now());
 				}
-			} catch (Exception ex) {
+			} catch (IOException ex) {
 				for (Lane lane : deviceLanes) {
 					laneRuntimeStateService.markCommandFailed(lane.getId(), "灯控指令下发失败", now());
 				}
@@ -259,7 +264,8 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			laneRuntimeStateService.recordDeviceMessage(lane.getId(), message, now());
 		} catch (IOException ex) {
 			laneRuntimeStateService.markCommandFailed(lane.getId(), "CX 继电器指令下发失败", now());
-			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "CX 继电器指令下发失败: " + ex.getMessage(), ex);
+			log.warn("Failed to publish CX relay command for lane {}", lane.getId(), ex);
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "CX 继电器指令下发失败", ex);
 		}
 	}
 
@@ -287,6 +293,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			return;
 		}
 
+		boolean ready = false;
 		try {
 			SimpleMqttClient nextClient = new SimpleMqttClient(
 					properties.getMqtt().getHost(),
@@ -295,16 +302,21 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					properties.getMqtt().getUsername(),
 					properties.getMqtt().getPassword(),
 					properties.getMqtt().getKeepAliveSeconds(),
-					this::handleRawMqttMessage);
+					this::handleRawMqttMessage,
+					mqttReaderTaskExecutor,
+					properties.getMqtt().getMaxPacketBytes());
 			nextClient.connect();
 			mqttClient = nextClient;
 			subscribeConfiguredTopics(nextClient);
 			requestInitialDeviceState(nextClient);
+			ready = true;
 			log.info("MQTT device gateway connected to {}:{}", properties.getMqtt().getHost(), properties.getMqtt().getPort());
-		} catch (Exception ex) {
-			closeClient();
+		} catch (IOException ex) {
 			log.warn("MQTT device gateway connection failed: {}", ex.getMessage());
 		} finally {
+			if (!ready) {
+				closeClient();
+			}
 			connecting.set(false);
 		}
 	}
@@ -327,7 +339,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			}
 			try {
 				publishSmartCameraCommand(client, binding, "getHaveCar", objectMapper.createObjectNode());
-			} catch (Exception ex) {
+			} catch (IOException ex) {
 				log.warn("Failed to poll have-car state for lane {}", binding.getLaneId(), ex);
 			}
 		}
@@ -382,7 +394,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					&& topicMatchesFilter(topic, properties.getDido().getUpTopicFilter())) {
 				handleDidoStatusMessage(topic, message);
 			}
-		} catch (Exception ex) {
+		} catch (IOException ex) {
 			if (isDidoDownlinkTopic(topic)) {
 				log.debug("Ignored non-JSON DIDO downlink on topic {}", topic);
 				return;
@@ -922,16 +934,6 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 					ex.getStatusCode(),
 					ex.getReason());
 		}
-		catch (RuntimeException ex) {
-			flowLog.warn(
-					"节点=车道尾部滞留补登记异常 event=LANE_TAIL_STAY_ENTRY_REGISTER_FAILED laneId={} devId={} alarmType={} plate={} observedAt={} action=KEEP_TAIL_STAY_PROTECTION",
-					binding.getLaneId(),
-					devId,
-					alarmType,
-					plate,
-					observedAt,
-					ex);
-		}
 	}
 
 	private DeviceGatewayProperties.LaneBinding resolveEntryBindingForSmartCamera(
@@ -1322,7 +1324,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 			for (DeviceGatewayProperties.LaneBinding binding : uniqueCameraBindings()) {
 				try {
 					publishSmartCameraCommand(client, binding, "getVerInfo", objectMapper.createObjectNode());
-				} catch (Exception ex) {
+				} catch (IOException ex) {
 					log.warn("Failed to request smart camera version for lane {}", binding.getLaneId(), ex);
 				}
 			}
@@ -1350,7 +1352,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 									topic,
 									bytesToHex(CX_ENABLE_RELAY_UPLOAD_COMMAND));
 						}
-					} catch (Exception ex) {
+					} catch (IOException ex) {
 						log.warn("Failed to publish CX DIDO startup command for device {}", didoDeviceId, ex);
 					}
 				}
@@ -1369,7 +1371,7 @@ public class MqttDeviceGateway implements LaneDeviceGateway {
 							didoDeviceId,
 							topic,
 							payloadText);
-				} catch (Exception ex) {
+				} catch (IOException ex) {
 					log.warn("Failed to request DIDO state for device {}", didoDeviceId, ex);
 				}
 			}

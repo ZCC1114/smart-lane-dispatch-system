@@ -258,10 +258,9 @@ export const api = {
       method: "DELETE",
     });
   },
-  importWhitelist(file: File, operator: string, jobId?: string) {
+  importWhitelist(file: File, jobId?: string) {
     const formData = new FormData();
     formData.set("file", file);
-    formData.set("operator", operator);
     if (jobId) {
       formData.set("jobId", jobId);
     }
@@ -280,9 +279,10 @@ export const api = {
     });
   },
   updateSignal(payload: SignalOverrideRequest) {
-    return request<LaneSnapshot>(`/signals/${payload.laneId}`, {
+    const { laneId, ...requestBody } = payload;
+    return request<LaneSnapshot>(`/signals/${laneId}`, {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestBody),
     });
   },
   controlRelay(payload: RelayControlRequest) {

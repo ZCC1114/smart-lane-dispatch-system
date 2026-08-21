@@ -22,6 +22,7 @@ export function LiveUpdatesBridge() {
     const client = new Client({
       reconnectDelay: 4000,
       webSocketFactory: () => new SockJS(WS_ENDPOINT),
+      connectHeaders: { Authorization: `Bearer ${token}` },
     });
 
     client.onConnect = () => {

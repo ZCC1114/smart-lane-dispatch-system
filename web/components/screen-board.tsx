@@ -5,6 +5,7 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState }
 import { RotateCcw, Settings2, Shield, TriangleAlert, Maximize2, Minimize2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { formatPlateDisplay, screenEventTypeLabel } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth-store";
 import { useDashboardLayoutStore } from "@/stores/dashboard-layout-store";
 
 const DESIGN_WIDTH = 1920;
@@ -549,7 +550,7 @@ function AlertRow({
 }: {
   event?: ScreenEvent;
   blue?: boolean;
-  onHandle: (event: ScreenEvent) => void;
+  onHandle?: (event: ScreenEvent) => void;
 }) {
   const handled = event?.handled ?? false;
   const blueRow = blue || handled;
@@ -572,13 +573,13 @@ function AlertRow({
         {event ? `事件：${formatPlateDisplay(event.plate) || event.plate} ${event.message}` : "暂无事件"}
       </p>
       <p className="absolute left-[24px] top-[22px] text-[12px] leading-[14px] text-[#bec7d0]">时间： {event ? formatScreenTime(event.occurredAt) : "--"}</p>
-      {event ? (
+      {event && onHandle ? (
         <button
           type="button"
           disabled={handled}
           onClick={() => {
             if (!handled) {
-              onHandle(event);
+              onHandle?.(event);
             }
           }}
           className={[
@@ -604,7 +605,7 @@ function EventRows({
   type: ScreenEvent["type"];
   types?: ScreenEvent["type"][];
   blue?: boolean;
-  onHandle: (event: ScreenEvent) => void;
+  onHandle?: (event: ScreenEvent) => void;
 }) {
   const acceptedTypes = types ?? [type];
   const rows = events.filter((event) => acceptedTypes.includes(event.type)).slice(0, 10);
@@ -998,7 +999,7 @@ function DraggableAlertPopup({
   position?: PopupPosition;
   busy: boolean;
   onPositionChange: (eventId: string, position: PopupPosition) => void;
-  onConfirm: (event: ScreenEvent) => void;
+  onConfirm?: (event: ScreenEvent) => void;
 }) {
   const currentPosition = position ?? defaultAlertPopupPosition(index);
   const [drag, setDrag] = useState<{ startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
@@ -1072,16 +1073,18 @@ function DraggableAlertPopup({
         <p className="truncate">内容：{screenEvent.message}</p>
         <p>时间：{formatScreenTime(screenEvent.occurredAt)}</p>
       </div>
-      <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
-        <button
-          type="button"
-          onClick={() => onConfirm(screenEvent)}
-          disabled={busy}
-          className="h-[36px] w-[104px] border border-[#ffb53d] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
-        >
-          {busy ? "确认中" : "确认"}
-        </button>
-      </div>
+      {onConfirm ? (
+        <div className="mt-auto flex justify-end gap-3 px-7 pb-5 pt-3">
+          <button
+            type="button"
+            onClick={() => onConfirm?.(screenEvent)}
+            disabled={busy}
+            className="h-[36px] w-[104px] border border-[#ffb53d] bg-[linear-gradient(180deg,#e89a1d_0%,#9a5300_100%)] text-[16px] font-black text-white disabled:opacity-60"
+          >
+            {busy ? "确认中" : "确认"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1194,6 +1197,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const [laneEntryAnimations, setLaneEntryAnimations] = useState<LaneEntryAnimation[]>([]);
   const pendingAlertSeenCountsRef = useRef<Record<string, number>>({});
   const previousLaneVehicleIdsRef = useRef<Record<string, Set<string>> | null>(null);
+  const token = useAuthStore((state) => state.token);
   const overviewExpanded = useDashboardLayoutStore((state) => state.overviewExpanded);
   const toggleOverviewExpanded = useDashboardLayoutStore((state) => state.toggleOverviewExpanded);
   const events = useMemo(() => (board?.events ?? []).filter((event) => !event.handled), [board?.events]);
@@ -1210,6 +1214,16 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const pendingClearLaneClearable = Boolean(
     board && currentPendingClearLane && isLaneBaseClearable(currentPendingClearLane, board, laneVehicles),
   );
+
+  const postScreenAction = useCallback(async (path: string) => {
+    if (mode !== "embedded" || !token) {
+      throw new Error("未登录或登录已失效");
+    }
+    return fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }, [mode, token]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -1319,7 +1333,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   const confirmDailyReset = useCallback(async () => {
     setDailyResetBusy(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/screen/daily-reset`, { method: "POST" });
+      const response = await postScreenAction("/screen/daily-reset");
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `HTTP ${response.status}`);
@@ -1334,10 +1348,10 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     } finally {
       setDailyResetBusy(false);
     }
-  }, [setBoard]);
+  }, [postScreenAction, setBoard]);
 
   useEffect(() => {
-    if (!board || dailyResetBusy) {
+    if (mode !== "embedded" || !board || dailyResetBusy) {
       return;
     }
 
@@ -1360,7 +1374,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     if (slot) {
       setDailyResetDialog({ source: "scheduled", ...slot });
     }
-  }, [board, board?.lastDailyResetAt, dailyResetBusy, dailyResetDialog, dismissedDailyResetSlots, now]);
+  }, [board, board?.lastDailyResetAt, dailyResetBusy, dailyResetDialog, dismissedDailyResetSlots, mode, now]);
 
   useEffect(() => {
     if (!pendingClearLane || clearingLaneId || pendingClearLaneClearable) {
@@ -1371,7 +1385,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   }, [clearingLaneId, pendingClearLane, pendingClearLaneClearable]);
 
   useEffect(() => {
-    if (!board || pendingEvent || pendingAlertEvents.length > 0 || pendingClearLane || clearingLaneId || dailyResetDialog) {
+    if (mode !== "embedded" || !board || pendingEvent || pendingAlertEvents.length > 0 || pendingClearLane || clearingLaneId || dailyResetDialog) {
       return;
     }
 
@@ -1391,7 +1405,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
       [candidate.id]: nowMs,
     }));
     setPendingClearLane(candidate);
-  }, [board, board?.activeExitLaneId, clearingLaneId, dailyResetDialog, laneClearReminderAt, laneVehicles, lanes, pendingAlertEvents.length, pendingClearLane, pendingEvent]);
+  }, [board, board?.activeExitLaneId, clearingLaneId, dailyResetDialog, laneClearReminderAt, laneVehicles, lanes, mode, pendingAlertEvents.length, pendingClearLane, pendingEvent]);
 
   function requestHandleEvent(event: ScreenEvent) {
     setActionMessage("");
@@ -1408,7 +1422,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
   async function confirmAcknowledgeEvent(event: ScreenEvent) {
     setAcknowledgingEventId(event.id);
     try {
-      const response = await fetch(`${API_BASE_URL}/screen/events/${encodeURIComponent(event.id)}/acknowledge`, { method: "POST" });
+      const response = await postScreenAction(`/screen/events/${encodeURIComponent(event.id)}/acknowledge`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -1456,7 +1470,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     const eventId = pendingEvent.id;
     setHandlingEventId(eventId);
     try {
-      const response = await fetch(`${API_BASE_URL}/screen/events/${encodeURIComponent(eventId)}/handle`, { method: "POST" });
+      const response = await postScreenAction(`/screen/events/${encodeURIComponent(eventId)}/handle`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -1483,7 +1497,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
     const lane = currentPendingClearLane ?? pendingClearLane;
     setClearingLaneId(lane.id);
     try {
-      const response = await fetch(`${API_BASE_URL}/screen/lanes/${encodeURIComponent(lane.id)}/clear-remaining`, { method: "POST" });
+      const response = await postScreenAction(`/screen/lanes/${encodeURIComponent(lane.id)}/clear-remaining`);
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `HTTP ${response.status}`);
@@ -1549,16 +1563,21 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
         <Asset name="汽车.png" className="absolute left-[1718px] top-[151px] h-[54px] w-[181px]" />
 
         <Panel title="黑名单" x={16} y={215}>
-          <EventRows events={events} type="blacklist" onHandle={requestHandleEvent} />
+          <EventRows events={events} type="blacklist" onHandle={mode === "embedded" ? requestHandleEvent : undefined} />
         </Panel>
         <Panel title="走错车道" x={16} y={430}>
-          <EventRows events={events} type="wrong_lane" onHandle={requestHandleEvent} />
+          <EventRows events={events} type="wrong_lane" onHandle={mode === "embedded" ? requestHandleEvent : undefined} />
         </Panel>
         <Panel title="未进车道" x={16} y={646}>
-          <EventRows events={events} type="not_entered" onHandle={requestHandleEvent} />
+          <EventRows events={events} type="not_entered" onHandle={mode === "embedded" ? requestHandleEvent : undefined} />
         </Panel>
         <Panel title="其他" x={16} y={860}>
-          <EventRows events={events} type="other" types={["other", "not_whitelisted"]} onHandle={requestHandleEvent} />
+          <EventRows
+            events={events}
+            type="other"
+            types={["other", "not_whitelisted"]}
+            onHandle={mode === "embedded" ? requestHandleEvent : undefined}
+          />
         </Panel>
 
         <LaneOverlays
@@ -1579,7 +1598,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           <GuideRows tickets={guideEntries} />
         </Panel>
 
-        <ScreenBottomActions onDailyReset={requestManualDailyReset} />
+        {mode === "embedded" ? <ScreenBottomActions onDailyReset={requestManualDailyReset} /> : null}
 
         {visiblePendingAlerts.length > MAX_VISIBLE_ALERT_POPUPS ? (
           <div className="absolute left-[730px] top-[86px] z-[83] border border-[#39e8ff]/70 bg-[#061b32]/90 px-4 py-2 text-[15px] font-bold text-[#d8f6ff] shadow-[0_0_16px_rgba(57,232,255,0.28)]">
@@ -1596,18 +1615,20 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
             position={alertPopupPositions[event.id]}
             busy={acknowledgingEventId === event.id}
             onPositionChange={updateAlertPopupPosition}
-            onConfirm={confirmAcknowledgeEvent}
+            onConfirm={mode === "embedded" ? confirmAcknowledgeEvent : undefined}
           />
         ))}
 
-        <DailyResetConfirmDialog
-          dialog={dailyResetDialog}
-          busy={dailyResetBusy}
-          onCancel={dismissDailyResetDialog}
-          onConfirm={confirmDailyReset}
-        />
+        {mode === "embedded" ? (
+          <DailyResetConfirmDialog
+            dialog={dailyResetDialog}
+            busy={dailyResetBusy}
+            onCancel={dismissDailyResetDialog}
+            onConfirm={confirmDailyReset}
+          />
+        ) : null}
 
-        {pendingEvent ? (
+        {mode === "embedded" && pendingEvent ? (
           <div className="absolute inset-0 z-[80] grid place-items-center bg-[#020b16]/68">
             <div className="relative flex h-[264px] w-[480px] flex-col border border-[#39e8ff] bg-[#061b32]/95 shadow-[0_0_28px_rgba(57,232,255,0.45)]">
               <div className="h-[56px] border-b border-[#2ebdda]/70 bg-[linear-gradient(90deg,#0d5aa2_0%,#0d315d_100%)] px-7 text-[26px] font-black leading-[56px] text-white [text-shadow:0_0_8px_rgba(102,221,255,0.8)]">
@@ -1643,7 +1664,7 @@ export function ScreenBoard({ mode = "standalone" }: { mode?: "standalone" | "em
           </div>
         ) : null}
 
-        {pendingClearLane ? (
+        {mode === "embedded" && pendingClearLane ? (
           <div className="absolute inset-0 z-[78] grid place-items-center bg-[#020b16]/68">
             <div className="relative flex h-[294px] w-[540px] flex-col border border-[#ffb53d] bg-[#07182a]/96 shadow-[0_0_30px_rgba(255,181,61,0.42)]">
               <div className="h-[58px] border-b border-[#b7791f]/70 bg-[linear-gradient(90deg,#9b4b08_0%,#23355c_100%)] px-7 text-[25px] font-black leading-[58px] text-white [text-shadow:0_0_8px_rgba(255,181,61,0.72)]">

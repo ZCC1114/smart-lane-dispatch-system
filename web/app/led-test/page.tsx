@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { Activity, ArrowDown, ArrowUp, Monitor, Plus, RefreshCw, Send, Terminal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth-store";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   (process.env.NODE_ENV === "development" ? "http://localhost:8080/api" : "/api");
-const SITE_LED_IP = "172.17.2.70";
+const SITE_LED_IP = process.env.NEXT_PUBLIC_LED_GUIDE_HOST ?? "";
 const SITE_SCREEN_WIDTH = 192;
 const SITE_SCREEN_HEIGHT = 96;
 const SITE_COLUMNS = 2;
@@ -117,6 +118,7 @@ function uniqueTickets(tickets: DispatchTicket[]) {
 }
 
 export default function LedTestPage() {
+  const token = useAuthStore((state) => state.token);
   const [ip, setIp] = useState(SITE_LED_IP);
   const [port, setPort] = useState("5005");
   const [generation, setGeneration] = useState<"5" | "6">("6");
@@ -234,6 +236,11 @@ export default function LedTestPage() {
   }
 
   async function handleSend() {
+    if (!token) {
+      setResult("请先登录再执行 LED 测试");
+      setStatus("error");
+      return;
+    }
     const validSegments = segments.filter((s) => s.text.trim());
     if (validSegments.length === 0) {
       setResult("请至少输入一段文本");
@@ -271,10 +278,17 @@ export default function LedTestPage() {
       const endpoint = sendMode === "dynamic" ? "send-dynamic" : "send";
       const response = await fetch(`${API_BASE_URL}/screen/led-test/${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: requestBody,
       });
-      const payload = (await response.json()) as { result: string };
+      const responseText = await response.text();
+      if (!response.ok) {
+        throw new Error(responseText || `HTTP ${response.status}`);
+      }
+      const payload = JSON.parse(responseText) as { result: string };
       setResult(payload.result);
       setStatus(payload.result.startsWith("发送成功") ? "success" : "error");
     } catch (error) {
@@ -637,7 +651,7 @@ export default function LedTestPage() {
               <li>现场格式为 2 列 6 行，每条内容按“车牌-车道”展示，例如“苏B12345-1车道”。</li>
               <li>点击“读取总入口数据”会从大屏接口读取总入口抓拍后的推荐车道数据。</li>
               <li>点击色块切换颜色，当前选中的颜色会带有绿色边框。</li>
-              <li>确保本机 IP 与显示屏 172.17.2.70 处于同一网段，且没有防火墙拦截。</li>
+              <li>确保本机 IP 与填写的显示屏地址处于同一网段，且没有防火墙拦截。</li>
             </ul>
           </div>
         </section>

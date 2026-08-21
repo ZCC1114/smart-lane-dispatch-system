@@ -81,7 +81,7 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 					lane.getExitSignal(),
 					now(),
 					"TCP DIDO 已按目标灯态执行");
-		} catch (Exception ex) {
+		} catch (ResponseStatusException ex) {
 			laneRuntimeStateService.markCommandFailed(lane.getId(), "TCP DIDO 指令下发失败", now());
 			log.warn("Failed to sync lane {} to TCP DIDO", lane.getId(), ex);
 		}
@@ -122,7 +122,7 @@ public class TcpDidoDeviceGateway implements LaneDeviceGateway {
 			}
 			laneRuntimeStateService.markCommandPublished(lane.getId(), "TCP DIDO 继电器指令已下发", now());
 			laneRuntimeStateService.recordDeviceMessage(lane.getId(), message, now());
-		} catch (RuntimeException ex) {
+		} catch (ResponseStatusException ex) {
 			laneRuntimeStateService.markCommandFailed(lane.getId(), "TCP DIDO 继电器指令下发失败", now());
 			throw ex;
 		}

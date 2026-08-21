@@ -50,8 +50,8 @@ interface LogEntry {
   parsedItems?: ParsedMqttItem[];
 }
 
-const DEFAULT_DEVICE_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "192.168.1.45";
-const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? "127.0.0.1";
+const DEFAULT_DEVICE_HOST = process.env.NEXT_PUBLIC_DEVICE_MQTT_HOST ?? "device.example";
+const DEFAULT_WS_HOST = process.env.NEXT_PUBLIC_MQTT_WS_HOST ?? "localhost";
 const DEFAULT_DIDO_DEVICE_ID = "DIDO-EXIT-01";
 const LANE_COUNT = 11;
 const REMOTE_CONFIG_HEX = "4D9301010101A1000000";

@@ -269,6 +269,5 @@ export interface BlacklistPayload {
   plate: string;
   reason: string;
   level: BlacklistLevel;
-  operator: string;
   active: boolean;
 }

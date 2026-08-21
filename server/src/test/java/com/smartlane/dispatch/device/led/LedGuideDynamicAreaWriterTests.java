@@ -1,6 +1,7 @@
 package com.smartlane.dispatch.device.led;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -24,7 +25,7 @@ class LedGuideDynamicAreaWriterTests {
 	@BeforeEach
 	void setUp() {
 		properties = new LedGuideDisplayProperties();
-		properties.setIp("172.17.2.70");
+		properties.setIp("led.test.internal");
 		properties.setPort(5005);
 		properties.setGeneration("6");
 		properties.setModel("Bx6E");
@@ -110,10 +111,10 @@ class LedGuideDynamicAreaWriterTests {
 	}
 
 	@Test
-	void clearsCacheAfterWriteFailure() throws Exception {
+	void clearsCacheAfterDeviceFailure() throws Exception {
 		LedGuideDisplayFrame frame = frame();
 		when(client.connectionVersion()).thenReturn(1L);
-		org.mockito.Mockito.doThrow(new RuntimeException("offline")).when(client).write(any());
+		org.mockito.Mockito.doThrow(new LedDeviceException("offline")).when(client).write(any());
 
 		LedGuideDisplayWriteResult result = writer.write(frame, false);
 
@@ -124,6 +125,15 @@ class LedGuideDynamicAreaWriterTests {
 
 		assertThat(retry.success()).isTrue();
 		verify(client).write(any());
+	}
+
+	@Test
+	void doesNotHideUnexpectedProgrammingFailures() throws Exception {
+		org.mockito.Mockito.doThrow(new IllegalStateException("unexpected")).when(client).write(any());
+
+		assertThatThrownBy(() -> writer.write(frame(), false))
+				.isInstanceOf(IllegalStateException.class)
+				.hasMessage("unexpected");
 	}
 
 	private LedGuideDisplayFrame frame() {

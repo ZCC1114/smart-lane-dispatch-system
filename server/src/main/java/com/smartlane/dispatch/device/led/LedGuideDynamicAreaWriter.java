@@ -62,7 +62,7 @@ public class LedGuideDynamicAreaWriter {
 				}
 				lastConnectionVersion = client.connectionVersion();
 				return LedGuideDisplayWriteResult.success("动态区发送成功，更新 " + sentCount + " 帧");
-			} catch (Exception ex) {
+			} catch (LedDeviceException ex) {
 				lastFrameKey = null;
 				legacyRowAreasCleared = false;
 				return LedGuideDisplayWriteResult.failure("动态区发送失败: " + ex.getMessage());
@@ -93,7 +93,7 @@ public class LedGuideDynamicAreaWriter {
 				frame.payloadKey()));
 	}
 
-	private void deleteLegacyRowAreas(LedGuideDynamicAreaRequest request) throws Exception {
+	private void deleteLegacyRowAreas(LedGuideDynamicAreaRequest request) throws LedDeviceException {
 		int areaStartId = Math.max(0, properties.getDynamicAreaStartId());
 		int[] legacyAreaIds = IntStream.range(1, LEGACY_ROW_AREA_COUNT)
 				.map(index -> areaStartId + index)

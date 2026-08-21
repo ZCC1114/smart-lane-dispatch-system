@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -41,7 +44,6 @@ import com.smartlane.dispatch.service.OperationsService;
 @SpringBootTest(properties = {
 		"app.bootstrap-admin.enabled=true",
 		"app.bootstrap-admin.username=bootstrap-admin",
-		"app.bootstrap-admin.password=Bootstrap#2026!",
 		"app.bootstrap-admin.display-name=系统引导管理员",
 		"app.bootstrap-admin.station=总控中心",
 		"app.dispatch.entry-enabled-default=true",
@@ -50,6 +52,12 @@ import com.smartlane.dispatch.service.OperationsService;
 })
 @AutoConfigureMockMvc
 class LaneOperationsFlowTests {
+	private static final String TEST_ADMIN_PASSWORD = "T3st!" + UUID.randomUUID();
+
+	@DynamicPropertySource
+	static void bootstrapAdminProperties(DynamicPropertyRegistry registry) {
+		registry.add("app.bootstrap-admin.password", () -> TEST_ADMIN_PASSWORD);
+	}
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -478,7 +486,6 @@ class LaneOperationsFlowTests {
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 					{
-					  "laneId": "L01",
 					  "entrySignal": "GREEN",
 					  "exitSignal": "RED",
 					  "reason": "测试满位保护"
@@ -504,7 +511,6 @@ class LaneOperationsFlowTests {
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 					{
-					  "laneId": "L01",
 					  "entrySignal": "GREEN",
 					  "exitSignal": "GREEN",
 					  "reason": "测试入口出口独立绿灯"
@@ -1068,7 +1074,8 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L02", "沪A20001", "2026-04-20T08:04:00+08:00");
 		openExitSignal(token, "L01");
 
-		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining")
+				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.id").value("L01"))
 			.andExpect(jsonPath("$.vehicleCount").value(0));
@@ -1101,7 +1108,8 @@ class LaneOperationsFlowTests {
 		postVehicleEntry(token, "L01", "沪A10004", "2026-04-20T08:06:00+08:00");
 		openExitSignal(token, "L01");
 
-		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining")
+				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isBadRequest());
 
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(4);
@@ -1120,7 +1128,8 @@ class LaneOperationsFlowTests {
 
 		assertThat(operationsService.getDispatchBoard().activeEntryLaneId()).isEqualTo("L01");
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L01");
-		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining"))
+		mockMvc.perform(post("/api/screen/lanes/L01/clear-remaining")
+				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isBadRequest());
 
 		assertThat(laneRepository.findById("L01").orElseThrow().getVehicleCount()).isEqualTo(1);
@@ -1145,7 +1154,8 @@ class LaneOperationsFlowTests {
 
 		assertThat(operationsService.getDispatchBoard().activeExitLaneId()).isEqualTo("L07");
 
-		mockMvc.perform(post("/api/screen/lanes/L07/clear-remaining"))
+		mockMvc.perform(post("/api/screen/lanes/L07/clear-remaining")
+				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.id").value("L07"))
 			.andExpect(jsonPath("$.vehicleCount").value(0));
@@ -1461,7 +1471,8 @@ class LaneOperationsFlowTests {
 		assertThat(operationsService.getScreenBoardEvents(10))
 				.noneMatch(item -> event.id().equals(item.id()));
 
-		mockMvc.perform(post("/api/screen/events/" + event.id() + "/acknowledge"))
+		mockMvc.perform(post("/api/screen/events/" + event.id() + "/acknowledge")
+				.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk());
 
 		assertThat(operationsService.getPendingScreenBoardEvents(10))
@@ -1474,6 +1485,7 @@ class LaneOperationsFlowTests {
 				});
 
 		mockMvc.perform(post("/api/screen/events/handle")
+				.header("Authorization", "Bearer " + token)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 					{
@@ -1778,12 +1790,11 @@ class LaneOperationsFlowTests {
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 					{
-					  "laneId": "%s",
 					  "entrySignal": "%s",
 					  "exitSignal": "%s",
 					  "reason": "%s"
 					}
-					""".formatted(laneId, entrySignal, exitSignal, reason)))
+					""".formatted(entrySignal, exitSignal, reason)))
 			.andExpect(status().isOk());
 	}
 
@@ -1839,9 +1850,9 @@ class LaneOperationsFlowTests {
 				.content("""
 					{
 					  "username": "bootstrap-admin",
-					  "password": "Bootstrap#2026!"
+					  "password": "%s"
 					}
-					"""))
+					""".formatted(TEST_ADMIN_PASSWORD)))
 			.andExpect(status().isOk())
 			.andReturn()
 			.getResponse()

@@ -37,7 +37,6 @@ export default function BlacklistPage() {
   const [editingRecord, setEditingRecord] = useState<BlacklistRecord | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const operatorName = currentUser?.displayName || currentUser?.username || "系统管理员";
 
   const blacklistQuery = useQuery({
     queryKey: ["blacklist", searchQuery, page, pageSize],
@@ -50,7 +49,6 @@ export default function BlacklistPage() {
         plate: formState.plate.trim(),
         reason: formState.reason.trim(),
         level: formState.level,
-        operator: operatorName,
         active: editingRecord?.active ?? true,
       };
       return editingRecord ? api.updateBlacklist(editingRecord.id, payload) : api.createBlacklist(payload);

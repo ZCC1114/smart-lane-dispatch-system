@@ -124,7 +124,7 @@ class MqttSplitDidoDeviceTests {
 				.orElse("OFFLINE");
 		operationsService.overrideSignal(
 				laneId,
-				new SignalOverrideRequest(laneId, entrySignal, "GREEN", null, "测试切换出口放行游标"));
+				new SignalOverrideRequest(entrySignal, "GREEN", null, "测试切换出口放行游标"));
 	}
 
 	private void ingestDidoStatus(String deviceId, int inputState) {

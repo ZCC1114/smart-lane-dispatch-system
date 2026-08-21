@@ -1,10 +1,12 @@
 package com.smartlane.dispatch.service;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.ArrayList;
@@ -24,6 +26,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.poi.EncryptedDocumentException;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -33,10 +36,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -656,7 +661,7 @@ public class OperationsService {
 		try {
 			OffsetDateTime resetAt = OffsetDateTime.parse(value.trim());
 			return resetAt.isAfter(now().plusMinutes(1)) ? null : resetAt;
-		} catch (RuntimeException ignored) {
+			} catch (DateTimeParseException ignored) {
 			return null;
 		}
 	}
@@ -908,6 +913,7 @@ public class OperationsService {
 				referenceTime);
 	}
 
+	@PreAuthorize("hasRole('ADMIN')")
 	public PageResult<BlacklistRecord> getBlacklist(String query, int page, int pageSize) {
 		int normalizedPage = normalizePage(page);
 		int normalizedPageSize = normalizePageSize(pageSize);
@@ -1255,14 +1261,15 @@ public class OperationsService {
 			progress.complete(result);
 			return result;
 		}
-		catch (RuntimeException exception) {
+		catch (ResponseStatusException | DataAccessException | IllegalArgumentException exception) {
 			progress.fail(importFailureMessage(exception));
 			throw exception;
 		}
 	}
 
 	@Transactional
-	public BlacklistRecord createBlacklist(BlacklistPayload payload) {
+	@PreAuthorize("hasRole('ADMIN')")
+	public BlacklistRecord createBlacklist(BlacklistPayload payload, String operator) {
 		validateBlacklistPayload(payload);
 		BlacklistRecord record = BlacklistRecord.builder()
 				.id("BL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT))
@@ -1270,7 +1277,7 @@ public class OperationsService {
 				.reason(payload.reason())
 				.level(payload.level())
 				.effectiveDate(now())
-				.operator(payload.operator())
+				.operator(operator)
 				.active(payload.active())
 				.build();
 		BlacklistRecord saved = blacklistRecordRepository.save(record);
@@ -1279,14 +1286,15 @@ public class OperationsService {
 	}
 
 	@Transactional
-	public BlacklistRecord updateBlacklist(String id, BlacklistPayload payload) {
+	@PreAuthorize("hasRole('ADMIN')")
+	public BlacklistRecord updateBlacklist(String id, BlacklistPayload payload, String operator) {
 		validateBlacklistPayload(payload);
 		BlacklistRecord record = blacklistRecordRepository.findById(id)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "黑名单记录不存在"));
 		record.setPlate(normalizePlate(payload.plate()));
 		record.setReason(payload.reason());
 		record.setLevel(payload.level());
-		record.setOperator(payload.operator());
+		record.setOperator(operator);
 		record.setActive(payload.active());
 		record.setEffectiveDate(now());
 		BlacklistRecord saved = blacklistRecordRepository.save(record);
@@ -1295,6 +1303,7 @@ public class OperationsService {
 	}
 
 	@Transactional
+	@PreAuthorize("hasRole('ADMIN')")
 	public void deleteBlacklist(String id) {
 		if (!blacklistRecordRepository.existsById(id)) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "黑名单记录不存在");
@@ -4080,7 +4089,7 @@ public class OperationsService {
 		}
 		try {
 			return OffsetDateTime.parse(value);
-		} catch (RuntimeException ignored) {
+		} catch (DateTimeParseException ignored) {
 			return null;
 		}
 	}
@@ -4307,7 +4316,7 @@ public class OperationsService {
 				return null;
 			}
 			return resetAt;
-		} catch (RuntimeException ignored) {
+		} catch (DateTimeParseException ignored) {
 			return null;
 		}
 	}
@@ -4605,7 +4614,7 @@ public class OperationsService {
 		if (exception instanceof ResponseStatusException responseStatusException && !isBlank(responseStatusException.getReason())) {
 			return responseStatusException.getReason();
 		}
-		return firstNonBlank(exception.getMessage(), "白名单导入失败");
+		return "白名单导入失败";
 	}
 
 	private ParsedWhitelistImport parseWhitelistImport(MultipartFile file, WhitelistImportProgressState progress) {
@@ -4682,7 +4691,7 @@ public class OperationsService {
 		catch (ResponseStatusException exception) {
 			throw exception;
 		}
-		catch (Exception exception) {
+		catch (IOException | EncryptedDocumentException | IllegalArgumentException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Excel 文件解析失败，请确认文件格式为 xls 或 xlsx");
 		}
 	}

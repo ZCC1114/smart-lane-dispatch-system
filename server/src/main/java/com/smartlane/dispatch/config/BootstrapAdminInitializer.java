@@ -41,6 +41,12 @@ public class BootstrapAdminInitializer implements ApplicationRunner {
 		if (username == null || username.isBlank() || password == null || password.isBlank()) {
 			throw new IllegalStateException("Bootstrap admin enabled but username/password is blank");
 		}
+		if (!username.matches("[A-Za-z0-9._-]{3,64}")) {
+			throw new IllegalStateException("Bootstrap admin username must be 3-64 safe characters");
+		}
+		if (password.length() < 12 || password.length() > 128 || password.equalsIgnoreCase(username)) {
+			throw new IllegalStateException("Bootstrap admin password must be 12-128 characters and differ from username");
+		}
 
 		UserAccount account = userAccountRepository.findById(username)
 				.map(existing -> {

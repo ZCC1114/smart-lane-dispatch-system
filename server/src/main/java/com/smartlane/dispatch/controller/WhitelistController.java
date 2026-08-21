@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.smartlane.dispatch.dto.PageResult;
 import com.smartlane.dispatch.dto.WhitelistPayload;
@@ -53,7 +54,7 @@ public class WhitelistController {
 	public WhitelistRecord createWhitelist(
 			@Valid @RequestBody WhitelistPayload payload,
 			Authentication authentication) {
-		return operationsService.createWhitelist(payload, resolveOperator(null, authentication));
+		return operationsService.createWhitelist(payload, resolveOperator(authentication));
 	}
 
 	@PutMapping("/{id}")
@@ -62,7 +63,7 @@ public class WhitelistController {
 			@PathVariable String id,
 			@Valid @RequestBody WhitelistPayload payload,
 			Authentication authentication) {
-		return operationsService.updateWhitelist(id, payload, resolveOperator(null, authentication));
+		return operationsService.updateWhitelist(id, payload, resolveOperator(authentication));
 	}
 
 	@DeleteMapping("/{id}")
@@ -77,9 +78,8 @@ public class WhitelistController {
 	public WhitelistImportResult importWhitelist(
 			@RequestPart("file") MultipartFile file,
 			@RequestParam(required = false) String jobId,
-			@RequestParam(required = false) String operator,
 			Authentication authentication) {
-		return operationsService.importWhitelist(file, resolveOperator(operator, authentication), jobId);
+		return operationsService.importWhitelist(file, resolveOperator(authentication), jobId);
 	}
 
 	@GetMapping("/import-progress/{jobId}")
@@ -96,20 +96,20 @@ public class WhitelistController {
 
 	@PutMapping("/settings")
 	@PreAuthorize("hasRole('ADMIN')")
-	public WhitelistSettingsView updateSettings(@RequestBody WhitelistSettingsRequest request) {
+	public WhitelistSettingsView updateSettings(@Valid @RequestBody WhitelistSettingsRequest request) {
 		return operationsService.updateWhitelistSettings(request);
 	}
 
-	private String resolveOperator(String operator, Authentication authentication) {
-		if (operator != null && !operator.isBlank()) {
-			return operator.trim();
-		}
+	private String resolveOperator(Authentication authentication) {
 		if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser user) {
 			if (user.displayName() != null && !user.displayName().isBlank()) {
 				return user.displayName();
 			}
 			return user.username();
 		}
-		return "系统管理员";
+		if (authentication != null && authentication.getName() != null && !authentication.getName().isBlank()) {
+			return authentication.getName();
+		}
+		throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "无法确定当前操作人");
 	}
 }

@@ -16,41 +16,51 @@ public class LaneRuntimeStateService {
 
     public void recordTarget(String laneId, String entrySignal, String exitSignal, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.targetEntrySignal = normalizeSignal(entrySignal);
-        state.targetExitSignal = normalizeSignal(exitSignal);
-        state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
-        state.message = firstNonBlank(message, state.message, "已生成灯控目标，等待设备反馈");
-        state.lastCommandAt = resolveTime(observedAt);
-        state.entryGreenAt = "GREEN".equals(state.targetEntrySignal) ? state.lastCommandAt : null;
+        synchronized (state) {
+            state.targetEntrySignal = normalizeSignal(entrySignal);
+            state.targetExitSignal = normalizeSignal(exitSignal);
+            state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
+            state.message = firstNonBlank(message, state.message, "已生成灯控目标，等待设备反馈");
+            state.lastCommandAt = resolveTime(observedAt);
+            state.entryGreenAt = "GREEN".equals(state.targetEntrySignal) ? state.lastCommandAt : null;
+        }
     }
 
     public void recordRenderedState(String laneId, String entrySignal, String exitSignal, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.targetEntrySignal = normalizeSignal(entrySignal);
-        state.targetExitSignal = normalizeSignal(exitSignal);
-        state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
-        state.message = firstNonBlank(message, state.message, "已生成灯控目标，等待设备反馈");
+        synchronized (state) {
+            state.targetEntrySignal = normalizeSignal(entrySignal);
+            state.targetExitSignal = normalizeSignal(exitSignal);
+            state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
+            state.message = firstNonBlank(message, state.message, "已生成灯控目标，等待设备反馈");
+        }
     }
 
     public void markCommandPending(String laneId, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.commandStatus = "PENDING";
-        state.message = firstNonBlank(message, state.message, "灯控指令等待下发");
-        state.lastCommandAt = resolveTime(observedAt);
+        synchronized (state) {
+            state.commandStatus = "PENDING";
+            state.message = firstNonBlank(message, state.message, "灯控指令等待下发");
+            state.lastCommandAt = resolveTime(observedAt);
+        }
     }
 
     public void markCommandPublished(String laneId, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
-        state.message = firstNonBlank(message, state.message, "灯控指令已下发，等待设备反馈");
-        state.lastCommandAt = resolveTime(observedAt);
+        synchronized (state) {
+            state.commandStatus = signalsMatch(state) ? "SYNCED" : "PENDING";
+            state.message = firstNonBlank(message, state.message, "灯控指令已下发，等待设备反馈");
+            state.lastCommandAt = resolveTime(observedAt);
+        }
     }
 
     public void markCommandFailed(String laneId, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.commandStatus = "FAILED";
-        state.message = firstNonBlank(message, "灯控指令下发失败");
-        state.lastCommandAt = resolveTime(observedAt);
+        synchronized (state) {
+            state.commandStatus = "FAILED";
+            state.message = firstNonBlank(message, "灯控指令下发失败");
+            state.lastCommandAt = resolveTime(observedAt);
+        }
     }
 
     public void recordDeviceFeedback(
@@ -58,57 +68,74 @@ public class LaneRuntimeStateService {
             String entrySignal,
             String exitSignal,
             OffsetDateTime observedAt,
-            String message) {
+        String message) {
         LaneRuntimeState state = state(laneId);
-        if (!isBlank(entrySignal)) {
-            state.actualEntrySignal = normalizeSignal(entrySignal);
-        }
-        if (!isBlank(exitSignal)) {
-            state.actualExitSignal = normalizeSignal(exitSignal);
-        }
-        state.lastFeedbackAt = resolveTime(observedAt);
-        state.message = firstNonBlank(message, state.message, "设备状态已反馈");
-        if (signalsMatch(state)) {
-            state.commandStatus = "SYNCED";
-        } else if (state.commandStatus == null || "SYNCED".equals(state.commandStatus)) {
-            state.commandStatus = "PENDING";
+        synchronized (state) {
+            if (!isBlank(entrySignal)) {
+                state.actualEntrySignal = normalizeSignal(entrySignal);
+            }
+            if (!isBlank(exitSignal)) {
+                state.actualExitSignal = normalizeSignal(exitSignal);
+            }
+            state.lastFeedbackAt = resolveTime(observedAt);
+            state.message = firstNonBlank(message, state.message, "设备状态已反馈");
+            if (signalsMatch(state)) {
+                state.commandStatus = "SYNCED";
+            } else if (state.commandStatus == null || "SYNCED".equals(state.commandStatus)) {
+                state.commandStatus = "PENDING";
+            }
         }
     }
 
     public void recordDeviceMessage(String laneId, String message, OffsetDateTime observedAt) {
         LaneRuntimeState state = state(laneId);
-        state.message = firstNonBlank(message, state.message, "设备状态已更新");
-        state.lastFeedbackAt = resolveTime(observedAt);
+        synchronized (state) {
+            state.message = firstNonBlank(message, state.message, "设备状态已更新");
+            state.lastFeedbackAt = resolveTime(observedAt);
+        }
     }
 
     public void clearManualTarget(String laneId) {
         LaneRuntimeState state = state(laneId);
-        state.targetEntrySignal = null;
-        state.targetExitSignal = null;
-        state.commandStatus = null;
-        state.lastCommandAt = resolveTime(null);
-        state.entryGreenAt = null;
+        synchronized (state) {
+            state.targetEntrySignal = null;
+            state.targetExitSignal = null;
+            state.commandStatus = null;
+            state.lastCommandAt = resolveTime(null);
+            state.entryGreenAt = null;
+        }
     }
 
     public String targetEntrySignal(String laneId, String fallback) {
-        return firstNonBlank(state(laneId).targetEntrySignal, fallback, state(laneId).actualEntrySignal, "RED");
+        LaneRuntimeState state = state(laneId);
+        synchronized (state) {
+            return firstNonBlank(state.targetEntrySignal, fallback, state.actualEntrySignal, "RED");
+        }
     }
 
     public String targetExitSignal(String laneId, String fallback) {
-        return firstNonBlank(state(laneId).targetExitSignal, fallback, state(laneId).actualExitSignal, "RED");
+        LaneRuntimeState state = state(laneId);
+        synchronized (state) {
+            return firstNonBlank(state.targetExitSignal, fallback, state.actualExitSignal, "RED");
+        }
     }
 
     public OffsetDateTime entryGreenAt(String laneId) {
-        return state(laneId).entryGreenAt;
+        LaneRuntimeState state = state(laneId);
+        synchronized (state) {
+            return state.entryGreenAt;
+        }
     }
 
     public Lane applyRuntimeState(Lane lane) {
         LaneRuntimeState state = state(lane.getId());
-        lane.setEntrySignal(resolveDisplayedSignal(lane.getEntrySignal(), state.targetEntrySignal, state.actualEntrySignal, state.commandStatus));
-        lane.setExitSignal(resolveDisplayedSignal(lane.getExitSignal(), state.targetExitSignal, state.actualExitSignal, state.commandStatus));
-        lane.setLedStatus(firstNonBlank(state.commandStatus, "PENDING"));
-        lane.setLedMessage(firstNonBlank(state.message, "等待设备反馈"));
-        return lane;
+        synchronized (state) {
+            lane.setEntrySignal(resolveDisplayedSignal(lane.getEntrySignal(), state.targetEntrySignal, state.actualEntrySignal, state.commandStatus));
+            lane.setExitSignal(resolveDisplayedSignal(lane.getExitSignal(), state.targetExitSignal, state.actualExitSignal, state.commandStatus));
+            lane.setLedStatus(firstNonBlank(state.commandStatus, "PENDING"));
+            lane.setLedMessage(firstNonBlank(state.message, "等待设备反馈"));
+            return lane;
+        }
     }
 
     private String resolveDisplayedSignal(

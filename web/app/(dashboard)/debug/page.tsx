@@ -147,7 +147,7 @@ function buildCamPlate(dev: TestDevice, plate: string) {
     msgId: `plate-${Date.now()}`,
     devId: dev.cameraDevId,
     parkId: "123456",
-    devIp: "192.168.55.100",
+    devIp: "camera.test.invalid",
     utcTs: Math.floor(Date.now() / 1000),
     content: {
       alarmType: 1,
@@ -299,7 +299,7 @@ function CommandBlock({ children }: { children: React.ReactNode }) {
 /* ------------------------------------------------------------------ */
 
 export default function DebugPage() {
-  const [brokerHost, setBrokerHost] = useState("127.0.0.1");
+  const [brokerHost, setBrokerHost] = useState("localhost");
   const [brokerPort, setBrokerPort] = useState("9001");
   const [client, setClient] = useState<mqtt.MqttClient | null>(null);
   const [connState, setConnState] = useState<"idle" | "connecting" | "connected" | "error">("idle");
@@ -501,7 +501,7 @@ export default function DebugPage() {
   const didoUpTopic = selectedDevice ? `/device/${selectedDevice.didoDeviceId}/update` : "/device/DIDO-01/update";
   const mqttTcpPort = "1883";
   const deviceBrokerHost =
-    brokerHost === "127.0.0.1" || brokerHost.toLowerCase() === "localhost"
+    brokerHost.toLowerCase() === "localhost"
       ? "鐢佃剳鐨?192.168.0.x 鍦板潃"
       : brokerHost;
   const didoDeviceConfig = [
@@ -1152,4 +1152,3 @@ mosquitto_pub -h ${brokerHost} -p ${mqttTcpPort} -t "${didoDownTopic}" -m '{"A01
     </div>
   );
 }
-

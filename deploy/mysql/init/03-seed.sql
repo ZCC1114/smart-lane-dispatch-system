@@ -2,26 +2,8 @@ SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
 USE smart_lane_dispatch;
 
-INSERT INTO user_accounts (
-  username,
-  display_name,
-  role,
-  station,
-  password_hash,
-  system_protected
-) VALUES (
-  'admin',
-  '系统管理员',
-  'ADMIN',
-  '总控中心',
-  '$2y$10$s0mThDNemgGxyDtwKoulGexKZcCKntiE6pSE/LatVAijk/14WBm2W',
-  b'1'
-) ON DUPLICATE KEY UPDATE
-  display_name = VALUES(display_name),
-  role = VALUES(role),
-  station = VALUES(station),
-  password_hash = VALUES(password_hash),
-  system_protected = VALUES(system_protected);
+-- 管理员账号不再使用仓库内固定口令初始化。
+-- 首次部署时通过 APP_BOOTSTRAP_ADMIN_* 环境变量显式创建，创建后应关闭 bootstrap 开关。
 
 INSERT INTO lanes (
   id,

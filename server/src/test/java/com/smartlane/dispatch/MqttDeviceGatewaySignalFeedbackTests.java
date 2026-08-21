@@ -19,7 +19,8 @@ class MqttDeviceGatewaySignalFeedbackTests {
 			objectMapper,
 			null,
 			null,
-			new LaneRuntimeStateService());
+			new LaneRuntimeStateService(),
+			Runnable::run);
 
 	@Test
 	void redRelayOnlyTreatsEnergizedAsRedAndReleasedAsGreen() throws Exception {

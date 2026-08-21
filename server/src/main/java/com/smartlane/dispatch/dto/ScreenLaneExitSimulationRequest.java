@@ -1,7 +1,12 @@
 package com.smartlane.dispatch.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 public record ScreenLaneExitSimulationRequest(
-		@NotBlank(message = "车道不能为空") String laneId) {
+		@NotBlank(message = "车道不能为空")
+		@Size(max = 32, message = "车道编号不能超过 32 个字符")
+		@Pattern(regexp = RequestValidationPatterns.IDENTIFIER, message = "车道编号格式非法")
+		String laneId) implements StrictJsonRequest {
 }

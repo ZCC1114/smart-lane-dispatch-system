@@ -11,6 +11,8 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,6 +22,7 @@ import com.smartlane.dispatch.dto.TcpDidoRelayResponse;
 @Service
 public class TcpDidoCommandService {
 
+	private static final Logger log = LoggerFactory.getLogger(TcpDidoCommandService.class);
 	private static final Pattern FIRST_NUMBER = Pattern.compile("\\d+");
 	private static final HexFormat HEX = HexFormat.of().withUpperCase();
 
@@ -85,7 +88,8 @@ public class TcpDidoCommandService {
 			buffer.write(response);
 			return buffer.toByteArray();
 		} catch (IOException ex) {
-			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "TCP DIDO 指令发送失败: " + ex.getMessage(), ex);
+			log.warn("TCP DIDO command failed for {}:{}", host, port, ex);
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "TCP DIDO 指令发送失败", ex);
 		}
 	}
 

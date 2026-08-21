@@ -12,7 +12,7 @@ class ParkingMfMessageParserTests {
 	void parseHeartbeat() {
 		String topic = "/00E02721A3A7/mf/up";
 		String payload = """
-				{"cmd":"heartbeat","data":{"deviceStatus":[{"checkTime":"2026-05-12 14:53:12","deviceNo":"22K5000202407828","groupId":"90HZNII","network":"online"}],"ip":"192.168.0.30","runtime":{"cpu":{"load":"0.59,0.73,0.65","logicalProcessorCount":4,"name":"Intel(R) Celeron(R) CPU J1900 @ 1.99GHz","physicalProcessorCount":4},"disk":{"free":46.83,"total":54.52},"memory":{"free":1.90,"total":3.60},"os":{"osName":"Core","osVersion":"7.9.2009"}},"version":"0.0.1"},"msgId":"C_6a02ce5a7f3eb46e4e2dda0d","sn":"00E02721A3A7","timestamp":1778568794575,"timezone":"Asia/Shanghai"}
+				{"cmd":"heartbeat","data":{"deviceStatus":[{"checkTime":"2026-05-12 14:53:12","deviceNo":"22K5000202407828","groupId":"90HZNII","network":"online"}],"ip":"camera.test.invalid","runtime":{"cpu":{"load":"0.59,0.73,0.65","logicalProcessorCount":4,"name":"Intel(R) Celeron(R) CPU J1900 @ 1.99GHz","physicalProcessorCount":4},"disk":{"free":46.83,"total":54.52},"memory":{"free":1.90,"total":3.60},"os":{"osName":"Core","osVersion":"7.9.2009"}},"version":"0.0.1"},"msgId":"C_6a02ce5a7f3eb46e4e2dda0d","sn":"00E02721A3A7","timestamp":1778568794575,"timezone":"Asia/Shanghai"}
 				""";
 
 		ParkingMfMessage msg = parser.parse(topic, payload);
@@ -27,7 +27,7 @@ class ParkingMfMessageParserTests {
 
 		ParkingMfMessage.HeartbeatData data = msg.heartbeatData();
 		assertThat(data).isNotNull();
-		assertThat(data.ip()).isEqualTo("192.168.0.30");
+		assertThat(data.ip()).isEqualTo("camera.test.invalid");
 		assertThat(data.version()).isEqualTo("0.0.1");
 		assertThat(data.deviceStatus()).hasSize(1);
 

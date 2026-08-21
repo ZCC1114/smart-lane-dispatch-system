@@ -30,14 +30,14 @@ Docker Compose 里也保留了 Mosquitto 服务，但现场本地联调优先使
 ipconfig
 ```
 
-找到和设备同一网段的 IPv4，例如 `192.168.1.45`。
+找到和设备同一网段的 IPv4，例如 `<MQTT Broker主机名或IP>`。
 
 ## 2. CX-6E 官方配置软件填写
 
 在官方 MQTT 对接网络参数配置软件里按现场值填写:
 
 ```text
-服务器地址 / Broker Host: 电脑局域网 IP，例如 192.168.1.45
+服务器地址 / Broker Host: 电脑局域网 IP，例如 <MQTT Broker主机名或IP>
 服务器端口 / Broker Port: 1883
 用户名 / 密码: 留空，除非现场 Broker 开了认证
 设备 ID / Client ID / Device ID: 现场自定义，例如 DIDO-01
@@ -54,12 +54,12 @@ app.device.dido.up-topic-filter=/your/up/+
 
 ## 3. 后端配置
 
-本地直启时，后端 MQTT 地址填 `127.0.0.1`:
+本地直启时，后端 MQTT 地址填 `localhost`:
 
 ```dotenv
 APP_DEVICE_GATEWAY=mqtt
 APP_DEVICE_MQTT_ENABLED=true
-APP_DEVICE_MQTT_HOST=127.0.0.1
+APP_DEVICE_MQTT_HOST=localhost
 APP_DEVICE_MQTT_PORT=1883
 
 APP_DEVICE_DIDO_PAYLOAD_MODE=json
@@ -106,19 +106,19 @@ APP_DEVICE_DIDO_ENABLE_RELAY_UPLOAD_ON_CONNECT=true
 监听设备上报:
 
 ```bash
-mosquitto_sub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/update" -v
+mosquitto_sub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/DIDO-01/update" -v
 ```
 
 JSON 模式手动吸合 A01:
 
 ```bash
-mosquitto_pub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/get" -m '{"A01":110000,"res":"manual-on"}'
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/DIDO-01/get" -m '{"A01":110000,"res":"manual-on"}'
 ```
 
 JSON 模式手动断开 A01:
 
 ```bash
-mosquitto_pub -h 192.168.1.45 -p 1883 -u jcadmin -P 'jcadmin@12345' -t "/device/DIDO-01/get" -m '{"A01":100000,"res":"manual-off"}'
+mosquitto_pub -h '<MQTT Broker主机名或IP>' -p 1883 -u '<MQTT用户名>' -P '<MQTT密码>' -t "/device/DIDO-01/get" -m '{"A01":100000,"res":"manual-off"}'
 ```
 
 也可以打开系统的硬件调试页，使用 MQTT DIDO 控制模式测试 JSON、HEX A1、HEX A3 三种下发方式。

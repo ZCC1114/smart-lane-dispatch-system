@@ -40,17 +40,23 @@ public class LedScreenService {
 	@PostConstruct
 	public void init() {
 		try {
-			Bx5GEnv.initial(30000);
+			LedSdkCall.invoke("五代 LED SDK 初始化", () -> {
+				Bx5GEnv.initial(30000);
+				return null;
+			});
 			bx5Initialized = true;
 			log.info("Bx5GEnv initialized");
-		} catch (Exception e) {
+		} catch (LedDeviceException e) {
 			log.warn("Bx5GEnv initialization failed: {}", e.getMessage());
 		}
 		try {
-			Bx6GEnv.initial(30000);
+			LedSdkCall.invoke("六代 LED SDK 初始化", () -> {
+				Bx6GEnv.initial(30000);
+				return null;
+			});
 			bx6Initialized = true;
 			log.info("Bx6GEnv initialized");
-		} catch (Exception e) {
+		} catch (LedDeviceException e) {
 			log.warn("Bx6GEnv initialization failed: {}", e.getMessage());
 		}
 	}
@@ -98,9 +104,9 @@ public class LedScreenService {
 			} else {
 				return sendTextG6(ip, port, model, segments, screenWidth, screenHeight, columns, rows);
 			}
-		} catch (Exception e) {
+		} catch (LedDeviceException e) {
 			log.error("LED send failed", e);
-			return "发送失败: " + e.getMessage();
+			return "发送失败: LED 设备通信异常";
 		}
 	}
 
@@ -124,9 +130,9 @@ public class LedScreenService {
 				return sendTextRegionsG5(ip, port, regions, screenWidth, screenHeight);
 			}
 			return sendTextRegionsG6(ip, port, model, regions, screenWidth, screenHeight);
-		} catch (Exception e) {
+		} catch (LedDeviceException e) {
 			log.error("LED send failed", e);
-			return "发送失败: " + e.getMessage();
+			return "发送失败: LED 设备通信异常";
 		}
 	}
 
@@ -137,14 +143,17 @@ public class LedScreenService {
 			int screenWidth,
 			int screenHeight,
 			int columns,
-			int rows) throws Exception {
+			int rows) throws LedDeviceException {
 		if (!bx5Initialized) {
 			return "错误：五代 SDK 未初始化";
 		}
 
 		Bx5GScreenClient screen = new Bx5GScreenClient("LedTest");
 		try {
-			if (!screen.connect(ip, port)) {
+			boolean connected = LedSdkCall.invoke(
+					"五代 LED 连接",
+					() -> screen.connect(ip, port));
+			if (!connected) {
 				return "错误：连接显示屏失败（五代）";
 			}
 
@@ -169,7 +178,12 @@ public class LedScreenService {
 				program.addArea(area);
 			}
 
-			screen.writeProgram(program);
+			boolean written = LedSdkCall.invoke(
+					"五代 LED 节目写入",
+					() -> screen.writeProgram(program));
+			if (!written) {
+				throw new LedDeviceException("五代 LED 节目写入未返回成功");
+			}
 			return "发送成功（五代）: 屏幕尺寸 " + profile.getWidth()
 					+ "x" + profile.getHeight() + "，布局 " + layout.columns()
 					+ "列x" + layout.rows() + "行，共 " + count + " 段文本";
@@ -183,14 +197,17 @@ public class LedScreenService {
 			int port,
 			List<LedGuideDisplayFrame.Region> regions,
 			int screenWidth,
-			int screenHeight) throws Exception {
+			int screenHeight) throws LedDeviceException {
 		if (!bx5Initialized) {
 			return "错误：五代 SDK 未初始化";
 		}
 
 		Bx5GScreenClient screen = new Bx5GScreenClient("LedTest");
 		try {
-			if (!screen.connect(ip, port)) {
+			boolean connected = LedSdkCall.invoke(
+					"五代 LED 连接",
+					() -> screen.connect(ip, port));
+			if (!connected) {
 				return "错误：连接显示屏失败（五代）";
 			}
 
@@ -212,7 +229,12 @@ public class LedScreenService {
 				program.addArea(area);
 			}
 
-			screen.writeProgram(program);
+			boolean written = LedSdkCall.invoke(
+					"五代 LED 节目写入",
+					() -> screen.writeProgram(program));
+			if (!written) {
+				throw new LedDeviceException("五代 LED 节目写入未返回成功");
+			}
 			return "发送成功（五代）: 屏幕尺寸 " + profile.getWidth()
 					+ "x" + profile.getHeight() + "，自定义区域 " + regions.size() + " 段文本";
 		} finally {
@@ -228,7 +250,7 @@ public class LedScreenService {
 			int screenWidth,
 			int screenHeight,
 			int columns,
-			int rows) throws Exception {
+			int rows) throws LedDeviceException {
 		if (!bx6Initialized) {
 			return "错误：六代 SDK 未初始化";
 		}
@@ -237,7 +259,10 @@ public class LedScreenService {
 		Bx6Card card = createG6Card(resolvedModel);
 		Bx6GScreenClient screen = new Bx6GScreenClient("LedTest", card);
 		try {
-			if (!screen.connect(ip, port)) {
+			boolean connected = LedSdkCall.invoke(
+					"六代 LED 连接",
+					() -> screen.connect(ip, port));
+			if (!connected) {
 				return "错误：连接显示屏失败（六代）";
 			}
 
@@ -262,7 +287,12 @@ public class LedScreenService {
 				program.addArea(area);
 			}
 
-			screen.writeProgram(program);
+			boolean written = LedSdkCall.invoke(
+					"六代 LED 节目写入",
+					() -> screen.writeProgram(program));
+			if (!written) {
+				throw new LedDeviceException("六代 LED 节目写入未返回成功");
+			}
 			return "发送成功（六代 " + resolvedModel + "）: 屏幕尺寸 " + profile.getWidth()
 					+ "x" + profile.getHeight() + "，布局 " + layout.columns()
 					+ "列x" + layout.rows() + "行，共 " + count + " 段文本";
@@ -277,7 +307,7 @@ public class LedScreenService {
 			String model,
 			List<LedGuideDisplayFrame.Region> regions,
 			int screenWidth,
-			int screenHeight) throws Exception {
+			int screenHeight) throws LedDeviceException {
 		if (!bx6Initialized) {
 			return "错误：六代 SDK 未初始化";
 		}
@@ -286,7 +316,10 @@ public class LedScreenService {
 		Bx6Card card = createG6Card(resolvedModel);
 		Bx6GScreenClient screen = new Bx6GScreenClient("LedTest", card);
 		try {
-			if (!screen.connect(ip, port)) {
+			boolean connected = LedSdkCall.invoke(
+					"六代 LED 连接",
+					() -> screen.connect(ip, port));
+			if (!connected) {
 				return "错误：连接显示屏失败（六代）";
 			}
 
@@ -308,7 +341,12 @@ public class LedScreenService {
 				program.addArea(area);
 			}
 
-			screen.writeProgram(program);
+			boolean written = LedSdkCall.invoke(
+					"六代 LED 节目写入",
+					() -> screen.writeProgram(program));
+			if (!written) {
+				throw new LedDeviceException("六代 LED 节目写入未返回成功");
+			}
 			return "发送成功（六代 " + resolvedModel + "）: 屏幕尺寸 " + profile.getWidth()
 					+ "x" + profile.getHeight() + "，自定义区域 " + regions.size() + " 段文本";
 		} finally {
